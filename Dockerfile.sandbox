@@ -1,0 +1,50 @@
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+WORKDIR /work
+
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONPATH=/app/src
+
+# Scanner binaries (pinned, checksum-verified) live ONLY in this disposable
+# sandbox image (follow-up #1/#28). The app/worker image no longer carries
+# them; every tool call runs in a fresh container from this image with
+# --network none (except explicit clone/fetch/push), no secrets mounted.
+# betterleaks must stay on the v2 line: v1 uses `dir` + --report-path and
+# cannot serve the adapter's `fs`/`git`/`stdin --output -` contract.
+# Re-pin to v2.0.0 final when it supersedes the rc (upstream warns the rc
+# CLI/report shape may still change).
+ARG BETTERLEAKS_VERSION=v2.0.0-rc.1
+ARG OSV_SCANNER_VERSION=v2.7.0
+ARG BETTERLEAKS_SHA256_AMD64=ccbbf68d0a403af44ed5d118c495d20c06bbf39d09129d2ae733d69aa9242404
+ARG BETTERLEAKS_SHA256_ARM64=88e96e09b0c44dd45c2991173340e035850a700040f8fa894cb53f745b4cb56b
+ARG OSV_SCANNER_SHA256_AMD64=160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b
+ARG OSV_SCANNER_SHA256_ARM64=4061ef4c021ed3c47f203b818f337e351336cc5cd67c0274fc36bd1dfc728dd7
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates git ripgrep nodejs npm \
+    && rm -rf /var/lib/apt/lists/* \
+    && ARCH="$(dpkg --print-architecture)" \
+    && case "$ARCH" in \
+        amd64) BL_ARCH=x64; OSV_ARCH=amd64; \
+            BL_SHA="$BETTERLEAKS_SHA256_AMD64"; OSV_SHA="$OSV_SCANNER_SHA256_AMD64" ;; \
+        arm64) BL_ARCH=arm64; OSV_ARCH=arm64; \
+            BL_SHA="$BETTERLEAKS_SHA256_ARM64"; OSV_SHA="$OSV_SCANNER_SHA256_ARM64" ;; \
+        *) echo "unsupported architecture: $ARCH" >&2; exit 1 ;; \
+    esac \
+    && BL_VER="${BETTERLEAKS_VERSION#v}" \
+    && curl -fsSL -o /tmp/betterleaks.tgz "https://github.com/betterleaks/betterleaks/releases/download/${BETTERLEAKS_VERSION}/betterleaks_${BL_VER}_linux_${BL_ARCH}.tar.gz" \
+    && echo "${BL_SHA}  /tmp/betterleaks.tgz" | sha256sum -c - \
+    && mkdir -p /tmp/bl && tar -xzf /tmp/betterleaks.tgz -C /tmp/bl \
+    && BL_BIN="$(find /tmp/bl -name betterleaks -type f | head -n 1)" \
+    && test -n "$BL_BIN" && install -m 0755 "$BL_BIN" /usr/local/bin/betterleaks \
+    && rm -rf /tmp/betterleaks.tgz /tmp/bl \
+    && curl -fsSL -o /tmp/osv-scanner "https://github.com/google/osv-scanner/releases/download/${OSV_SCANNER_VERSION}/osv-scanner_linux_${OSV_ARCH}" \
+    && echo "${OSV_SHA}  /tmp/osv-scanner" | sha256sum -c - \
+    && install -m 0755 /tmp/osv-scanner /usr/local/bin/osv-scanner \
+    && rm -f /tmp/osv-scanner \
+    && betterleaks --version && osv-scanner --version
+
+COPY pyproject.toml README.md /app/
+COPY src /app/src
+RUN uv sync --no-dev --editable --project /app && ln -s /app/.venv/bin/python /usr/local/bin/python3 || true
+
+WORKDIR /work
+CMD ["python3", "-m", "security_agent.sandbox.runner"]

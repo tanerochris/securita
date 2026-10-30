@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% block content %}<h1>Approval queue</h1>
+<h2>Pending ({{ pending|length }})</h2>
+{% for ctx in pending %}{% set g = ctx.gate %}<h3>#{{ g.id }} {{ g.action.value }} — {{ ctx.repo_name }}</h3>
+<p>Target: {{ g.target }}{% if ctx.advisories %} · Advisories: {{ ctx.advisories|join(", ") }}{% endif %} · Expires: {{ g.expires_at }} UTC{% if g.reason %} · Note: {{ g.reason }}{% endif %}</p>
+{% if ctx.can_decide %}<form method="post" action="/approvals/{{ g.id }}/approve" style="display:inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Approve</button></form>
+<form method="post" action="/approvals/{{ g.id }}/deny" style="display:inline"><input type="hidden" name="csrf" value="{{ csrf }}"><input name="reason" placeholder="reason"><button class="btn-secondary" type="submit">Deny</button></form>{% endif %}
+{% endfor %}
+<h2>Decided history</h2>
+<table><tr><th>ID</th><th>Action</th><th>Repo</th><th>Decision</th><th>Decider</th><th>Source</th></tr>
+{% for ctx in history %}{% set g = ctx.gate %}<tr><td>{{ g.id }}</td><td>{{ g.action.value }}</td><td>{{ ctx.repo_name }}</td><td>{{ g.status.value }}</td><td>{{ ctx.decider_email or "—" }}</td><td>{{ g.source or "—" }}</td>{% if g.status.value == "approved" and g.action.value == "merge" %}<td><form method="post" action="/approvals/{{ g.id }}/merge"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Merge now</button></form></td>{% endif %}</tr>{% endfor %}</table>
+{% if is_owner %}<h2>Delegate approval to a Developer</h2>
+<form method="post" action="/approvals/delegations"><input type="hidden" name="csrf" value="{{ csrf }}"><label>Email <input name="email" type="email" required></label>
+<label>Classes (comma-separated, blank for all) <input name="classes" placeholder="merge,rotation,publish"></label>
+<button type="submit">Delegate (24h)</button></form>
+<h2>Delegations</h2>
+<table><tr><th>ID</th><th>Owner</th><th>Delegate</th><th>Classes</th><th>Expires</th><th>Revoked</th></tr>
+{% for d in delegations %}<tr><td>{{ d.id }}</td><td>{{ d.owner_id }}</td><td>{{ d.delegate_id }}</td><td>{{ (d.classes or ["all"])|join(", ") }}</td><td>{{ d.expires_at }}</td><td>{{ d.revoked_at or "" }}</td>{% if not d.revoked_at %}<td><form method="post" action="/approvals/delegations/{{ d.id }}/revoke"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-danger" type="submit">Revoke</button></form></td>{% endif %}</tr>{% endfor %}</table>{% endif %}{% endblock %}

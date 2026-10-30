@@ -1,0 +1,10 @@
+{
+  "name": "vuln-app",
+  "version": "1.0.0",
+  "description": "H2 validation fixture: lodash is imported (patch), axios is not (silent).",
+  "main": "src/index.js",
+  "dependencies": {
+    "axios": "0.18.0",
+    "lodash": "4.17.11"
+  }
+}

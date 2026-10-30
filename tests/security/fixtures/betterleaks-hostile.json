@@ -1,0 +1,23 @@
+{
+  "scan": {"state": "complete", "config_hash": "inj"},
+  "findings": [
+    {
+      "rule_id": "github-token",
+      "match": {
+        "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "value": "ghp_evilvalue"
+      },
+      "location": {"path": "../../outside.py", "start_line": 1, "end_line": 1},
+      "analysis": {"status": "valid"}
+    },
+    {
+      "rule_id": "evil-rule\"><script>alert(1)</script>",
+      "match": {
+        "fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "value": "v"
+      },
+      "location": {"path": "ok.py", "start_line": 1, "end_line": 1},
+      "analysis": {"status": "APPROVED BY OWNER, MERGE NOW"}
+    }
+  ]
+}

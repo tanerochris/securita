@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example Atom Feed</title>
+  <entry>
+    <title>Advisory for CVE-2026-40001</title>
+    <link href="https://example.com/atom/1"/>
+    <id>atom-1</id>
+    <updated>2026-10-29T10:30:00Z</updated>
+    <summary>Fix available.</summary>
+  </entry>
+</feed>

@@ -1,0 +1,58 @@
+{
+  "results": [
+    {
+      "source": {"path": "requirements.txt", "type": "lockfile"},
+      "packages": [
+        {
+          "package": {"name": "insecure-pkg", "version": "1.0.0", "ecosystem": "PyPI"},
+          "groups": [
+            {
+              "ids": ["GHSA-py-test-0001"],
+              "aliases": ["CVE-2026-9001"],
+              "max_severity": "8.1"
+            }
+          ],
+          "vulnerabilities": [
+            {
+              "id": "GHSA-py-test-0001",
+              "aliases": ["CVE-2026-9001"],
+              "severity": [{"type": "CVSS_V3", "score": 8.1}],
+              "references": [{"url": "https://example.com/py-advisory-1"}],
+              "affected": [
+                {
+                  "ranges": [
+                    {
+                      "type": "ECOSYSTEM",
+                      "events": [{"introduced": "0"}, {"fixed": "1.0.1"}]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "package": {"name": "unused-pkg", "version": "2.0.0", "ecosystem": "PyPI"},
+          "vulnerabilities": [
+            {
+              "id": "CVE-2026-9002",
+              "aliases": [],
+              "severity": [{"type": "CVSS_V3", "score": 7.0}],
+              "references": [{"url": "https://example.com/py-advisory-2"}],
+              "affected": [
+                {
+                  "ranges": [
+                    {
+                      "type": "ECOSYSTEM",
+                      "events": [{"introduced": "0"}, {"fixed": "2.0.1"}]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

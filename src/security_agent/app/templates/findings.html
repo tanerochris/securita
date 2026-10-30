@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block content %}<h1>Findings — {{ repo.name }}</h1>
+<h2>Active ({{ active|length }})</h2>
+<table><tr><th>Package</th><th>Version</th><th>Advisory</th><th>Severity</th><th>KEV</th><th>News</th><th>Scope</th><th>Status</th><th>Fixed in</th></tr>
+{% for f in active %}<tr><td>{{ f.package }}</td><td>{{ f.installed_version }}</td><td>{{ f.advisory_id }}</td><td>{{ f.severity_score or "—" }}</td><td>{{ "yes" if f.kev_exploited else "" }}</td><td>{% if f.news_weight %}{% if f.news_url and (f.news_url.startswith('http://') or f.news_url.startswith('https://')) %}<a href="{{ f.news_url }}">news +{{ f.news_weight }}</a>{% else %}news +{{ f.news_weight }}{% endif %}{% endif %}</td><td>{{ f.scope.value }}</td><td>{{ f.status.value }}</td><td>{{ (f.fixed_versions or [])|join(", ") }}</td></tr>{% endfor %}</table>
+<h2>Silent with reason ({{ silent|length }})</h2>
+<table><tr><th>Package</th><th>Advisory</th><th>Reason</th></tr>
+{% for f in silent %}<tr><td>{{ f.package }}</td><td>{{ f.advisory_id }}</td><td>{{ f.silent_reason }}</td></tr>{% endfor %}</table>
+<h2>Secrets ({{ secrets|length }})</h2>
+<table><tr><th>Rule</th><th>Path</th><th>Line</th><th>Liveness</th><th>Status</th><th>Rotation</th></tr>
+{% for s in secrets %}<tr><td>{{ s.rule_id }}</td><td>{{ s.path }}</td><td>{{ s.start_line or "—" }}</td><td>{{ s.liveness }}</td><td>{{ s.status.value }}</td><td>{% if s.status.value == "awaiting_rotation" and can_rotate %}<form method="post" action="/repos/{{ repo.id }}/secrets/{{ s.id }}/rotated"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Confirm rotated</button></form>{% endif %}{% if s.guidance %}<details><summary>guidance</summary>{{ s.guidance }}</details>{% endif %}</td></tr>{% endfor %}</table>{% endblock %}

@@ -1,0 +1,6 @@
+[project]
+name = "vuln-py-app"
+version = "1.0.0"
+
+[project.scripts]
+vuln-py-app = "app:main"

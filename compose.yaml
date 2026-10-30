@@ -1,0 +1,92 @@
+services:
+  app:
+    build: .
+    command: uv run uvicorn security_agent.app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backups:/app/backups
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./src
+          target: /app/src
+        - action: rebuild
+          path: pyproject.toml
+        - action: rebuild
+          path: uv.lock
+
+  worker:
+    build: .
+    # Single replica by default; scale-out is safe (atomic claim/lease, H6 #31).
+    command: uv run python -m security_agent.worker.main
+    env_file:
+      - .env
+    environment:
+      SANDBOX_BACKEND: ${SANDBOX_BACKEND:-docker}
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-security-agent-sandbox:latest}
+      SANDBOX_WORK_ROOT: /sandbox-work
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Docker socket lets the worker spawn fresh per-tool sandbox
+      # containers (follow-up #1). Only the worker gets it; the app
+      # never executes tools. Work root is shared so sandbox containers
+      # can bind-mount per-run workdirs.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - sandbox-work:/sandbox-work
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./src
+          target: /app/src
+        - action: rebuild
+          path: pyproject.toml
+        - action: rebuild
+          path: uv.lock
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agent}
+      POSTGRES_DB: ${POSTGRES_DB:-agent}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agent}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Builds the disposable sandbox image and smoke-checks its scanners.
+  # Run with: docker compose --profile sandbox run --rm sandbox-runner
+  # The worker spawns fresh containers from this image per tool call;
+  # this service is not a long-lived daemon and mounts no socket.
+  sandbox-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    image: security-agent-sandbox:latest
+    profiles: ["sandbox"]
+    command: python3 -m security_agent.sandbox.runner
+
+  loki:
+    image: grafana/loki:3.1.0
+    profiles: ["ops"]
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+
+volumes:
+  pgdata:
+  sandbox-work:
+  loki-data:

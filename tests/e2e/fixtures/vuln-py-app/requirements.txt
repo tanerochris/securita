@@ -1,0 +1,3 @@
+# H4 validation fixture: insecure-pkg is imported (patch), unused-pkg is not (silent).
+insecure-pkg==1.0.0
+unused-pkg==2.0.0

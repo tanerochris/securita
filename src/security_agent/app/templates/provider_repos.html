@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Pick a repository — AI Security Agent{% endblock %}
+{% block page_title %}Repository{% endblock %}
+{% block content %}
+<h1 class="text-[28px] leading-tight md:text-[32px]">Pick a repository</h1>
+<p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">{{ connection.provider.value }} · {{ connection.username }} ({{ connection.auth_type.value }}) · {{ connection.base_url }}. Connecting starts the first scan right away.</p>
+<p class="mt-2 text-sm"><a class="font-bold" href="/repos">&larr; Back to repositories</a></p>
+
+{% if found %}
+<div class="brand-table mt-5 overflow-x-auto rounded-xl">
+  <table>
+    <thead><tr><th>Repository</th><th>Visibility</th><th>Default branch</th><th></th></tr></thead>
+    <tbody>
+    {% for r in found %}
+      <tr>
+        <td class="font-semibold text-brand-navy">{{ r.full_name }}</td>
+        <td>{{ "private" if r.private else "public" }}</td>
+        <td class="text-slate-600">{{ r.default_branch or "—" }}</td>
+        <td>
+          <form method="post" action="/repos/connect">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="kind" value="git">
+            <input type="hidden" name="name" value="{{ r.full_name }}">
+            <input type="hidden" name="url" value="{{ r.clone_url }}">
+            <input type="hidden" name="connection_id" value="{{ connection.id }}">
+            <button type="submit">Connect</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="mt-5 rounded-xl bg-white px-5 py-8 text-center shadow-card">
+  <p class="text-sm font-semibold text-brand-deep">No repositories visible to this connection</p>
+  <p class="mx-auto mt-1 max-w-md text-[13px] text-slate-600">Check the token scopes, or connect the repository manually with its clone URL.</p>
+</div>
+{% endif %}
+{% endblock %}

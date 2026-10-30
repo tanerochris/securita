@@ -1,0 +1,3 @@
+{% extends "base.html" %}{% block content %}<h1>Invite created</h1>
+<p>Send this single-use link to {{ email }} (shown once, expires in 72h):</p>
+<p><code>/signup?token={{ token }}</code></p>{% endblock %}
