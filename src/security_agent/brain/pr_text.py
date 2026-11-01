@@ -14,51 +14,14 @@ import json
 import logging
 import re
 
+from security_agent.prompts import render_prompt
+
 log = logging.getLogger(__name__)
 
 _TITLE_MAX_CHARS = 150
 _BODY_MAX_CHARS = 8000
 _PROMPT_ADVISORIES = 30
 _PROMPT_VERIFICATION_CHARS = 2000
-
-_TEMPLATE_BLOCK = """\
-
-The repository provides the pull request template between <<< and >>>.
-Produce "body" by filling it in: keep every heading and question
-verbatim, answer each section from the facts only, tick a checkbox as
-"[x]" only when the facts support it (leave the rest "- [ ]"), drop no
-sections, and include the Dashboard line at the end if the template
-has no slot for it.
-<<<
-%s
->>>
-"""
-
-_PR_PROMPT = """\
-You write the title and body of a security-update pull request. Reply
-with ONE JSON object only, no prose: {"title": "...", "body": "..."}.
-
-Rules:
-- "title": one line, at most 100 characters, starting with "[security] ".
-  Name the package and the version bump and how many advisories it
-  fixes. NEVER paste the advisory list into the title.
-- "body": short markdown. First line: "<package> <from> -> <to> fixes N
-  advisories." Then a "Fixes" bullet list with at most 10 advisory IDs
-  (append "and M more" when truncated). Keep every KEV warning line
-  verbatim when given. Then Verification, Grouping, and Dashboard lines
-  exactly as given below.
-- Use only the facts below; invent no versions, advisories, or links.
-
-PACKAGE: %s
-FROM: %s
-TO: %s
-ADVISORIES (%d total): %s
-KEV (exploited, warn verbatim): %s
-VERIFICATION: %s
-GROUPING: %s
-IGNORED TESTS: %s
-DASHBOARD: %s
-"""
 
 
 def _pr_prompt(
@@ -79,20 +42,21 @@ def _pr_prompt(
     blob = ", ".join(shown)
     if len(advs) > len(shown):
         blob += f", and {len(advs) - len(shown)} more"
-    prompt = _PR_PROMPT % (
-        package,
-        from_version,
-        to_version,
-        len(advs),
-        blob or "none",
-        ", ".join(sorted(set(kev))) or "none",
-        "; ".join(verifications)[:_PROMPT_VERIFICATION_CHARS] or "none",
-        grouping or "single package",
-        "; ".join(ignored) or "none",
-        dashboard,
+    prompt = render_prompt(
+        "draft_pr",
+        package=package,
+        from_version=from_version,
+        to_version=to_version,
+        advisory_count=str(len(advs)),
+        advisories=blob or "none",
+        kev=", ".join(sorted(set(kev))) or "none",
+        verification="; ".join(verifications)[:_PROMPT_VERIFICATION_CHARS] or "none",
+        grouping=grouping or "single package",
+        ignored="; ".join(ignored) or "none",
+        dashboard=dashboard,
     )
     if template:
-        prompt += _TEMPLATE_BLOCK % template
+        prompt += render_prompt("draft_pr_template_block", template=template)
     return prompt
 
 

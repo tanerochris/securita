@@ -139,18 +139,18 @@ def make_model_adapt(model=None, *, probe_ok: bool | None = None):
                 )
             except Exception as exc:  # noqa: BLE001 - guidance never breaks adapt
                 log.warning("policy guidance for adapt failed: %s", exc)
+            from security_agent.prompts import render_prompt
+
             prompt = (
-                f"A dependency was bumped: {finding.package} "
-                f"{finding.installed_version} -> {target}. Prior failures: "
-                f"{'; '.join(failures)[:2000] or 'none'}. "
-                "Call apply_file_edit for each file that must change for the "
-                "new version; make no edits if none are needed. "
-                "Company policy context is included below when found. If it "
-                "is missing or does not cover this change, call search_policies "
-                "with focused terms before editing — especially for auth, "
-                "crypto, networking, or data-handling changes. At most two "
-                "searches; if search finds nothing relevant, proceed.\n\n"
-                f"{files_blob}" + (f"\n\n{policy_block}" if policy_block else "")
+                render_prompt(
+                    "adapt",
+                    package=finding.package,
+                    installed_version=finding.installed_version,
+                    target=target,
+                    failures="; ".join(failures)[:2000] or "none",
+                    files_blob=files_blob,
+                )
+                + (f"\n\n{policy_block}" if policy_block else "")
             )[:_MAX_PROMPT_CHARS]
             token = _search_scope.set(
                 {"repo_id": getattr(finding, "repo_id", None), "run_id": run_id}
@@ -172,12 +172,10 @@ def make_model_adapt(model=None, *, probe_ok: bool | None = None):
                         query = str((call.get("args") or {}).get("query") or "")
                         sections.append(f"Search '{query}':\n{_run_policy_search(query)}")
                         searches_left -= 1
-                    follow_up = (
-                        f"{prompt}\n\nPolicy search results:\n\n"
-                        + "\n\n".join(sections)
-                        + "\n\nNow decide the edits for this bump and call "
-                        "apply_file_edit for each file that must change, or "
-                        "make no calls if none are needed."
+                    follow_up = render_prompt(
+                        "adapt_search_followup",
+                        prompt=prompt,
+                        search_results="\n\n".join(sections),
                     )[:_MAX_PROMPT_CHARS]
                     result = tracked_invoke(bound, follow_up, task="adapt")
             finally:

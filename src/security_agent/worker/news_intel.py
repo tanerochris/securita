@@ -34,6 +34,7 @@ from security_agent.db.models import (
     Repo,
 )
 from security_agent.db.session import session_scope
+from security_agent.prompts import render_prompt
 from security_agent.worker.news import enrich_item
 from security_agent.worker.scan import kev_exploited_ids, valid_fixed_version
 
@@ -52,41 +53,13 @@ _PROMPT_TITLE_CHARS = 500
 _PROMPT_SUMMARY_CHARS = 1000
 _PROMPT_EXCERPT_CHARS = 2000
 
-_CLASSIFY_PROMPT = """\
-You classify a news story for a security-operations feed. Reply with ONE JSON
-object only, no prose: {"verdict": "...", "category": "..."}.
-
-verdict is one of:
-- "major": a significant security event with wide impact. CVE-backed
-  vulnerabilities in widely used software, exploited-in-the-wild flaws,
-  patches from major vendors for critical issues, significant breaches,
-  leaks, or supply-chain compromises. The story would credibly run as a
-  headline across multiple security outlets.
-- "minor": genuinely security-related but narrow impact (small-vendor
-  advisory, low-severity issue, local-interest incident).
-- "not_security": anything else — personal blogs, dev logs, tutorials,
-  performance posts, marketing, opinion, product launches without a
-  security event.
-
-category is one of: "vulnerability", "exploit", "patch", "breach",
-"leak", "other". Use "other" when verdict is "not_security".
-
-Be strict: a personal blog post, tutorial, or hot take is "not_security"
-even when it mentions security tools. A minor advisory without evidence
-of wide impact is "minor", never "major".
-
-Story:
-TITLE: %s
-SUMMARY: %s
-EXCERPT: %s
-"""
-
 
 def _classify_prompt(title: str, summary: str | None, excerpt: str | None) -> str:
-    return _CLASSIFY_PROMPT % (
-        (title or "")[:_PROMPT_TITLE_CHARS],
-        (summary or "")[:_PROMPT_SUMMARY_CHARS],
-        (excerpt or "")[:_PROMPT_EXCERPT_CHARS],
+    return render_prompt(
+        "news_classify",
+        title=(title or "")[:_PROMPT_TITLE_CHARS],
+        summary=(summary or "")[:_PROMPT_SUMMARY_CHARS],
+        excerpt=(excerpt or "")[:_PROMPT_EXCERPT_CHARS],
     )
 
 
@@ -190,56 +163,17 @@ _SCORE_BANDS = {"direct": (70, 100), "platform": (40, 69), "irrelevant": (0, 39)
 _MAX_RATIONALE_CHARS = 500
 _MAX_SIGNALS = 10
 
-_RELEVANCE_PROMPT = """\
-You judge how relevant one security news story is to ONE specific
-repository. Reply with ONE JSON object only, no prose:
-{"relevance": "...", "score": 0, "rationale": "...", "matched_signals": ["..."]}
-
-relevance is one of:
-- "direct": the story concerns code this repository actually uses — a
-  dependency, ecosystem, language runtime version, or CVE affecting it,
-  or a breach/leak of a service this codebase integrates with. This is
-  the highest-value case: it is relevant to the source code itself.
-- "platform": no direct code link, but the story concerns a platform
-  this repository can plausibly be deployed to or run on — an operating
-  system (Linux, Windows Server, macOS), runtime, container/Kubernetes
-  layer, cloud or hosting provider (AWS, Azure, GCP, Cloudflare), or
-  hardware (CPU/GPU/chip) in its plausible deployment targets. Judge
-  plausibility from the profile: do not invent a deployment target the
-  profile does not support.
-- "irrelevant": neither. General security news, other ecosystems, other
-  vendors, or platforms absent from the profile are irrelevant here even
-  when the story is globally major.
-
-score is an integer 0-100 consistent with the level (direct 70-100,
-platform 40-69, irrelevant 0-39). rationale is one short sentence naming
-the concrete link (or its absence). matched_signals lists the profile
-signals that matched, e.g. ["package:requests"], ["platform:aws"],
-["cve:CVE-2026-0001"]; empty when irrelevant.
-
-Be strict and repository-specific: the same story must be able to score
-differently for different repositories. When in doubt between platform
-and irrelevant, choose irrelevant.
-
-REPOSITORY PROFILE:
-%s
-
-STORY (global verdict: %s, category: %s, CVE IDs: %s):
-TITLE: %s
-SUMMARY: %s
-EXCERPT: %s
-"""
-
 
 def _relevance_prompt(profile_summary: str, item) -> str:
-    return _RELEVANCE_PROMPT % (
-        profile_summary,
-        item.verdict or "unclassified",
-        item.category or "other",
-        ", ".join(item.cve_ids or []) or "none",
-        (item.title or "")[:_PROMPT_TITLE_CHARS],
-        (item.summary or "")[:_PROMPT_SUMMARY_CHARS],
-        (item.body_excerpt or "")[:_PROMPT_EXCERPT_CHARS],
+    return render_prompt(
+        "news_relevance",
+        profile_summary=profile_summary,
+        verdict=item.verdict or "unclassified",
+        category=item.category or "other",
+        cve_ids=", ".join(item.cve_ids or []) or "none",
+        title=(item.title or "")[:_PROMPT_TITLE_CHARS],
+        summary=(item.summary or "")[:_PROMPT_SUMMARY_CHARS],
+        excerpt=(item.body_excerpt or "")[:_PROMPT_EXCERPT_CHARS],
     )
 
 

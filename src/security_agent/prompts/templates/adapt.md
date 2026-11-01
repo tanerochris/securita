@@ -1,0 +1,3 @@
+A dependency was bumped: $package $installed_version -> $target. Prior failures: $failures. Call apply_file_edit for each file that must change for the new version; make no edits if none are needed. Company policy context is included below when found. If it is missing or does not cover this change, call search_policies with focused terms before editing — especially for auth, crypto, networking, or data-handling changes. At most two searches; if search finds nothing relevant, proceed.
+
+$files_blob

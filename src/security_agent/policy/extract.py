@@ -17,37 +17,13 @@ from security_agent.audit import get_shared_log
 from security_agent.policy.constants import EFFECTS
 from security_agent.policy.rules import validate_match
 from security_agent.policy.service import PolicyError
+from security_agent.prompts import render_prompt
 
 log = logging.getLogger(__name__)
 audit = get_shared_log()
 
 _EXTRACTABLE_EFFECTS = tuple(e for e in EFFECTS if e != "allow")
 _PROMPT_DOC_CHARS = 12000
-
-_EXTRACT_PROMPT = """\
-You extract enforceable security-policy guardrails from a company policy
-document. Reply with ONE JSON array only, no prose. Each element:
-{"effect": "...", "match": {...}, "reason": "...", "quote": "..."}.
-
-- effect is one of: "block", "require_approval", "silence".
-  "block" = never do this action. "require_approval" = a human must
-  approve first. "silence" = this finding class is accepted risk.
-- match has any of: "package" (dependency name glob, e.g. "openssl*"),
-  "advisory" (advisory ID glob, e.g. "CVE-2024-*"), "ecosystem"
-  (e.g. "npm", "pypi"), "max_severity" (number 0-10: rule matches
-  findings at or below this score). Omit keys that do not apply, but
-  every rule needs at least one match key.
-- reason restates the restriction in one sentence.
-- quote copies the EXACT source sentence from the document, verbatim.
-
-Extract ONLY explicit restrictions ("must", "never", "prohibit",
-"forbidden", "require approval", "do not"). Never infer, generalize,
-or invent package names. Skip guidance, background, and anything
-without a concrete match. An empty document yields [].
-
-Document:
-%s
-"""
 
 
 def _parse_candidates(content: str) -> list[dict] | None:
@@ -111,7 +87,7 @@ def draft_candidates(doc_key: str, *, model=None) -> dict:
         bound = model if model is not None else get_chat_model()
         result = tracked_invoke(
             bound,
-            _EXTRACT_PROMPT % doc.text[:_PROMPT_DOC_CHARS],
+            render_prompt("policy_extract", document=doc.text[:_PROMPT_DOC_CHARS]),
             task="policy-extract",
         )
         parsed = _parse_candidates(str(getattr(result, "content", "") or ""))
