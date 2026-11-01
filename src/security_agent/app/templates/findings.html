@@ -26,39 +26,13 @@
 </div>
 
 <section class="mt-7" aria-labelledby="active-heading">
-  <div class="flex flex-wrap items-center gap-3">
-    <h2 id="active-heading" class="text-lg">Active ({{ total }})</h2>
-    {% if total %}
-    <p class="text-sm text-slate-600" role="status">Showing {{ start }}–{{ end }} of {{ total }}</p>
-    <form class="ml-auto flex items-center gap-2" method="get" action="/repos/{{ repo.id }}/findings">
-      <label class="text-[13px] font-bold text-slate-600" for="perSelect">Show</label>
-      <select id="perSelect" name="per" onchange="this.form.submit()" aria-label="Findings per page">
-        {% for opt in ["25", "50", "100", "all"] %}
-        <option value="{{ opt }}" {% if per == opt %}selected{% endif %}>{{ "All" if opt == "all" else opt }}</option>
-        {% endfor %}
-      </select>
-      <span class="text-[13px] text-slate-600">per page</span>
-    </form>
-    {% endif %}
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 id="active-heading" class="text-lg">Active ({{ active|length }})</h2>
+    <span class="text-sm text-slate-600">Search, sort, and page through every open finding — 50 per page by default.</span>
   </div>
-  {% if total and pages > 1 %}
-  <nav class="mt-3 flex flex-wrap items-center gap-2.5" aria-label="Active findings pages">
-    {% if page > 1 %}
-    <a class="btn-secondary !px-3 !py-1.5 text-[13px]" href="/repos/{{ repo.id }}/findings?page={{ page - 1 }}&per={{ per }}">&larr; Previous</a>
-    {% else %}
-    <span class="inline-flex cursor-not-allowed items-center gap-2 rounded-lg border border-brand-mist bg-white px-3 py-1.5 text-[13px] font-semibold text-slate-400" aria-disabled="true">&larr; Previous</span>
-    {% endif %}
-    <span class="text-sm font-semibold text-brand-deep">Page {{ page }} of {{ pages }}</span>
-    {% if page < pages %}
-    <a class="btn-secondary !px-3 !py-1.5 text-[13px]" href="/repos/{{ repo.id }}/findings?page={{ page + 1 }}&per={{ per }}">Next &rarr;</a>
-    {% else %}
-    <span class="inline-flex cursor-not-allowed items-center gap-2 rounded-lg border border-brand-mist bg-white px-3 py-1.5 text-[13px] font-semibold text-slate-400" aria-disabled="true">Next &rarr;</span>
-    {% endif %}
-  </nav>
-  {% endif %}
   {% if active %}
   <div class="brand-table mt-3 overflow-x-auto rounded-xl">
-    <table>
+    <table data-grid data-per-page="50">
       <thead><tr><th>Package</th><th>Advisory</th><th>Severity</th><th>KEV</th><th>Scope</th><th>Status</th><th>Fixed in</th></tr></thead>
       <tbody>
       {% for f in active %}
@@ -90,7 +64,7 @@
   <h2 id="silent-heading" class="text-lg">Silent with reason ({{ silent|length }})</h2>
   {% if silent %}
   <div class="brand-table mt-3 overflow-x-auto rounded-xl">
-    <table>
+    <table data-grid data-per-page="10">
       <thead><tr><th>Package</th><th>Advisory</th><th>Reason</th></tr></thead>
       <tbody>
       {% for f in silent %}
@@ -115,7 +89,7 @@
   </div>
   {% if secrets %}
   <div class="brand-table mt-3 overflow-x-auto rounded-xl">
-    <table>
+    <table data-grid data-per-page="10">
       <thead><tr><th>Rule</th><th>Path</th><th>Liveness</th><th>Status</th><th>Rotation</th></tr></thead>
       <tbody>
       {% for s in secrets %}

@@ -329,7 +329,8 @@ def test_deny_and_delegation_flow():
         assert row is not None and row.classes == ["merge"]
 
 
-def test_findings_pagination():
+def test_findings_grid_renders_full_table():
+    """Findings render all rows for the client grid (search/page/sort in JS)."""
     from security_agent.control import repos as repo_svc
     from security_agent.db.models import RepoKind
 
@@ -348,19 +349,21 @@ def test_findings_pagination():
                 )
             )
     _login_as(Role.REPORTER)
-    first = client.get(f"/repos/{repo.id}/findings").text
-    assert "Showing 1–25 of 30" in first
-    assert "Page 1 of 2" in first
-    assert first.count("CVE-PAGE-") == 25
-    second = client.get(f"/repos/{repo.id}/findings?page=2&per=25").text
-    assert "Showing 26–30 of 30" in second
-    assert second.count("CVE-PAGE-") == 5
-    everything = client.get(f"/repos/{repo.id}/findings?per=all").text
-    assert "Showing 1–30 of 30" in everything
-    assert everything.count("CVE-PAGE-") == 30
-    assert "Page 1 of 1" not in everything  # single page hides the pager
-    fallback = client.get(f"/repos/{repo.id}/findings?per=bogus&page=99").text
-    assert "Showing 26–30 of 30" in fallback  # bad per → 25, high page clamps
+    body = client.get(f"/repos/{repo.id}/findings").text
+    assert body.count("CVE-PAGE-") == 30  # full data; the grid pages client-side
+    assert '<table data-grid data-per-page="50">' in body
+    assert "/static/vendor/simple-datatables/simple-datatables.js" in body
+    assert "cdn.jsdelivr.net" not in body and "unpkg.com" not in body.replace(
+        "https://unpkg.com/htmx.org@2.0.4", ""
+    )  # grid assets vendored offline
+
+
+def test_static_vendor_assets_served():
+    _login_as(Role.REPORTER)
+    js = client.get("/static/vendor/simple-datatables/simple-datatables.js")
+    assert js.status_code == 200 and "simpleDatatables" in js.text
+    css = client.get("/static/vendor/simple-datatables/style.css")
+    assert css.status_code == 200 and "datatable" in css.text
 
 
 def test_disconnect_repo_flow():

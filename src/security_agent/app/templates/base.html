@@ -33,6 +33,7 @@
   }
 </script>
 <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+<link rel="stylesheet" href="/static/vendor/simple-datatables/style.css" integrity="sha384-CinX6s1UC1GpaQwL9eKshF7JhtC8H2xchDD0dWqlCgZ8t+GCCcjluxCgmsbVpdEh" crossorigin="anonymous">
 <style>
   :root {
     --color-mist: #E0F2FE;
@@ -92,6 +93,25 @@
   .btn-danger:hover { background: #041E33; border-color: #041E33; color: #fff; }
   .stat-card { display: block; background: #fff; border: 1px solid #E0F2FE; border-radius: 12px; padding: 1.15rem 1.25rem; box-shadow: 0 1px 3px rgba(8,47,73,0.08), 0 4px 12px rgba(8,47,73,0.05); cursor: pointer; transition: box-shadow 200ms ease, border-color 200ms ease; }
   .stat-card:hover { border-color: var(--color-sky); box-shadow: 0 4px 16px rgba(2,132,199,0.16); }
+  /* simple-datatables brand skin: controls inherit the Securita palette. */
+  .datatable-wrapper { font-size: 0.875rem; }
+  .datatable-top, .datatable-bottom { padding: 0.6rem 0.1rem; }
+  .datatable-top .datatable-search input, .datatable-top .datatable-dropdown select { border: 1px solid var(--color-border); border-radius: 8px; padding: 0.45rem 0.7rem; font-size: 0.8125rem; color: var(--color-navy); background: #fff; transition: border-color 200ms ease, box-shadow 200ms ease; }
+  .datatable-top .datatable-search input:focus, .datatable-top .datatable-dropdown select:focus { border-color: var(--color-primary); box-shadow: 0 0 0 3px rgba(125,211,252,0.45); outline: none; }
+  .datatable-table > thead > tr > th { background: var(--color-mist); color: var(--color-deep); font-weight: 700; border-bottom: 1px solid #E0F2FE; }
+  .datatable-table > thead > tr > th:hover { background: #BAE6FD; }
+  main .datatable-table { border-collapse: collapse; }
+  /* Sortable headers render as <button>: keep them flat labels, never blue pills. */
+  .datatable-table > thead button.datatable-sorter { background: transparent; border: none; box-shadow: none; padding: 0; color: inherit; font: inherit; text-align: inherit; cursor: pointer; }
+  .datatable-table > thead button.datatable-sorter:hover,
+  .datatable-table > thead button.datatable-sorter:active { background: transparent; border: none; box-shadow: none; color: inherit; }
+  .datatable-table > thead button.datatable-sorter:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+  .datatable-table > tbody > tr > td { border-bottom: 1px solid #E0F2FE; }
+  .datatable-pagination a, .datatable-pagination button { cursor: pointer; border-radius: 8px; transition: background-color 200ms ease, color 200ms ease; }
+  .datatable-pagination a:hover, .datatable-pagination button:hover { background: var(--color-mist); color: var(--color-navy); }
+  .datatable-pagination .active a, .datatable-pagination .active button { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+  .datatable-pagination .disabled a, .datatable-pagination .disabled button { cursor: not-allowed; opacity: 0.5; }
+  .datatable-info { color: var(--color-muted); font-size: 0.8125rem; }
 </style>
 </head>
 <body class="bg-[#F6FBFF] antialiased">
@@ -229,6 +249,34 @@
     document.addEventListener("keydown", function (event) {
       if (event.key === "Escape" && pendingForm) { hide(); }
     });
+  })();
+</script>
+<script src="/static/vendor/simple-datatables/simple-datatables.js" integrity="sha384-OMR/OfeQC/fStE5yr0SBMKPPfMHctC+Ebr+QVzjdXw1FqbB0iBKgFkrAzvjhYByo" crossorigin="anonymous"></script>
+<script type="text/javascript">
+  (function () {
+    /* Every data table: search + sort + pagination from the vendored
+       simple-datatables build (offline, no CDN). Per-table config comes
+       from data attributes; without JS the full server table still shows. */
+    function bootTables() {
+      if (typeof simpleDatatables === "undefined") { return; }
+      document.querySelectorAll("table[data-grid]").forEach(function (el) {
+        if (el.getAttribute("data-grid-done") === "1") { return; }
+        el.setAttribute("data-grid-done", "1");
+        var per = parseInt(el.getAttribute("data-per-page") || "50", 10) || 50;
+        new simpleDatatables.DataTable(el, {
+          perPage: per,
+          perPageSelect: [["10", 10], ["25", 25], ["50", 50], ["100", 100], ["All", 0]],
+          searchable: el.getAttribute("data-grid-search") !== "false",
+          sortable: el.getAttribute("data-grid-sort") !== "false",
+          labels: { placeholder: "Search…", info: "Showing {start}–{end} of {rows}" }
+        });
+      });
+    }
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", bootTables);
+    } else {
+      bootTables();
+    }
   })();
 </script>
 <script type="text/javascript">

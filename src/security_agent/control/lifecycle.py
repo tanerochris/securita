@@ -5,7 +5,7 @@ and silent-with-reason. Rescan verdict flips drive reopen (silent/resolved
 → open) and park (open/proposed → silent).
 """
 
-from sqlalchemy import case, delete, func, nulls_last, select
+from sqlalchemy import case, delete, nulls_last, select
 
 from security_agent.db.models import (
     Finding,
@@ -99,40 +99,19 @@ def _relevant_order():
     )
 
 
-def count_open_findings(repo_id: int) -> int:
-    """Active finding count for pagination totals."""
+def list_open_findings(repo_id: int) -> list[Finding]:
+    """Active findings for dashboards; silent excluded from default filters."""
     with session_scope() as db:
-        return (
-            db.scalar(
-                select(func.count())
-                .select_from(Finding)
+        rows = list(
+            db.scalars(
+                select(Finding)
                 .where(
                     Finding.repo_id == repo_id,
                     Finding.status.in_([FindingStatus.OPEN, FindingStatus.PROPOSED]),
                 )
+                .order_by(*_relevant_order())
             )
-            or 0
         )
-
-
-def list_open_findings(
-    repo_id: int, *, limit: int | None = None, offset: int = 0
-) -> list[Finding]:
-    """Active findings for dashboards; silent excluded from default filters."""
-    with session_scope() as db:
-        stmt = (
-            select(Finding)
-            .where(
-                Finding.repo_id == repo_id,
-                Finding.status.in_([FindingStatus.OPEN, FindingStatus.PROPOSED]),
-            )
-            .order_by(*_relevant_order())
-        )
-        if offset:
-            stmt = stmt.offset(offset)
-        if limit is not None:
-            stmt = stmt.limit(limit)
-        rows = list(db.scalars(stmt))
         for r in rows:
             db.expunge(r)
         return rows

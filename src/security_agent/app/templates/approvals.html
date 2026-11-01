@@ -69,7 +69,7 @@
   <h2 id="history-heading" class="text-lg">Decided history</h2>
   {% if history %}
   <div class="brand-table mt-3 overflow-x-auto rounded-xl">
-    <table>
+    <table data-grid data-per-page="50">
       <thead><tr><th>ID</th><th>Action</th><th>Repo</th><th>Decision</th><th>Decider</th><th>Source</th><th></th></tr></thead>
       <tbody>
       {% for ctx in history %}{% set g = ctx.gate %}
@@ -117,7 +117,7 @@
   <h2 id="delegations-heading" class="text-lg">Delegations</h2>
   {% if delegations %}
   <div class="brand-table mt-3 overflow-x-auto rounded-xl">
-    <table>
+    <table data-grid data-per-page="50">
       <thead><tr><th>ID</th><th>Owner</th><th>Delegate</th><th>Classes</th><th>Expires</th><th>Revoked</th><th></th></tr></thead>
       <tbody>
       {% for d in delegations %}

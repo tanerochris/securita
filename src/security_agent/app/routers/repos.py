@@ -160,26 +160,11 @@ def new_webhook_secret(request: Request, repo_id: int, _owner: User = Depends(re
 
 
 @router.get("/{repo_id}/findings", response_class=HTMLResponse)
-def findings_view(
-    request: Request,
-    repo_id: int,
-    user: User = Depends(get_current_user),
-    page: int = 1,
-    per: str = "25",
-):
+def findings_view(request: Request, repo_id: int, user: User = Depends(get_current_user)):
     from security_agent.app.main import templates
 
     repo = _repo_or_404(repo_id)
-    per_value = per if per in ("25", "50", "100", "all") else "25"
-    total = lifecycle.count_open_findings(repo_id)
-    limit = None if per_value == "all" else int(per_value)
-    pages = max(1, -(-total // limit)) if limit else 1
-    page = min(max(1, page), pages)
-    active = lifecycle.list_open_findings(
-        repo_id, limit=limit, offset=(page - 1) * limit if limit else 0
-    )
-    start = (page - 1) * limit + 1 if limit and total else (1 if total else 0)
-    end = min(total, page * limit) if limit else total
+    active = lifecycle.list_open_findings(repo_id)
     silent = lifecycle.list_silent_findings(repo_id)
     return templates.TemplateResponse(
         request,
@@ -191,12 +176,6 @@ def findings_view(
             "secrets": lifecycle.list_repo_secrets(repo_id),
             "can_rotate": user.role in (Role.OWNER, Role.MAINTAINER),
             "csrf": make_csrf(),
-            "page": page,
-            "per": per_value,
-            "total": total,
-            "pages": pages,
-            "start": start,
-            "end": end,
         },
     )
 

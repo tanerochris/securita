@@ -7,7 +7,7 @@
 
 {% if repos %}
 <div class="brand-table mt-5 overflow-x-auto rounded-xl">
-  <table>
+  <table data-grid data-per-page="50">
     <thead><tr><th>Name</th><th>Source</th><th>Schedule</th><th>Last scan</th>{% if can_manage %}<th>Actions</th>{% endif %}</tr></thead>
     <tbody>
     {% for r in repos %}
@@ -57,7 +57,7 @@
   <p class="mt-1 max-w-2xl text-sm text-slate-600">Connect once with a personal access token, then pick repositories — no per-repo token pasting. Works with github.com, GitLab.com, and any self-hosted instance.</p>
   {% if connections %}
   <div class="brand-table mt-3 overflow-x-auto rounded-xl">
-    <table>
+    <table data-grid data-per-page="50">
       <thead><tr><th>Provider</th><th>Account</th><th>Method</th><th>Host</th><th></th></tr></thead>
       <tbody>
       {% for c in connections %}

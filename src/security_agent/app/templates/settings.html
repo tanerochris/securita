@@ -20,7 +20,7 @@
   </div>
   {% if channels %}
   <div class="brand-table mt-3 overflow-x-auto rounded-xl">
-    <table>
+    <table data-grid data-per-page="50">
       <thead><tr><th>ID</th><th>Kind</th><th>Name</th><th>Target</th><th>Enabled</th><th>Secret</th>{% if is_owner %}<th>Actions</th><th>Edit</th>{% endif %}</tr></thead>
       <tbody>
       {% for c in channels %}
@@ -181,7 +181,7 @@
   <h2 id="parked-heading" class="text-lg">Parked runs</h2>
   {% if parked %}
   <div class="brand-table mt-3 overflow-x-auto rounded-xl">
-    <table>
+    <table data-grid data-per-page="10">
       <thead><tr><th>Run</th><th>Repo</th><th>Tokens</th><th>Reason</th><th></th></tr></thead>
       <tbody>
       {% for r in parked %}

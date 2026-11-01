@@ -126,7 +126,7 @@
   </div>
   {% if top_findings %}
   <div class="brand-table mt-3 overflow-x-auto rounded-xl">
-    <table>
+    <table data-grid data-per-page="10" data-grid-search="false">
       <thead><tr><th>Package</th><th>Advisory</th><th>Severity</th><th>KEV</th><th>Status</th><th>Fixed in</th></tr></thead>
       <tbody>
       {% for f in top_findings %}

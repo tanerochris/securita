@@ -65,7 +65,7 @@
     <h2 id="findings-heading" class="text-lg">Findings first seen ({{ findings|length }})</h2>
     {% if findings %}
     <div class="brand-table mt-3 overflow-x-auto rounded-xl">
-      <table>
+      <table data-grid data-per-page="10">
         <thead><tr><th>Package</th><th>Advisory</th><th>Status</th></tr></thead>
         <tbody>
         {% for f in findings %}
@@ -88,7 +88,7 @@
     <h2 id="cost-heading" class="text-lg">Model cost</h2>
     {% if usage %}
     <div class="brand-table mt-3 overflow-x-auto rounded-xl">
-      <table>
+      <table data-grid data-per-page="10">
         <thead><tr><th>Task</th><th>Tokens</th><th>USD</th></tr></thead>
         <tbody>
         {% for u in usage %}
