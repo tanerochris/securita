@@ -100,18 +100,140 @@ def render_pr(
     ignored: list[str],
     dashboard: str,
 ) -> tuple[str, str]:
-    title = (
-        f"[security] {package} {from_version}→{to_version} ({', '.join(sorted(set(advisories)))})"
+    """Deterministic PR copy; also the fallback when the model misses."""
+    advs = sorted(set(advisories))
+    if len(advs) <= 3:
+        adv_summary = ", ".join(advs) if advs else "security fixes"
+    else:
+        adv_summary = f"{len(advs)} advisories incl. {advs[0]}"
+    title = f"[security] {package} {from_version}→{to_version} ({adv_summary})"
+    if len(advs) <= 3:
+        first = (
+            f"{package} {from_version} → {to_version} "
+            f"fixes {', '.join(advs) if advs else 'security issues'}."
+        )
+    else:
+        first = f"{package} {from_version} → {to_version} fixes {len(advs)} advisories."
+    lines = [first]
+    if len(advs) > 3:
+        shown = advs[:20]
+        rest = f", and {len(advs) - len(shown)} more" if len(advs) > len(shown) else ""
+        lines.append(f"Advisories: {', '.join(shown)}{rest}.")
+    lines.extend(
+        [
+            *[f"WARNING: {adv} is CISA KEV exploited." for adv in sorted(set(kev))],
+            *[f"Verification: {v}" for v in verifications],
+            f"Grouping: {grouping}.",
+            *(["Ignored tests: " + "; ".join(ignored)] if ignored else []),
+            f"Dashboard: {dashboard}",
+        ]
     )
-    lines = [
-        f"{package} {from_version} → {to_version} fixes {', '.join(sorted(set(advisories)))}.",
-        *[f"WARNING: {adv} is CISA KEV exploited." for adv in sorted(set(kev))],
-        *[f"Verification: {v}" for v in verifications],
-        f"Grouping: {grouping}.",
-        *(["Ignored tests: " + "; ".join(ignored)] if ignored else []),
-        f"Dashboard: {dashboard}",
-    ]
     return title, "\n".join(lines)
+
+
+_TEMPLATE_MAX_CHARS = 4000
+_TEMPLATE_FILES = (
+    ".github/pull_request_template.md",
+    "docs/pull_request_template.md",
+)
+_TEMPLATE_DIRS = (
+    ".github/PULL_REQUEST_TEMPLATE",
+    ".gitlab/merge_request_templates",
+)
+_TEMPLATE_KEYWORDS = ("security", "fix", "bug", "deps", "default")
+
+
+def _find_pr_template(workdir: Path) -> str | None:
+    """Repo PR/MR template text (capped), or None when the repo has none.
+
+    Single-file templates win; a template directory yields the first
+    keyword match (security/fix/bug/deps/default), else the first file.
+    Read from the delivery checkout, so it is always fresh per delivery.
+    """
+    for rel in _TEMPLATE_FILES:
+        target = workdir / rel
+        if target.is_file():
+            text = _safe_template_read(target)
+            if text:
+                return text
+    for rel in _TEMPLATE_DIRS:
+        directory = workdir / rel
+        if not directory.is_dir():
+            continue
+        try:
+            candidates = sorted(p for p in directory.iterdir() if p.is_file())
+        except OSError:
+            continue
+        picked = None
+        for keyword in _TEMPLATE_KEYWORDS:
+            picked = next((p for p in candidates if keyword in p.name.lower()), None)
+            if picked is not None:
+                break
+        if picked is None and candidates:
+            picked = candidates[0]
+        if picked is not None:
+            text = _safe_template_read(picked)
+            if text:
+                return text
+    return None
+
+
+def _safe_template_read(path: Path) -> str:
+    try:
+        return path.read_text(errors="replace")[:_TEMPLATE_MAX_CHARS].strip()
+    except OSError:
+        return ""
+
+
+def _render_pr_text(
+    package: str,
+    from_version: str,
+    to_version: str,
+    advisories: list[str],
+    kev: list[str],
+    verifications: list[str],
+    grouping: str,
+    ignored: list[str],
+    dashboard: str,
+    *,
+    template: str | None = None,
+    repo_id: int | None = None,
+) -> tuple[str, str]:
+    """Model-written PR copy with the deterministic template as fallback."""
+    from security_agent.brain.pr_text import generate_pr_text
+    from security_agent.control.cost import CostCapExceeded
+
+    try:
+        generated = generate_pr_text(
+            package,
+            from_version,
+            to_version,
+            advisories,
+            kev,
+            verifications,
+            grouping,
+            ignored,
+            dashboard,
+            template=template,
+            repo_id=repo_id,
+        )
+    except CostCapExceeded:
+        raise
+    except Exception:  # noqa: BLE001 - PR copy never breaks delivery
+        generated = None
+    if generated is not None:
+        return generated
+    return render_pr(
+        package,
+        from_version,
+        to_version,
+        advisories,
+        kev,
+        verifications,
+        grouping,
+        ignored,
+        dashboard,
+    )
 
 
 def render_issue(package: str, advisory: str, guidance: str, dashboard: str) -> tuple[str, str]:
@@ -585,7 +707,8 @@ def _deliver_group(
         "single package" if len(group) == 1 else f"{len(group)} proposals, same package {package}"
     )
     ignored = sorted({i for p in group for i in (p.ignored_tests or [])})
-    title, body = render_pr(
+    template = _find_pr_template(workdir)
+    title, body = _render_pr_text(
         package,
         from_v,
         to_v,
@@ -595,8 +718,26 @@ def _deliver_group(
         grouping,
         ignored,
         dashboard,
+        template=template,
+        repo_id=repo.id,
     )
-    signed = _commit(workdir, title, body)
+    if template:
+        # A filled template is the PR body; the commit keeps the concise
+        # summary so `git log` stays readable.
+        _, commit_body = render_pr(
+            package,
+            from_v,
+            to_v,
+            advisories,
+            kev,
+            [p.verification_result for p in group],
+            grouping,
+            ignored,
+            dashboard,
+        )
+    else:
+        commit_body = body
+    signed = _commit(workdir, title, commit_body)
     if repo.kind == RepoKind.GIT and not token and (repo.url or "").startswith("https://"):
         raise DeliverError("no provider token for push")
     _push_branch(workdir, branch, token)

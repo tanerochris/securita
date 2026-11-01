@@ -1,0 +1,208 @@
+"""Model-written PR titles/bodies for patch delivery (FR-5).
+
+`render_pr` in worker/deliver.py stays the deterministic fallback; this
+module asks the chat model for a short human-readable summary first, so
+a 33-advisory bump reads as one line instead of a pasted CVE list.
+
+Fail-closed: a disabled flag, a missing API key, model errors,
+unparseable output, and validation failures all return None and the
+caller keeps the template. Only CostCapExceeded propagates (the run is
+parked and must abort, never silently keep delivering).
+"""
+
+import json
+import logging
+import re
+
+log = logging.getLogger(__name__)
+
+_TITLE_MAX_CHARS = 150
+_BODY_MAX_CHARS = 8000
+_PROMPT_ADVISORIES = 30
+_PROMPT_VERIFICATION_CHARS = 2000
+
+_TEMPLATE_BLOCK = """\
+
+The repository provides the pull request template between <<< and >>>.
+Produce "body" by filling it in: keep every heading and question
+verbatim, answer each section from the facts only, tick a checkbox as
+"[x]" only when the facts support it (leave the rest "- [ ]"), drop no
+sections, and include the Dashboard line at the end if the template
+has no slot for it.
+<<<
+%s
+>>>
+"""
+
+_PR_PROMPT = """\
+You write the title and body of a security-update pull request. Reply
+with ONE JSON object only, no prose: {"title": "...", "body": "..."}.
+
+Rules:
+- "title": one line, at most 100 characters, starting with "[security] ".
+  Name the package and the version bump and how many advisories it
+  fixes. NEVER paste the advisory list into the title.
+- "body": short markdown. First line: "<package> <from> -> <to> fixes N
+  advisories." Then a "Fixes" bullet list with at most 10 advisory IDs
+  (append "and M more" when truncated). Keep every KEV warning line
+  verbatim when given. Then Verification, Grouping, and Dashboard lines
+  exactly as given below.
+- Use only the facts below; invent no versions, advisories, or links.
+
+PACKAGE: %s
+FROM: %s
+TO: %s
+ADVISORIES (%d total): %s
+KEV (exploited, warn verbatim): %s
+VERIFICATION: %s
+GROUPING: %s
+IGNORED TESTS: %s
+DASHBOARD: %s
+"""
+
+
+def _pr_prompt(
+    package: str,
+    from_version: str,
+    to_version: str,
+    advisories: list[str],
+    kev: list[str],
+    verifications: list[str],
+    grouping: str,
+    ignored: list[str],
+    dashboard: str,
+    *,
+    template: str | None = None,
+) -> str:
+    advs = sorted(set(advisories))
+    shown = advs[:_PROMPT_ADVISORIES]
+    blob = ", ".join(shown)
+    if len(advs) > len(shown):
+        blob += f", and {len(advs) - len(shown)} more"
+    prompt = _PR_PROMPT % (
+        package,
+        from_version,
+        to_version,
+        len(advs),
+        blob or "none",
+        ", ".join(sorted(set(kev))) or "none",
+        "; ".join(verifications)[:_PROMPT_VERIFICATION_CHARS] or "none",
+        grouping or "single package",
+        "; ".join(ignored) or "none",
+        dashboard,
+    )
+    if template:
+        prompt += _TEMPLATE_BLOCK % template
+    return prompt
+
+
+def _parse_pr_text(
+    content: str, dashboard: str, template: str | None = None
+) -> tuple[str, str] | None:
+    """(title, body) from model output, else None (caller keeps template)."""
+    text = (content or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text).strip()
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    title, body = data.get("title"), data.get("body")
+    if not isinstance(title, str) or not isinstance(body, str):
+        return None
+    title, body = title.strip(), body.strip()
+    if (
+        not title.startswith("[security] ")
+        or len(title) <= len("[security] ")
+        or len(title) > _TITLE_MAX_CHARS
+        or "\n" in title
+    ):
+        return None
+    if not body:
+        return None
+    body = body[:_BODY_MAX_CHARS]
+    if dashboard and dashboard not in body:
+        body += f"\nDashboard: {dashboard}"
+    if template:
+        headings = [ln.strip() for ln in template.splitlines() if ln.lstrip().startswith("#")]
+        if any(h and h not in body for h in headings):
+            return None  # template structure dropped: caller keeps the fallback
+    return title, body
+
+
+def generate_pr_text(
+    package: str,
+    from_version: str,
+    to_version: str,
+    advisories: list[str],
+    kev: list[str],
+    verifications: list[str],
+    grouping: str,
+    ignored: list[str],
+    dashboard: str,
+    *,
+    model=None,
+    template: str | None = None,
+    repo_id: int | None = None,
+) -> tuple[str, str] | None:
+    """Model-written (title, body); None when the template should win.
+
+    An explicitly injected model skips the enabled/key gate so tests can
+    drive this deterministically; the live path needs both the flag and
+    a configured API key, otherwise no request is attempted.
+    """
+    from security_agent.brain import get_chat_model, tracked_invoke
+    from security_agent.config import get_settings
+    from security_agent.control.cost import CostCapExceeded
+
+    if model is None:
+        settings = get_settings()
+        if not settings.pr_text_model_enabled or not settings.model_api_key:
+            return None
+        bound = get_chat_model()
+    else:
+        bound = model
+    prompt = _pr_prompt(
+        package,
+        from_version,
+        to_version,
+        advisories,
+        kev,
+        verifications,
+        grouping,
+        ignored,
+        dashboard,
+        template=template,
+    )
+    policy_block = ""
+    try:
+        from security_agent.control.cost import current_run_id
+        from security_agent.policy.retrieve import retrieve_policy_context
+
+        top = " ".join(sorted(set(advisories))[:5])
+        query = f"{package} {top} pull request template title description commit changelog"
+        policy_block, _ = retrieve_policy_context(
+            repo_id,
+            "pr-text",
+            query,
+            run_id=current_run_id(),
+        )
+    except Exception as exc:  # noqa: BLE001 - guidance never breaks PR copy
+        log.warning("policy guidance for PR copy failed: %s", exc)
+    if policy_block:
+        prompt += f"\n\n{policy_block}"
+    try:
+        result = tracked_invoke(bound, prompt, task="pr-text")
+        parsed = _parse_pr_text(str(getattr(result, "content", "") or ""), dashboard, template)
+    except CostCapExceeded:
+        raise
+    except Exception as exc:  # noqa: BLE001 - PR copy never breaks delivery
+        log.warning("PR copy generation failed for %s: %s", package, exc)
+        return None
+    if parsed is None:
+        log.debug("PR copy generation unparseable for %s", package)
+        return None
+    return parsed
