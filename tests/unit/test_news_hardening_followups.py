@@ -1,4 +1,4 @@
-"""Cross-phase follow-ups #5-#10: matcher index, pinning, revocation,
+"""Cross-phase follow-ups #5-#10: retention pushdown, pinning,
 cross-worker throttle, HN pagination, feed content-type allowlist."""
 
 import json
@@ -89,54 +89,26 @@ def _seed(tag: str, status=FindingStatus.OPEN):
         return repo.id, finding.id, item.id, run.id
 
 
-# --- #5 + #7 ---
+# --- #5 + #7 (news is standalone: transitions never touch news columns) ---
 
 
-def test_matcher_index_built_once_per_run():
-    repo = repos.connect_repo("idx-run", RepoKind.GIT, url="https://example.com/idx.git")
-    with session_scope() as db:
-        db.add(
-            Finding(
-                repo_id=repo.id,
-                package="left-pad",
-                installed_version="1",
-                advisory_id="CVE-2026-90002",
-            )
-        )
-        db.add(
-            NewsItem(
-                source="hn",
-                external_id=f"idx-{datetime.now(UTC).timestamp()}",
-                title="CVE-2026-90002",
-                cve_ids=["CVE-2026-90002"],
-            )
-        )
-    with mock.patch.object(
-        news_mod, "_build_match_index", wraps=news_mod._build_match_index
-    ) as spy:
-        result = news_mod.run_matcher()
-    assert result["boosts"] >= 1
-    assert spy.call_count == 1
-
-
-def test_boost_revoked_on_transition_and_verdict():
+def test_transitions_and_verdicts_leave_news_columns_alone():
     _repo, fid, _item, run_id = _seed("revoke-t")
     transition_finding(fid, FindingStatus.SILENT, reason="unreachable")
     with session_scope() as db:
         row = db.get(Finding, fid)
-        assert (row.news_weight, row.news_url) == (0, None)
-        assert db.scalar(select(NewsBoost).where(NewsBoost.finding_id == fid)) is None
+        assert row.status == FindingStatus.SILENT
+        assert (row.news_weight, row.news_url) == (100, "https://news.example/story")
 
     _r2, fid2, _i2, run2 = _seed("revoke-v")
     apply_verdict(fid2, run2, False, reason_code="unreachable")
     with session_scope() as db:
         row = db.get(Finding, fid2)
         assert row.status == FindingStatus.SILENT
-        assert (row.news_weight, row.news_url) == (0, None)
-        assert db.scalar(select(NewsBoost).where(NewsBoost.finding_id == fid2)) is None
+        assert row.silent_reason == "unreachable"
 
 
-def test_purge_keeps_remaining_boost_recompute():
+def test_purge_drops_stale_items_and_legacy_boosts():
     _repo, fid, old_item, _run = _seed("purge-rem")
     with session_scope() as db:
         fresh = NewsItem(
@@ -148,12 +120,21 @@ def test_purge_keeps_remaining_boost_recompute():
         )
         db.add(fresh)
         db.flush()
+        fresh_id = fresh.id
         db.add(NewsBoost(finding_id=fid, news_item_id=fresh.id, weight=10, matched_on="left-pad"))
         db.get(NewsItem, old_item).fetched_at = datetime.now(UTC) - timedelta(days=91)
     assert purge_old_news() >= 1
     with session_scope() as db:
-        row = db.get(Finding, fid)
-        assert (row.news_weight, row.news_url) == (10, "https://news.example/fresh")
+        assert db.get(NewsItem, old_item) is None
+        assert db.get(NewsItem, fresh_id) is not None
+        assert (
+            db.scalar(
+                select(NewsBoost).where(
+                    NewsBoost.finding_id == fid, NewsBoost.news_item_id == old_item
+                )
+            )
+            is None
+        )
 
 
 # --- #6 ---

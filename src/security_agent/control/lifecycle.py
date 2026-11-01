@@ -5,11 +5,12 @@ and silent-with-reason. Rescan verdict flips drive reopen (silent/resolved
 → open) and park (open/proposed → silent).
 """
 
-from sqlalchemy import case, delete, nulls_last, select
+from sqlalchemy import case, delete, func, nulls_last, select
 
 from security_agent.db.models import (
     Finding,
     FindingStatus,
+    ModelUsage,
     NewsBoost,
     NewsItem,
     NewsPoll,
@@ -42,33 +43,6 @@ TRANSITIONS: dict[FindingStatus, frozenset[FindingStatus]] = {
 }
 
 
-def revoke_news_boosts(db, finding: Finding) -> None:
-    """Drop a finding's news boosts (follow-up #7) in the caller's transaction."""
-    db.execute(delete(NewsBoost).where(NewsBoost.finding_id == finding.id))
-    finding.news_weight = 0
-    finding.news_url = None
-
-
-def refresh_news_boost(db, finding_id: int) -> None:
-    """Recompute denormalized boost fields from remaining boosts."""
-    top = db.scalar(
-        select(NewsBoost)
-        .where(NewsBoost.finding_id == finding_id)
-        .order_by(NewsBoost.weight.desc(), NewsBoost.id.desc())
-        .limit(1)
-    )
-    row = db.get(Finding, finding_id)
-    if row is None:
-        return
-    if top is None:
-        row.news_weight = 0
-        row.news_url = None
-        return
-    item = db.get(NewsItem, top.news_item_id)
-    row.news_weight = top.weight
-    row.news_url = item.url if item else None
-
-
 def transition_finding(finding_id: int, to_status: FindingStatus, *, reason: str = "") -> Finding:
     """Move a finding along the lifecycle; rejects illegal jumps."""
     with session_scope() as db:
@@ -79,8 +53,6 @@ def transition_finding(finding_id: int, to_status: FindingStatus, *, reason: str
             raise ValueError(f"Illegal transition {finding.status} → {to_status}.")
         finding.status = to_status
         finding.silent_reason = reason if to_status == FindingStatus.SILENT else None
-        if to_status not in (FindingStatus.OPEN, FindingStatus.PROPOSED):
-            revoke_news_boosts(db, finding)
         db.flush()
         db.expunge(finding)
         return finding
@@ -113,35 +85,54 @@ def apply_verdict(finding_id: int, run_id: int, reachable: bool, **fields) -> Ve
             ):
                 finding.status = FindingStatus.SILENT
                 finding.silent_reason = verdict.reason_code
-                revoke_news_boosts(db, finding)
         db.flush()
         db.expunge(verdict)
         return verdict
 
 
 def _relevant_order():
-    """Most-relevant-first: KEV, severity, news boost, then newest (FR-12 D3)."""
+    """Most-relevant-first: KEV, severity, then newest (FR-12 D3)."""
     return (
         Finding.kev_exploited.desc(),
         nulls_last(Finding.severity_score.desc()),
-        Finding.news_weight.desc(),
         Finding.id.desc(),
     )
 
 
-def list_open_findings(repo_id: int) -> list[Finding]:
-    """Active findings for dashboards; silent excluded from default filters."""
+def count_open_findings(repo_id: int) -> int:
+    """Active finding count for pagination totals."""
     with session_scope() as db:
-        rows = list(
-            db.scalars(
-                select(Finding)
+        return (
+            db.scalar(
+                select(func.count())
+                .select_from(Finding)
                 .where(
                     Finding.repo_id == repo_id,
                     Finding.status.in_([FindingStatus.OPEN, FindingStatus.PROPOSED]),
                 )
-                .order_by(*_relevant_order())
             )
+            or 0
         )
+
+
+def list_open_findings(
+    repo_id: int, *, limit: int | None = None, offset: int = 0
+) -> list[Finding]:
+    """Active findings for dashboards; silent excluded from default filters."""
+    with session_scope() as db:
+        stmt = (
+            select(Finding)
+            .where(
+                Finding.repo_id == repo_id,
+                Finding.status.in_([FindingStatus.OPEN, FindingStatus.PROPOSED]),
+            )
+            .order_by(*_relevant_order())
+        )
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        rows = list(db.scalars(stmt))
         for r in rows:
             db.expunge(r)
         return rows
@@ -292,6 +283,58 @@ def list_repo_runs(repo_id: int, limit: int = 20) -> list[ScanRun]:
         return rows
 
 
+def get_run(run_id: int) -> ScanRun | None:
+    with session_scope() as db:
+        row = db.get(ScanRun, run_id)
+        if row is not None:
+            db.expunge(row)
+        return row
+
+
+def list_run_findings(run_id: int) -> list[Finding]:
+    """Findings first seen by this run (dedupe keeps earliest first_run_id)."""
+    with session_scope() as db:
+        rows = list(
+            db.scalars(select(Finding).where(Finding.first_run_id == run_id).order_by(Finding.id))
+        )
+        for r in rows:
+            db.expunge(r)
+        return rows
+
+
+def list_run_secrets(run_id: int) -> list[SecretFinding]:
+    with session_scope() as db:
+        rows = list(
+            db.scalars(
+                select(SecretFinding)
+                .where(SecretFinding.first_run_id == run_id)
+                .order_by(SecretFinding.id)
+            )
+        )
+        for r in rows:
+            db.expunge(r)
+        return rows
+
+
+def list_run_usage(run_id: int) -> list[ModelUsage]:
+    with session_scope() as db:
+        rows = list(
+            db.scalars(
+                select(ModelUsage).where(ModelUsage.run_id == run_id).order_by(ModelUsage.id)
+            )
+        )
+        for r in rows:
+            db.expunge(r)
+        return rows
+
+
+def count_run_verdicts(run_id: int) -> tuple[int, int]:
+    """(reachable, total) verdicts recorded by this run."""
+    with session_scope() as db:
+        rows = list(db.scalars(select(Verdict.reachable).where(Verdict.run_id == run_id)))
+        return sum(1 for r in rows if r), len(rows)
+
+
 VERDICT_RETENTION_DAYS = 90
 
 
@@ -315,7 +358,7 @@ NEWS_RETENTION_DAYS = 90
 
 
 def purge_old_news(*, older_than_days: int = NEWS_RETENTION_DAYS) -> int:
-    """Delete news items past retention with their boosts; recompute findings."""
+    """Delete news items past retention with their legacy boosts."""
     from datetime import UTC, datetime, timedelta
 
     cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
@@ -330,17 +373,9 @@ def purge_old_news(*, older_than_days: int = NEWS_RETENTION_DAYS) -> int:
         is_sqlite = bind is not None and bind.dialect.name == "sqlite"
         sql_cutoff = cutoff.replace(tzinfo=None) if is_sqlite else cutoff
         stale_select = select(NewsItem.id).where(NewsItem.fetched_at < sql_cutoff)
-        affected = {
-            fid
-            for (fid,) in db.execute(
-                select(NewsBoost.finding_id).where(NewsBoost.news_item_id.in_(stale_select))
-            ).all()
-        }
         db.execute(delete(NewsBoost).where(NewsBoost.news_item_id.in_(stale_select)))
         result = db.execute(delete(NewsItem).where(NewsItem.fetched_at < sql_cutoff))
         removed = cast("CursorResult[Any]", result).rowcount
-        for fid in affected:
-            refresh_news_boost(db, fid)
         return int(removed or 0)
 
 

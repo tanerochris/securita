@@ -1,3 +1,16 @@
-{% extends "base.html" %}{% block content %}<h1>Invite created</h1>
-<p>Send this single-use link to {{ email }} (shown once, expires in 72h):</p>
-<p><code>/signup?token={{ token }}</code></p>{% endblock %}
+{% extends "base.html" %}
+{% block title %}Invite created — Securita{% endblock %}
+{% block page_title %}Accounts{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-xl">
+  <div class="rounded-xl bg-white p-6 text-center shadow-card sm:p-8">
+    <span class="mx-auto grid h-14 w-14 place-items-center rounded-full bg-brand-mist text-brand-primary" aria-hidden="true">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+    </span>
+    <h1 class="mt-4 text-[24px] font-extrabold tracking-tight text-brand-navy">Invite created</h1>
+    <p class="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate-600">Send this single-use link to <strong class="font-bold text-brand-navy">{{ email }}</strong>. It is shown once and expires in 72 hours — the token is stored as a hash and can never be viewed again.</p>
+    <p class="mx-auto mt-4 max-w-full overflow-x-auto rounded-lg bg-brand-navy px-4 py-3 font-mono text-[13px] text-brand-mist">/signup?token={{ token }}</p>
+    <a class="btn-primary mt-6" href="/accounts">Back to accounts</a>
+  </div>
+</div>
+{% endblock %}

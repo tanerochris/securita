@@ -16,6 +16,9 @@ services:
         - action: sync+restart
           path: ./src
           target: /app/src
+        - action: sync+restart
+          path: ./migrations
+          target: /app/migrations
         - action: rebuild
           path: pyproject.toml
         - action: rebuild
@@ -31,14 +34,16 @@ services:
       SANDBOX_BACKEND: ${SANDBOX_BACKEND:-docker}
       SANDBOX_IMAGE: ${SANDBOX_IMAGE:-security-agent-sandbox:latest}
       SANDBOX_WORK_ROOT: /sandbox-work
+      SANDBOX_WORK_VOLUME: sandbox-work
     depends_on:
       db:
         condition: service_healthy
     volumes:
       # Docker socket lets the worker spawn fresh per-tool sandbox
       # containers (follow-up #1). Only the worker gets it; the app
-      # never executes tools. Work root is shared so sandbox containers
-      # can bind-mount per-run workdirs.
+      # never executes tools. The work volume is shared by NAME so
+      # sibling sandbox containers mount per-run subpaths from it;
+      # container paths must never be passed as daemon bind sources.
       - /var/run/docker.sock:/var/run/docker.sock
       - sandbox-work:/sandbox-work
     develop:
@@ -46,6 +51,9 @@ services:
         - action: sync+restart
           path: ./src
           target: /app/src
+        - action: sync+restart
+          path: ./migrations
+          target: /app/migrations
         - action: rebuild
           path: pyproject.toml
         - action: rebuild
@@ -66,15 +74,16 @@ services:
       retries: 10
 
   # Builds the disposable sandbox image and smoke-checks its scanners.
-  # Run with: docker compose --profile sandbox run --rm sandbox-runner
-  # The worker spawns fresh containers from this image per tool call;
-  # this service is not a long-lived daemon and mounts no socket.
+  # No profiles gate: a plain `docker compose up --build` must produce
+  # this image, because the worker cannot scan without it. The runner is
+  # not a daemon — it validates the scanners, prints ready, and exits 0.
+  # Rebuild just it with: docker compose build sandbox-runner
+  # The worker spawns fresh containers from this image per tool call.
   sandbox-runner:
     build:
       context: .
       dockerfile: Dockerfile.sandbox
     image: security-agent-sandbox:latest
-    profiles: ["sandbox"]
     command: python3 -m security_agent.sandbox.runner
 
   loki:
@@ -88,5 +97,8 @@ services:
 
 volumes:
   pgdata:
+  # Pinned real name: the worker addresses this volume by name when
+  # sharing workdirs with sibling sandbox containers (SANDBOX_WORK_VOLUME).
   sandbox-work:
+    name: sandbox-work
   loki-data:

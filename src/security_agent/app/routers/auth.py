@@ -44,6 +44,14 @@ def _check_rate(request: Request, path: str) -> None:
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Slow down.")
 
 
+@router.get("/")
+def index(session: str | None = Cookie(default=None, alias=SESSION_COOKIE)):
+    """Landing route: dashboard for signed-in users, login for everyone else."""
+    if session and svc.validate_session(session) is not None:
+        return RedirectResponse("/dashboard", status_code=303)
+    return RedirectResponse("/login", status_code=303)
+
+
 @router.get("/signup", response_class=HTMLResponse)
 def signup_form(request: Request, token: str = ""):
     from security_agent.app.main import templates
@@ -74,10 +82,12 @@ def signup(
 
 
 @router.get("/login", response_class=HTMLResponse)
-def login_form(request: Request):
+def login_form(request: Request, expired: str = ""):
     from security_agent.app.main import templates
 
-    return templates.TemplateResponse(request, "login.html", {"csrf": make_csrf()})
+    return templates.TemplateResponse(
+        request, "login.html", {"csrf": make_csrf(), "expired": expired == "1"}
+    )
 
 
 @router.post("/login", dependencies=[Depends(require_csrf)])
@@ -182,14 +192,6 @@ def _dashboard_context() -> dict:
             )
             or 0
         )
-        boosted = (
-            db.scalar(
-                select(func.count())
-                .select_from(Finding)
-                .where(Finding.status.in_(active), Finding.news_weight > 0)
-            )
-            or 0
-        )
         open_count = (
             db.scalar(
                 select(func.count())
@@ -237,7 +239,6 @@ def _dashboard_context() -> dict:
                 .order_by(
                     Finding.kev_exploited.desc(),
                     nulls_last(Finding.severity_score.desc()),
-                    Finding.news_weight.desc(),
                     Finding.id.desc(),
                 )
                 .limit(6)
@@ -326,11 +327,9 @@ def _dashboard_context() -> dict:
             "open": open_count,
             "proposed": proposed_count,
             "kev": kev_count,
-            "boosted": boosted,
             "open_pct": _pct(open_count),
             "proposed_pct": _pct(proposed_count),
             "kev_pct": _pct(kev_count),
-            "boosted_pct": _pct(boosted),
         },
     }
 

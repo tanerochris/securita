@@ -169,38 +169,122 @@ def test_findings_and_patches_views():
     assert "Merge now" not in patches.text  # no merge button on patches view
 
 
-def test_boost_badge_renders_first_with_link():
+def test_findings_views_carry_no_news_badges():
     from security_agent.control import repos as repo_svc
     from security_agent.db.models import RepoKind
 
     repo = repo_svc.connect_repo(
-        f"boost-{datetime.now(UTC).timestamp()}", RepoKind.LOCAL, local_path="/tmp/boost-r"
+        f"nobadge-{datetime.now(UTC).timestamp()}", RepoKind.LOCAL, local_path="/tmp/nobadge-r"
     )
     with session_scope() as db:
-        for advisory, weight, url in (
-            ("CVE-BOOST-PLAIN", 0, None),
-            ("CVE-BOOST-LINKED", 100, "https://news.example/story"),
-            ("CVE-BOOST-EVIL", 10, "javascript:alert(1)"),
-        ):
+        for advisory, score in (("CVE-NB-LOW", 5.0), ("CVE-NB-HIGH", 9.0)):
             db.add(
                 Finding(
                     repo_id=repo.id,
                     package="left-pad",
                     installed_version="1.0.0",
                     advisory_id=advisory,
-                    severity_score=5.0,
-                    news_weight=weight,
-                    news_url=url,
+                    severity_score=score,
+                    news_weight=100,
+                    news_url="https://news.example/story",
                 )
             )
     _login_as(Role.REPORTER)
     body = client.get(f"/repos/{repo.id}/findings").text
-    assert '<a href="https://news.example/story">news +100</a>' in body
-    assert "javascript:" not in body
-    assert "news +10" in body  # badge without a linkable URL
-    assert body.index("CVE-BOOST-LINKED") < body.index("CVE-BOOST-PLAIN")
+    assert "news +" not in body
+    assert "https://news.example/story" not in body
+    assert body.index("CVE-NB-HIGH") < body.index("CVE-NB-LOW")  # severity orders
     detail = client.get(f"/repos/{repo.id}").text
-    assert '<a href="https://news.example/story">news +100</a>' in detail
+    assert "news +" not in detail
+    assert "https://news.example/story" not in detail
+    dash = client.get("/dashboard").text
+    assert "Boosted by news" not in dash
+
+
+def test_news_feed_serves_major_only():
+    from security_agent.db.models import NewsItem
+
+    stamp = datetime.now(UTC).timestamp()
+    with session_scope() as db:
+        db.add(
+            NewsItem(
+                source="hn",
+                external_id=f"feed-major-{stamp}",
+                title=f"Major breach rocks supply chain {stamp}",
+                url="https://news.example/major",
+                summary="wormable",
+                cve_ids=["CVE-2026-31337"],
+                verdict="major",
+                category="breach",
+            )
+        )
+        db.add(
+            NewsItem(
+                source="hn",
+                external_id=f"feed-minor-{stamp}",
+                title=f"Small vendor advisory {stamp}",
+                verdict="minor",
+                category="patch",
+            )
+        )
+        db.add(
+            NewsItem(
+                source="hn",
+                external_id=f"feed-uncl-{stamp}",
+                title=f"Awaiting classification {stamp}",
+            )
+        )
+    _login_as(Role.REPORTER)
+    body = client.get("/news").text
+    assert "Major breach rocks supply chain" in body
+    assert "CVE-2026-31337" in body
+    assert "Small vendor advisory" not in body
+    assert "Awaiting classification" not in body
+
+
+def test_repo_news_section_and_feed_tags():
+    from security_agent.control import repos as repo_svc
+    from security_agent.db.models import NewsFindingLink, NewsItem, RepoKind
+
+    stamp = datetime.now(UTC).timestamp()
+    repo = repo_svc.connect_repo(f"newsrepo-{stamp}", RepoKind.LOCAL, local_path="/tmp/newsrepo-r")
+    other = repo_svc.connect_repo(
+        f"otherrepo-{stamp}", RepoKind.LOCAL, local_path="/tmp/otherrepo-r"
+    )
+    with session_scope() as db:
+        finding = Finding(
+            repo_id=repo.id,
+            package="left-pad",
+            installed_version="1.0.0",
+            advisory_id="CVE-2026-41414",
+        )
+        db.add(finding)
+        item = NewsItem(
+            source="hn",
+            external_id=f"tagged-{stamp}",
+            title=f"Left-pad RCE campaign {stamp}",
+            url="https://news.example/leftpad",
+            summary="critical",
+            cve_ids=["CVE-2026-41414"],
+            verdict="major",
+            category="vulnerability",
+        )
+        db.add(item)
+        db.flush()
+        db.add(NewsFindingLink(news_item_id=item.id, finding_id=finding.id, kind="minted"))
+    _login_as(Role.REPORTER)
+    detail = client.get(f"/repos/{repo.id}").text
+    assert "Security news (1)" in detail
+    assert "Left-pad RCE" in detail
+    missing = client.get(f"/repos/{other.id}").text
+    assert "No security news for this repo" in missing
+    feed = client.get("/news").text
+    assert f">{repo.name}</a>" in feed  # repo tag chip
+    filtered = client.get(f"/news?repo={repo.id}").text
+    assert "Left-pad RCE" in filtered
+    assert repo.name in filtered
+    excluded = client.get(f"/news?repo={other.id}").text
+    assert "Left-pad RCE" not in excluded
 
 
 def test_approve_then_merge_flow():
@@ -243,3 +327,70 @@ def test_deny_and_delegation_flow():
         assert delegate is not None
         row = db.scalar(select(Delegation).where(Delegation.delegate_id == delegate.id))
         assert row is not None and row.classes == ["merge"]
+
+
+def test_findings_pagination():
+    from security_agent.control import repos as repo_svc
+    from security_agent.db.models import RepoKind
+
+    repo = repo_svc.connect_repo(
+        f"page-{datetime.now(UTC).timestamp()}", RepoKind.LOCAL, local_path="/tmp/page-r"
+    )
+    with session_scope() as db:
+        for i in range(30):
+            db.add(
+                Finding(
+                    repo_id=repo.id,
+                    package="left-pad",
+                    installed_version="1.0.0",
+                    advisory_id=f"CVE-PAGE-{i:02d}",
+                    status=FindingStatus.OPEN,
+                )
+            )
+    _login_as(Role.REPORTER)
+    first = client.get(f"/repos/{repo.id}/findings").text
+    assert "Showing 1–25 of 30" in first
+    assert "Page 1 of 2" in first
+    assert first.count("CVE-PAGE-") == 25
+    second = client.get(f"/repos/{repo.id}/findings?page=2&per=25").text
+    assert "Showing 26–30 of 30" in second
+    assert second.count("CVE-PAGE-") == 5
+    everything = client.get(f"/repos/{repo.id}/findings?per=all").text
+    assert "Showing 1–30 of 30" in everything
+    assert everything.count("CVE-PAGE-") == 30
+    assert "Page 1 of 1" not in everything  # single page hides the pager
+    fallback = client.get(f"/repos/{repo.id}/findings?per=bogus&page=99").text
+    assert "Showing 26–30 of 30" in fallback  # bad per → 25, high page clamps
+
+
+def test_disconnect_repo_flow():
+    from security_agent.app.dependencies import make_csrf
+    from security_agent.control import repos as repo_svc
+    from security_agent.db.models import Repo, RepoKind
+
+    repo = repo_svc.connect_repo(
+        f"disc-{datetime.now(UTC).timestamp()}", RepoKind.LOCAL, local_path="/tmp/disc-r"
+    )
+    with session_scope() as db:
+        db.add(
+            Finding(
+                repo_id=repo.id,
+                package="left-pad",
+                installed_version="1.0.0",
+                advisory_id="CVE-DISC",
+                status=FindingStatus.OPEN,
+            )
+        )
+    _login_as(Role.REPORTER)
+    r = client.post(f"/repos/{repo.id}/disconnect", data={"csrf": make_csrf()})
+    assert r.status_code == 403
+    _login_as(Role.DEVELOPER)
+    r = client.post(f"/repos/{repo.id}/disconnect", data={"csrf": make_csrf()})
+    assert r.status_code == 403
+    _login_as(Role.OWNER)
+    r = client.post(f"/repos/{repo.id}/disconnect", data={"csrf": _csrf(f"/repos/{repo.id}")})
+    assert r.status_code in (200, 303)
+    assert client.get(f"/repos/{repo.id}").status_code == 404
+    with session_scope() as db:
+        assert db.get(Repo, repo.id) is None
+        assert db.scalar(select(Finding).where(Finding.repo_id == repo.id)) is None

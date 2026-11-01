@@ -1,5 +1,19 @@
-{% extends "base.html" %}{% block content %}<h1>Choose a new password</h1>
-<form method="post" action="/reset/confirm"><input type="hidden" name="csrf" value="{{ csrf }}">
-<input type="hidden" name="token" value="{{ token }}">
-<label>New password <input name="password" type="password" required minlength="12"></label>
-<button type="submit">Set password</button></form>{% endblock %}
+{% extends "base_auth.html" %}
+{% block title %}Choose a new password — Securita{% endblock %}
+{% block content %}
+<h1 class="text-[24px] font-extrabold tracking-tight text-brand-navy">Choose a new password</h1>
+<p class="mt-1 text-sm leading-relaxed text-slate-600">Set a new password for your account. The reset link is single-use and expires in 1 hour.</p>
+
+<form class="mt-6 space-y-4" method="post" action="/reset/confirm">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="token" value="{{ token }}">
+  <div>
+    <label class="auth-label" for="password">New password</label>
+    <input class="auth-input" id="password" name="password" type="password" required minlength="12" autocomplete="new-password" placeholder="At least 12 characters" aria-describedby="pwHint">
+    <p class="mt-1.5 text-xs text-slate-500" id="pwHint">12 characters minimum. Existing sessions stay signed in — log out elsewhere if this reset was not you.</p>
+  </div>
+  <button class="btn-primary w-full !py-3" type="submit">Set new password</button>
+</form>
+
+<p class="mt-6 border-t border-brand-mist pt-5 text-center text-sm text-slate-600">Link expired? <a class="font-bold text-brand-primary hover:text-brand-deep" href="/reset">Request a new one</a></p>
+{% endblock %}

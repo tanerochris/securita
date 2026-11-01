@@ -1,7 +1,8 @@
 """Tier-2 news pollers: HN Algolia + RSS/Atom feeds (FR-6, H3 slice B).
 
-Pollers fetch and store news items with extracted CVE IDs. Matching
-against findings lives in slice C; this module never touches findings.
+Pollers fetch and store news items with extracted CVE IDs. The feed is
+standalone now: classification and news-driven findings live in
+news_intel, and this module never touches findings.
 """
 
 import hashlib
@@ -12,7 +13,6 @@ import socket
 import time
 import xml.etree.ElementTree as ET
 from contextlib import contextmanager as _contextmanager
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlencode, urljoin, urlparse
@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from security_agent.config import get_settings
-from security_agent.db.models import Finding, FindingStatus, NewsBoost, NewsItem, NewsPoll
+from security_agent.db.models import NewsItem, NewsPoll
 from security_agent.db.session import session_scope
 
 log = logging.getLogger(__name__)
@@ -385,9 +385,6 @@ def _record_poll(source: str, items: int) -> None:
         db.add(NewsPoll(source=source, items=items))
 
 
-STRONG_WEIGHT = 100  # CVE/advisory match on a Tier-1 finding
-WEAK_WEIGHT = 10  # package-name mention in the story title
-
 SCRAPE_TIMEOUT = 15
 SCRAPE_MAX_BYTES = 512_000
 SCRAPE_THROTTLE_SECONDS = 2.0  # per-host minimum gap between fetches
@@ -489,59 +486,6 @@ def _throttle_wait(host: str) -> None:
     _last_fetch[host] = time.monotonic()
 
 
-@dataclass(frozen=True)
-class _Candidate:
-    """Match-relevant finding columns; avoids ORM-loading every finding per item."""
-
-    id: int
-    advisory_id: str
-    aliases: tuple[str, ...]
-    package: str
-
-
-def _strong_match(cves: list[str], finding: _Candidate) -> str | None:
-    """CVE ID equal to the advisory or one of its aliases."""
-    known = {(finding.advisory_id or "").upper()}
-    known.update(str(a).upper() for a in (finding.aliases or []))
-    for cve in cves:
-        if cve in known:
-            return cve
-    return None
-
-
-def _weak_match(title: str | None, summary: str | None, finding: _Candidate) -> str | None:
-    """Package name mentioned in title/summary (whole token, case-insensitive)."""
-    package = (finding.package or "").lower()
-    text = f"{title or ''}\n{summary or ''}".lower()
-    if not package:
-        return None
-    if "/" in package:
-        hit = package in text
-    else:
-        hit = re.search(rf"\b{re.escape(package)}\b", text) is not None
-    return f"package:{finding.package}" if hit else None
-
-
-def _refresh_finding(db, finding_id: int) -> None:
-    """Denormalize the strongest boost onto the finding for ordering/badges."""
-    top = db.scalar(
-        select(NewsBoost)
-        .where(NewsBoost.finding_id == finding_id)
-        .order_by(NewsBoost.weight.desc(), NewsBoost.id.desc())
-        .limit(1)
-    )
-    row = db.get(Finding, finding_id)
-    if row is None:
-        return
-    if top is None:
-        row.news_weight = 0
-        row.news_url = None
-        return
-    item = db.get(NewsItem, top.news_item_id)
-    row.news_weight = top.weight
-    row.news_url = item.url if item else None
-
-
 _SCRAPE_TEXT_MARKERS = ("text/", "html", "xml", "json")
 
 
@@ -620,118 +564,6 @@ def enrich_item(item_id: int) -> bool:
         row.body_excerpt = body[:EXCERPT_CHARS]
         row.cve_ids = extract_cve_ids(body)
         return True
-
-
-@dataclass(frozen=True)
-class _MatchIndex:
-    """Per-run candidate index (follow-up #5): built once, not per item."""
-
-    by_advisory: dict[str, tuple[_Candidate, ...]]
-    by_package: dict[str, tuple[_Candidate, ...]]
-    all_candidates: tuple[_Candidate, ...]
-
-
-def _build_match_index(db) -> _MatchIndex:
-    candidates = [
-        _Candidate(
-            id=row[0],
-            advisory_id=row[1] or "",
-            aliases=tuple(row[2] or []),
-            package=row[3] or "",
-        )
-        for row in db.execute(
-            select(Finding.id, Finding.advisory_id, Finding.aliases, Finding.package).where(
-                Finding.status.in_([FindingStatus.OPEN, FindingStatus.PROPOSED])
-            )
-        ).all()
-    ]
-    by_advisory: dict[str, list[_Candidate]] = {}
-    by_package: dict[str, list[_Candidate]] = {}
-    for cand in candidates:
-        for key in {(cand.advisory_id or "").upper(), *(str(a).upper() for a in cand.aliases)}:
-            if key:
-                by_advisory.setdefault(key, []).append(cand)
-        if cand.package:
-            by_package.setdefault(cand.package.lower(), []).append(cand)
-    return _MatchIndex(
-        by_advisory={k: tuple(v) for k, v in by_advisory.items()},
-        by_package={k: tuple(v) for k, v in by_package.items()},
-        all_candidates=tuple(candidates),
-    )
-
-
-def match_item(item_id: int, *, index: _MatchIndex | None = None) -> int:
-    """Match one news item against queue-visible findings. Returns new boosts.
-
-    Rumor-only items (no Tier-1 finding) match nothing and change nothing;
-    a boost alone can never trigger action.
-    """
-    enrich_item(item_id)  # no-op unless CVE-less with an unscraped URL
-    with session_scope() as db:
-        item = db.get(NewsItem, item_id)
-        if item is None:
-            return 0
-        cves = [str(c).upper() for c in (item.cve_ids or [])]
-        title, summary, item_id_value = item.title, item.summary, item.id
-        if index is None:
-            index = _build_match_index(db)
-        # Strong candidates come from the advisory index; weak matching
-        # tests each distinct package once, never items x findings.
-        strong_ids = {c.id for cve in cves for c in index.by_advisory.get(cve, ())}
-        weak_ids = {
-            c.id
-            for cands in index.by_package.values()
-            if _weak_match(title, summary, cands[0]) is not None
-            for c in cands
-        }
-        candidates = [c for c in index.all_candidates if c.id in strong_ids | weak_ids]
-        new = 0
-        for finding in candidates:
-            matched = _strong_match(cves, finding)
-            weight = STRONG_WEIGHT
-            if matched is None:
-                matched = _weak_match(title, summary, finding)
-                weight = WEAK_WEIGHT
-            if matched is None:
-                continue
-            try:
-                with db.begin_nested():
-                    db.add(
-                        NewsBoost(
-                            finding_id=finding.id,
-                            news_item_id=item_id_value,
-                            weight=weight,
-                            matched_on=matched[:200],
-                        )
-                    )
-                    db.flush()
-            except IntegrityError:
-                _upgrade_boost(db, finding.id, item_id_value, weight, matched)
-                continue
-            new += 1
-            _refresh_finding(db, finding.id)
-        return new
-
-
-def _upgrade_boost(db, finding_id: int, item_id: int, weight: int, matched: str) -> None:
-    """Raise an existing weak boost when the same item later matches strongly."""
-    existing = db.scalar(
-        select(NewsBoost).where(
-            NewsBoost.finding_id == finding_id, NewsBoost.news_item_id == item_id
-        )
-    )
-    if existing is not None and existing.weight < weight:
-        existing.weight = weight
-        existing.matched_on = matched[:200]
-        _refresh_finding(db, finding_id)
-
-
-def run_matcher() -> dict[str, int]:
-    """Match every stored item; re-runs are idempotent via the boost key."""
-    with session_scope() as db:
-        ids = [i for (i,) in db.execute(select(NewsItem.id)).all()]
-        index = _build_match_index(db)
-    return {"items": len(ids), "boosts": sum(match_item(i, index=index) for i in ids)}
 
 
 def poll_news() -> dict[str, int]:

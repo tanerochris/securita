@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ repo.name }} — AI Security Agent{% endblock %}
+{% block title %}{{ repo.name }} — Securita{% endblock %}
 {% block page_title %}Repository{% endblock %}
 {% block content %}
 {% set u = repo.url or "" %}
@@ -46,7 +46,7 @@
   {% if active %}
   <div class="brand-table mt-3 overflow-x-auto rounded-xl">
     <table>
-      <thead><tr><th>Package</th><th>Advisory</th><th>Severity</th><th>KEV</th><th>News</th><th>Status</th></tr></thead>
+      <thead><tr><th>Package</th><th>Advisory</th><th>Severity</th><th>KEV</th><th>Status</th></tr></thead>
       <tbody>
       {% for f in active %}
         <tr>
@@ -54,7 +54,6 @@
           <td>{{ f.advisory_id }}</td>
           <td>{% if f.severity_score is not none %}<span class="inline-flex rounded-md px-2 py-0.5 text-xs font-bold {% if f.severity_score >= 7 %}bg-brand-navy text-white{% elif f.severity_score >= 4 %}bg-brand-primary text-white{% else %}bg-brand-mist text-brand-deep{% endif %}">{{ f.severity_score }}</span>{% else %}<span class="text-slate-500">—</span>{% endif %}</td>
           <td>{% if f.kev_exploited %}<span class="inline-flex rounded-full bg-brand-navy px-2 py-0.5 text-[11px] font-bold text-white">KEV</span>{% else %}<span class="text-slate-400">—</span>{% endif %}</td>
-          <td>{% if f.news_weight %}{% if f.news_url and (f.news_url.startswith('http://') or f.news_url.startswith('https://')) %}<a href="{{ f.news_url }}">news +{{ f.news_weight }}</a>{% else %}news +{{ f.news_weight }}{% endif %}{% else %}<span class="text-slate-400">—</span>{% endif %}</td>
           <td><span class="inline-flex rounded-full bg-brand-mist px-2 py-0.5 text-xs font-semibold text-brand-deep">{{ f.status.value }}</span></td>
         </tr>
       {% endfor %}
@@ -102,6 +101,47 @@
   {% endif %}
 </section>
 
+<section class="mt-7" aria-labelledby="repo-news-heading">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 id="repo-news-heading" class="text-lg">Security news ({{ repo_news|length }})</h2>
+    {% if repo_news %}<a class="ml-auto text-sm font-bold text-brand-primary hover:text-brand-deep" href="/news?repo={{ repo.id }}">All news for this repo &rarr;</a>{% endif %}
+  </div>
+  {% if repo_profile and (repo_profile.ecosystems or repo_profile.deployment_signals) %}
+  <p class="mt-2 text-[13px] leading-relaxed text-slate-600">Relevance is judged against this repo's stack{% if repo_profile.ecosystems %} ({{ repo_profile.ecosystems|join(", ") }}){% endif %}{% if repo_profile.deployment_signals %} and plausible deployment targets ({{ repo_profile.deployment_signals|join(", ") }}){% endif %}. Direct = concerns its code; platform = concerns where it can run.</p>
+  {% endif %}
+  {% if repo_news %}
+  <ol class="mt-3 space-y-3">
+  {% for item in repo_news %}
+    <li class="rounded-xl bg-white px-5 py-4 shadow-card">
+      <div class="flex flex-wrap items-center gap-2 text-xs font-bold">
+        <span class="inline-flex rounded-full bg-brand-navy px-2.5 py-1 text-white">{{ item.category or "other" }}</span>
+        {% for cve in (item.cve_ids or [])[:4] %}
+        <span class="inline-flex rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep">{{ cve }}</span>
+        {% endfor %}
+        <span class="ml-auto font-semibold text-slate-500">{{ item.published_at.strftime("%Y-%m-%d") if item.published_at else "undated" }}</span>
+      </div>
+      <p class="mt-2 text-[15px] font-bold leading-snug text-brand-deep">
+        {% if item.url and (item.url.startswith('http://') or item.url.startswith('https://')) %}<a class="hover:text-brand-primary" href="{{ item.url }}">{{ item.title }}</a>{% else %}{{ item.title }}{% endif %}
+      </p>
+      {% if item.summary %}<p class="mt-1 text-[13px] leading-relaxed text-slate-600">{{ item.summary[:300] }}</p>{% endif %}
+      {% if repo_relevance.get(item.id) %}
+      {% set rel = repo_relevance[item.id] %}
+      <p class="mt-2 text-[13px] leading-relaxed text-slate-600"><span class="inline-flex rounded-full {% if rel[0] == 'direct' %}bg-brand-navy text-white{% else %}bg-brand-mist text-brand-deep{% endif %} px-2.5 py-1 text-xs font-bold">{{ rel[0] }} · {{ rel[1] }}</span>{% if rel[2] %} <span>{{ rel[2] }}</span>{% endif %}</p>
+      {% endif %}
+    </li>
+  {% endfor %}
+  </ol>
+  {% else %}
+  <div class="mt-3 flex items-center gap-3.5 rounded-xl bg-white px-5 py-4 shadow-card">
+    <span class="grid h-10 w-10 flex-none place-items-center rounded-full bg-brand-mist text-brand-primary" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h13v12H4z"/><path d="M17 9h3v9h-3"/><path d="M7 10h7M7 13h7"/></svg></span>
+    <div>
+      <p class="text-sm font-bold text-brand-navy">No security news for this repo</p>
+      <p class="text-[13px] text-slate-600">Stories assessed relevant to this repository — directly to its code, or to a platform it can run on — will appear here. <a class="font-semibold" href="/news">Browse all news</a>.</p>
+    </div>
+  </div>
+  {% endif %}
+</section>
+
 <div class="mt-7 grid grid-cols-1 gap-6 lg:grid-cols-2">
   <section aria-labelledby="proposals-heading">
     <h2 id="proposals-heading" class="text-lg">Recent proposals</h2>
@@ -139,7 +179,7 @@
         <tbody>
         {% for r in runs %}
           <tr>
-            <td class="font-semibold text-brand-navy">#{{ r.id }}</td>
+            <td class="font-semibold text-brand-navy"><a href="/repos/{{ repo.id }}/runs/{{ r.id }}">#{{ r.id }}</a></td>
             <td>{{ r.trigger.value }}</td>
             <td>
               {% if r.status.value == "running" %}<span class="inline-flex items-center gap-1.5 rounded-full bg-brand-primary px-2.5 py-0.5 text-xs font-bold text-white"><span class="h-1.5 w-1.5 rounded-full bg-white" aria-hidden="true"></span>running</span>
@@ -205,4 +245,22 @@
   </section>
   {% endif %}
 </div>
+
+{% if can_manage %}
+<section class="mt-6 rounded-xl bg-white p-5 shadow-[inset_0_0_0_1px_#FECDD3,0_1px_3px_rgba(8,47,73,0.08)]" aria-labelledby="danger-heading">
+  <div class="flex flex-wrap items-center gap-4">
+    <div class="min-w-0">
+      <h2 id="danger-heading" class="text-lg">Disconnect repository</h2>
+      <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Stops all scheduled scans and permanently deletes this repository's findings, secrets, patch proposals, approvals, scan history, and stored tokens from the agent. The repository on the provider (or the local folder) is <strong class="font-bold text-brand-navy">not</strong> deleted. This cannot be undone — reconnecting starts from a fresh first scan.</p>
+    </div>
+    <form class="ml-auto" method="post" action="/repos/{{ repo.id }}/disconnect" data-confirm data-confirm-title="Disconnect this repository?" data-confirm-message="Findings, patch proposals, approvals, scan history, and stored tokens will be permanently deleted from the agent. The repository on the provider (or the local folder) stays untouched. This cannot be undone." data-confirm-action="Disconnect">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="btn-danger" type="submit">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.72 0"/><path d="M12 2v10"/></svg>
+        Disconnect repository
+      </button>
+    </form>
+  </div>
+</section>
+{% endif %}
 {% endblock %}

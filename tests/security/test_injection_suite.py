@@ -236,13 +236,14 @@ def test_xxe_feed_refused_without_expansion(tmp_path):
     assert sentinel.read_text() == "PWNED"
 
 
-def test_poisoned_news_creates_no_findings_or_proposals():
-    """Rumor-only hostile news: stored as data, matched to nothing, patches nothing."""
-    from security_agent.worker.news import match_item, parse_feed, run_matcher, store_news_items
+def test_poisoned_news_mints_nothing_without_verification():
+    """Hostile news: stored as data, minted only when OSV verifies the CVE."""
+    from security_agent.worker import news_intel as intel_mod
+    from security_agent.worker.news import parse_feed, store_news_items
+    from security_agent.worker.news_intel import mint_from_item
 
     # Unique CVE: the shared test DB may already hold CVE-2026-0001
-    # findings seeded by unit tests, which would make this "rumor-only"
-    # item match. Pick an advisory no finding carries.
+    # findings seeded by unit tests. Pick an advisory no finding carries.
     with session_scope() as db:
         taken = {a for (a,) in db.execute(select(Finding.advisory_id)).all()}
     cve = next(f"CVE-2026-{n:05d}" for n in range(90000, 90100) if f"CVE-2026-{n:05d}" not in taken)
@@ -259,11 +260,19 @@ def test_poisoned_news_creates_no_findings_or_proposals():
     with session_scope() as db:
         item = db.scalar(select(NewsItem).where(NewsItem.source == "rss:poison-test"))
         item_id = item.id
-    assert match_item(item_id) == 0
-    assert run_matcher()["boosts"] >= 0
+    # Unclassified: never minted.
+    assert mint_from_item(item_id) == {"minted": 0, "linked": 0}
+    # Even classified major: an unverified CVE mints nothing.
+    with session_scope() as db:
+        db.get(NewsItem, item_id).verdict = "major"
+    with (
+        mock.patch.object(intel_mod, "verify_advisory", return_value=None),
+        mock.patch.object(intel_mod, "kev_exploited_ids", return_value=set()),
+    ):
+        assert mint_from_item(item_id) == {"minted": 0, "linked": 0}
     with session_scope() as db:
         findings_after = db.scalar(select(func.count()).select_from(Finding)) or 0
-    assert findings_after == findings_before  # news never mints findings
+    assert findings_after == findings_before  # unverified news mints nothing
     assert _approval_count() == approvals_before  # poisoned news approves nothing
 
 

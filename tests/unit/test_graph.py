@@ -13,7 +13,8 @@ def _no_live_news():
     with (
         mock.patch("security_agent.worker.news.poll_news", return_value={}),
         mock.patch(
-            "security_agent.worker.news.run_matcher", return_value={"items": 0, "boosts": 0}
+            "security_agent.worker.news_intel.process_news",
+            return_value={"classified": 0, "major": 0, "minted": 0, "linked": 0},
         ),
     ):
         yield
@@ -28,7 +29,9 @@ def test_fetch_signals_isolated_from_news_outage():
     """Tier-2 failures must never gate Tier-1 scanning."""
     with (
         mock.patch("security_agent.worker.news.poll_news", side_effect=RuntimeError("HN down")),
-        mock.patch("security_agent.worker.news.run_matcher", side_effect=RuntimeError("db locked")),
+        mock.patch(
+            "security_agent.worker.news_intel.process_news", side_effect=RuntimeError("db locked")
+        ),
     ):
         result = build_graph().invoke({"repo": "demo"})
     assert list(result["done"]) == list(NODES)

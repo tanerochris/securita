@@ -1,61 +1,212 @@
-{% extends "base.html" %}{% block content %}<h1>Notification settings</h1>
-{% if notice %}<p><strong>{{ notice }}</strong></p>{% endif %}
-<h2>Channels</h2>
-<table><tr><th>ID</th><th>Kind</th><th>Name</th><th>Target</th><th>Enabled</th><th>Secret</th>{% if is_owner %}<th></th><th>Edit</th>{% endif %}</tr>
-{% for c in channels %}<tr><td>{{ c.id }}</td><td>{{ c.kind }}</td><td>{{ c.name }}</td>
-<td>{% if c.kind == "email" %}{{ c.config.host }}:{{ c.config.port }} → {{ c.config.to|join(", ") }}{% else %}{{ c.config.host or "—" }}{% endif %}</td>
-<td>{{ "yes" if c.enabled else "no" }}</td><td>{{ "set" if c.has_secret else "—" }}</td>
-{% if is_owner %}<td><form method="post" action="/settings/channels/{{ c.id }}/test" style="display:inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Test-send</button></form>
-<form method="post" action="/settings/channels/{{ c.id }}/toggle" style="display:inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">{{ "Disable" if c.enabled else "Enable" }}</button></form>
-<form method="post" action="/settings/channels/{{ c.id }}/delete" style="display:inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-danger" type="submit">Delete</button></form></td>
-<td><form method="post" action="/settings/channels/{{ c.id }}"><input type="hidden" name="csrf" value="{{ csrf }}">
-<label>Name <input name="name" value="{{ c.name }}" required></label>
-{% if c.kind == "email" %}<label>Host <input name="host" value="{{ c.config.host }}"></label>
-<label>Port <input name="port" value="{{ c.config.port }}"></label>
-<label>Username <input name="username" value="{{ c.config.username }}"></label>
-<label>Password <input name="password" type="password" placeholder="(unchanged)"></label>
-<label>From <input name="from_addr" value="{{ c.config.from_addr }}"></label>
-<label>To <input name="to" value="{{ c.config.to|join(", ") }}"></label>
-{% else %}<label>Webhook URL <input name="url" placeholder="(unchanged)"></label>
-<label>Signing key <input name="signing_key" placeholder="(unchanged)"></label>{% endif %}
-<button type="submit">Update</button></form></td>{% endif %}</tr>{% endfor %}</table>
-{% if is_owner %}<h2>Add channel</h2>
-<form method="post" action="/settings/channels"><input type="hidden" name="csrf" value="{{ csrf }}">
-<label>Kind <select name="kind"><option value="email">email</option><option value="slack">slack</option><option value="webhook">webhook</option></select></label>
-<label>Name <input name="name" required></label>
-<fieldset><legend>Email (SMTP)</legend>
-<label>Host <input name="host" placeholder="smtp.example.com"></label>
-<label>Port <input name="port" value="587"></label>
-<label>Username <input name="username"></label>
-<label>Password <input name="password" type="password"></label>
-<label>From <input name="from_addr" placeholder="agent@example.com"></label>
-<label>To (comma-separated) <input name="to"></label></fieldset>
-<fieldset><legend>Slack / webhook</legend>
-<label>Webhook URL <input name="url" size="60"></label>
-<label>Signing key (webhook only, optional) <input name="signing_key"></label></fieldset>
-<button type="submit">Add channel</button></form>
-<h2>Per-severity routing</h2>
-{% for sev in severities %}<form method="post" action="/settings/routes"><input type="hidden" name="csrf" value="{{ csrf }}">
-<input type="hidden" name="severity" value="{{ sev }}"><label>{{ sev }} → channel ids (comma-separated)
-<input name="channel_ids" value="{{ route_ids[sev] }}" placeholder="e.g. 1,2"></label>
-<button type="submit">Save</button></form>{% endfor %}
-<h2>Risk digest</h2>
-<form method="post" action="/settings/digest"><input type="hidden" name="csrf" value="{{ csrf }}">
-<label><input type="checkbox" name="enabled" value="on" {% if digest.enabled %}checked{% endif %}> Enabled (daily)</label>
-<label>Hour (UTC 0–23) <input name="hour_utc" value="{{ digest.hour_utc }}"></label>
-<button type="submit">Save digest</button></form>
-<h2>Reports</h2>
-<p><a href="/settings/reports/export?format=json">Download JSON</a> · <a href="/settings/reports/export?format=csv">Download CSV</a></p>
-{% endif %}<h2>Cost control</h2>
-<p>Per-run cap: {{ cap }} tokens · Spend today: ${{ "%.2f"|format(spend) }} (warn ${{ warn_usd }} / critical ${{ critical_usd }})</p>
-{% if is_owner %}<form method="post" action="/settings/cost/cap"><input type="hidden" name="csrf" value="{{ csrf }}">
-<label>Per-run cap (tokens) <input name="cap" value="{{ cap }}"></label>
-<button type="submit">Set cap</button></form>
-{% endif %}<h3>Parked runs</h3>
-{% if parked %}<table><tr><th>Run</th><th>Repo</th><th>Tokens</th><th>Reason</th><th></th></tr>
-{% for r in parked %}<tr><td>{{ r.id }}</td><td>{{ r.repo_name }}</td><td>{{ r.token_usage }}</td><td>{{ r.reason }}</td>
-<td><form method="post" action="/settings/cost/resume"><input type="hidden" name="csrf" value="{{ csrf }}">
-<input type="hidden" name="run_id" value="{{ r.id }}"><label>New cap <input name="new_cap" placeholder="{{ cap }}"></label>
-<button type="submit">Resume</button></form></td></tr>{% endfor %}</table>
-{% else %}<p>No parked runs.</p>{% endif %}
+{% extends "base.html" %}
+{% block title %}Settings — Securita{% endblock %}
+{% block page_title %}Settings{% endblock %}
+{% block content %}
+<div class="min-w-0">
+  <h1 class="text-[26px] leading-tight md:text-[30px]">Notification settings</h1>
+  <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Delivery channels, per-severity routing, the daily risk digest, exports, and LLM cost control. Credentials are stored encrypted and never shown back.</p>
+</div>
+{% if notice %}
+<div class="mt-4 flex items-start gap-2.5 rounded-xl bg-brand-mist px-4 py-3" role="status">
+  <svg class="mt-0.5 flex-none text-brand-primary" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 5-5.5"/></svg>
+  <p class="text-sm font-semibold text-brand-deep">{{ notice }}</p>
+</div>
+{% endif %}
+
+<section class="mt-6" aria-labelledby="channels-heading">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 id="channels-heading" class="text-lg">Channels</h2>
+    <span class="text-sm text-slate-600">{{ channels|length }} configured</span>
+  </div>
+  {% if channels %}
+  <div class="brand-table mt-3 overflow-x-auto rounded-xl">
+    <table>
+      <thead><tr><th>ID</th><th>Kind</th><th>Name</th><th>Target</th><th>Enabled</th><th>Secret</th>{% if is_owner %}<th>Actions</th><th>Edit</th>{% endif %}</tr></thead>
+      <tbody>
+      {% for c in channels %}
+        <tr>
+          <td class="font-bold text-brand-navy">#{{ c.id }}</td>
+          <td><span class="inline-flex rounded-md bg-brand-mist px-2 py-0.5 text-xs font-bold text-brand-deep">{{ c.kind }}</span></td>
+          <td class="font-semibold text-brand-navy">{{ c.name }}</td>
+          <td class="max-w-[340px] truncate text-slate-600" title="{% if c.kind == 'email' %}{{ c.config.host }}:{{ c.config.port }} → {{ c.config.to|join(', ') }}{% else %}{{ c.config.host }}{% endif %}">{% if c.kind == "email" %}{{ c.config.host }}:{{ c.config.port }} → {{ c.config.to|join(", ") }}{% else %}{{ c.config.host or "—" }}{% endif %}</td>
+          <td>{% if c.enabled %}<span class="inline-flex rounded-full bg-brand-primary px-2 py-0.5 text-xs font-bold text-white">on</span>{% else %}<span class="inline-flex rounded-full bg-white px-2 py-0.5 text-xs font-bold text-slate-500 shadow-[inset_0_0_0_1px_#E0F2FE]">off</span>{% endif %}</td>
+          <td>{% if c.has_secret %}<span class="inline-flex rounded-full bg-brand-navy px-2 py-0.5 text-xs font-bold text-white">set</span>{% else %}<span class="text-slate-400">—</span>{% endif %}</td>
+          {% if is_owner %}
+          <td>
+            <span class="flex flex-wrap gap-1.5">
+              <form method="post" action="/settings/channels/{{ c.id }}/test"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Test-send</button></form>
+              <form method="post" action="/settings/channels/{{ c.id }}/toggle"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-secondary" type="submit">{{ "Disable" if c.enabled else "Enable" }}</button></form>
+              <form method="post" action="/settings/channels/{{ c.id }}/delete" data-confirm data-confirm-title="Delete this channel?" data-confirm-message="The notification channel and its stored credential will be permanently deleted. Severity routes pointing at it stop delivering." data-confirm-action="Delete channel"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-danger" type="submit">Delete</button></form>
+            </span>
+          </td>
+          <td>
+            <details>
+              <summary class="cursor-pointer text-[13px] font-bold text-brand-primary hover:text-brand-deep">Edit channel</summary>
+              <form class="mt-2.5 grid min-w-[240px] grid-cols-1 gap-2.5" method="post" action="/settings/channels/{{ c.id }}">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <label class="text-xs font-bold text-slate-600">Name<input class="mt-1 block w-full" name="name" value="{{ c.name }}" required></label>
+                {% if c.kind == "email" %}
+                <label class="text-xs font-bold text-slate-600">Host<input class="mt-1 block w-full" name="host" value="{{ c.config.host }}"></label>
+                <label class="text-xs font-bold text-slate-600">Port<input class="mt-1 block w-full" name="port" value="{{ c.config.port }}"></label>
+                <label class="text-xs font-bold text-slate-600">Username<input class="mt-1 block w-full" name="username" value="{{ c.config.username }}"></label>
+                <label class="text-xs font-bold text-slate-600">Password<input class="mt-1 block w-full" name="password" type="password" placeholder="(unchanged)"></label>
+                <label class="text-xs font-bold text-slate-600">From<input class="mt-1 block w-full" name="from_addr" value="{{ c.config.from_addr }}"></label>
+                <label class="text-xs font-bold text-slate-600">To<input class="mt-1 block w-full" name="to" value="{{ c.config.to|join(", ") }}"></label>
+                {% else %}
+                <label class="text-xs font-bold text-slate-600">Webhook URL<input class="mt-1 block w-full" name="url" placeholder="(unchanged)"></label>
+                <label class="text-xs font-bold text-slate-600">Signing key<input class="mt-1 block w-full" name="signing_key" placeholder="(unchanged)"></label>
+                {% endif %}
+                <span><button type="submit">Update</button></span>
+              </form>
+            </details>
+          </td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="mt-3 rounded-xl bg-white px-5 py-6 text-center shadow-card">
+    <p class="text-sm font-bold text-brand-navy">No channels yet</p>
+    <p class="mx-auto mt-1 max-w-md text-[13px] text-slate-600">Add an email, Slack, or webhook channel{% if is_owner %} below{% endif %} so findings and approval requests can reach you.</p>
+  </div>
+  {% endif %}
+</section>
+
+{% if is_owner %}
+<section class="mt-6 rounded-xl bg-white p-5 shadow-card" aria-labelledby="add-heading">
+  <h2 id="add-heading" class="text-lg">Add channel</h2>
+  <p class="mt-1 text-sm text-slate-600">Secrets are encrypted on save and never displayed again.</p>
+  <form class="mt-4" method="post" action="/settings/channels">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <div>
+        <label class="text-sm font-bold text-brand-deep" for="chKind">Kind</label>
+        <select class="mt-1.5 w-full" id="chKind" name="kind"><option value="email">email</option><option value="slack">slack</option><option value="webhook">webhook</option></select>
+      </div>
+      <div>
+        <label class="text-sm font-bold text-brand-deep" for="chName">Name</label>
+        <input class="mt-1.5 w-full" id="chName" name="name" required autocomplete="off" placeholder="e.g. team-email">
+      </div>
+    </div>
+    <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <fieldset class="rounded-xl bg-[#F6FBFF] p-4 ring-1 ring-brand-mist">
+        <legend class="px-1 text-sm font-bold text-brand-deep">Email (SMTP)</legend>
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label class="text-xs font-bold text-slate-600">Host<input class="mt-1 block w-full" name="host" placeholder="smtp.example.com" autocomplete="off"></label>
+          <label class="text-xs font-bold text-slate-600">Port<input class="mt-1 block w-full" name="port" value="587" autocomplete="off"></label>
+          <label class="text-xs font-bold text-slate-600">Username<input class="mt-1 block w-full" name="username" autocomplete="off"></label>
+          <label class="text-xs font-bold text-slate-600">Password<input class="mt-1 block w-full" name="password" type="password" autocomplete="new-password"></label>
+          <label class="text-xs font-bold text-slate-600">From<input class="mt-1 block w-full" name="from_addr" placeholder="agent@example.com" autocomplete="off"></label>
+          <label class="text-xs font-bold text-slate-600">To, comma-separated<input class="mt-1 block w-full" name="to" autocomplete="off"></label>
+        </div>
+      </fieldset>
+      <fieldset class="rounded-xl bg-[#F6FBFF] p-4 ring-1 ring-brand-mist">
+        <legend class="px-1 text-sm font-bold text-brand-deep">Slack / webhook</legend>
+        <div class="grid grid-cols-1 gap-3">
+          <label class="text-xs font-bold text-slate-600">Webhook URL<input class="mt-1 block w-full" name="url" autocomplete="off"></label>
+          <label class="text-xs font-bold text-slate-600">Signing key, webhook only, optional<input class="mt-1 block w-full" name="signing_key" autocomplete="off"></label>
+        </div>
+      </fieldset>
+    </div>
+    <button class="mt-4" type="submit">Add channel</button>
+  </form>
+</section>
+
+<section class="mt-6 rounded-xl bg-white p-5 shadow-card" aria-labelledby="routing-heading">
+  <h2 id="routing-heading" class="text-lg">Per-severity routing</h2>
+  <p class="mt-1 text-sm text-slate-600">Which channels each severity fans out to, by channel ID. Approval requests always fan out to every channel.</p>
+  <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+    {% for sev in severities %}
+    <form class="flex items-end gap-2.5" method="post" action="/settings/routes">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="severity" value="{{ sev }}">
+      <label class="min-w-0 flex-1 text-sm font-bold text-brand-deep">{{ sev }} → channel IDs
+        <input class="mt-1.5 w-full" name="channel_ids" value="{{ route_ids[sev] }}" placeholder="e.g. 1,2" autocomplete="off">
+      </label>
+      <button type="submit">Save</button>
+    </form>
+    {% endfor %}
+  </div>
+</section>
+
+<div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+  <section class="rounded-xl bg-white p-5 shadow-card" aria-labelledby="digest-heading">
+    <h2 id="digest-heading" class="text-lg">Risk digest</h2>
+    <p class="mt-1 text-sm text-slate-600">A daily summary of what changed, delivered to the routed channels.</p>
+    <form class="mt-4 flex flex-wrap items-end gap-3.5" method="post" action="/settings/digest">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="flex items-center gap-2 text-sm font-bold text-brand-deep"><input type="checkbox" name="enabled" value="on" {% if digest.enabled %}checked{% endif %} class="!w-auto"> Enabled (daily)</label>
+      <label class="text-sm font-bold text-brand-deep">Hour, UTC 0–23
+        <input class="mt-1.5 block w-32" name="hour_utc" value="{{ digest.hour_utc }}" autocomplete="off">
+      </label>
+      <button type="submit">Save digest</button>
+    </form>
+  </section>
+
+  <section class="rounded-xl bg-white p-5 shadow-card" aria-labelledby="reports-heading">
+    <h2 id="reports-heading" class="text-lg">Reports</h2>
+    <p class="mt-1 text-sm text-slate-600">Export the full finding inventory for audits and review.</p>
+    <div class="mt-4 flex flex-wrap gap-2.5">
+      <a class="btn-primary" href="/settings/reports/export?format=json">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+        Download JSON
+      </a>
+      <a class="btn-secondary" href="/settings/reports/export?format=csv">Download CSV</a>
+    </div>
+  </section>
+</div>
+{% endif %}
+
+<section class="mt-6" aria-labelledby="cost-heading">
+  <h2 id="cost-heading" class="text-lg">Cost control</h2>
+  <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+    <div class="rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">Per-run cap</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">{{ cap }} <span class="text-sm font-semibold text-slate-500">tokens</span></p></div>
+    <div class="rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">Spend today</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">${{ "%.2f"|format(spend) }}</p></div>
+    <div class="rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">Warn / critical</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">${{ warn_usd }} <span class="text-slate-400">/</span> ${{ critical_usd }}</p></div>
+  </div>
+  {% if is_owner %}
+  <form class="mt-3.5 flex flex-wrap items-end gap-2.5 rounded-xl bg-white p-4 shadow-card" method="post" action="/settings/cost/cap">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="text-sm font-bold text-brand-deep">Per-run cap, tokens
+      <input class="mt-1.5 block w-44" name="cap" value="{{ cap }}" autocomplete="off">
+    </label>
+    <button type="submit">Set cap</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="mt-6" aria-labelledby="parked-heading">
+  <h2 id="parked-heading" class="text-lg">Parked runs</h2>
+  {% if parked %}
+  <div class="brand-table mt-3 overflow-x-auto rounded-xl">
+    <table>
+      <thead><tr><th>Run</th><th>Repo</th><th>Tokens</th><th>Reason</th><th></th></tr></thead>
+      <tbody>
+      {% for r in parked %}
+        <tr>
+          <td class="font-bold text-brand-navy">#{{ r.id }}</td>
+          <td class="text-slate-600">{{ r.repo_name }}</td>
+          <td class="font-semibold text-brand-navy">{{ r.token_usage }}</td>
+          <td class="max-w-[420px] text-slate-600">{{ r.reason }}</td>
+          <td>
+            <form class="flex flex-wrap items-end gap-2" method="post" action="/settings/cost/resume">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="run_id" value="{{ r.id }}">
+              <label class="text-xs font-bold text-slate-600">New cap
+                <input class="mt-1 block w-28" name="new_cap" placeholder="{{ cap }}" autocomplete="off">
+              </label>
+              <button type="submit">Resume</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="mt-3 rounded-xl bg-white px-5 py-4 text-[13px] text-slate-600 shadow-card">No parked runs. Runs that hit the cost cap park here until resumed.</div>
+  {% endif %}
+</section>
 {% endblock %}

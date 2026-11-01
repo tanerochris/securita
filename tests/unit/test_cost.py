@@ -53,6 +53,24 @@ def _run():
         return run
 
 
+def test_disconnect_repo_removes_cost_ledger_rows():
+    """Regression: disconnect must delete model_usage before scan_runs.
+
+    SQLite never enforced the FK, so the suite stayed green while
+    Postgres raised ForeignKeyViolation on every disconnect of a repo
+    that had recorded model usage.
+    """
+    from security_agent.control import repos as repo_ctl
+
+    run = _run()
+    with session_scope() as db:
+        db.add(ModelUsage(run_id=run.id, task="adapt", total_tokens=10, cost_usd=0.01))
+    repo_ctl.disconnect_repo(run.repo_id)
+    with session_scope() as db:
+        assert db.get(ScanRun, run.id) is None
+        assert db.scalar(select(ModelUsage).where(ModelUsage.run_id == run.id)) is None
+
+
 def test_record_usage_ledgers_and_accumulates():
     run = _run()
     _reset_cost_state()

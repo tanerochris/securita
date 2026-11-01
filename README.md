@@ -31,6 +31,10 @@ Open http://localhost:8000/dashboard in a browser (first signup becomes Owner). 
 ### First boot
 
 - The app runs Alembic migrations on startup (`alembic upgrade head`).
+- The first `up --build` also builds the sandbox image (`sandbox-runner`
+  service, exits 0 after a scanner smoke check) — the worker refuses to
+  boot without that image. Rebuild just it with
+  `docker compose build sandbox-runner`.
 - With no `MASTER_KEY` set, it generates one and prints it **once** — store it
   outside the install; loss means encrypted fields are unrecoverable (NFR-9 D2).
 - Register SSO redirect URIs at your providers:

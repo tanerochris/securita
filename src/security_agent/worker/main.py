@@ -36,6 +36,40 @@ WORKER_ID = new_worker_id()
 
 HEARTBEAT_SECONDS = 4 * 60
 
+_MIGRATE_ATTEMPTS = 5
+_MIGRATE_RETRY_SECONDS = 5
+
+
+def ensure_schema() -> None:
+    """Bring this worker's schema to head before any query runs.
+
+    The app upgrades the schema in its own lifespan, but the worker boots
+    independently (and can win the race), so it must not assume the DB
+    already has the columns its queries select. Postgres upgrades run via
+    alembic with retries: a concurrent app/worker upgrade holds the DDL
+    locks, and the loser just tries again.
+    """
+    from security_agent.config import get_settings
+
+    if get_settings().database_url.startswith("postgresql"):
+        from alembic import command
+        from alembic.config import Config
+
+        last: Exception | None = None
+        for attempt in range(_MIGRATE_ATTEMPTS):
+            try:
+                command.upgrade(Config("alembic.ini"), "head")
+                return
+            except Exception as exc:  # noqa: BLE001 - contention is expected
+                last = exc
+                log.warning("schema upgrade attempt %d failed; retrying", attempt + 1)
+                time.sleep(_MIGRATE_RETRY_SECONDS)
+        raise RuntimeError(f"schema upgrade failed after {_MIGRATE_ATTEMPTS} attempts") from last
+    from security_agent.db.models import Base
+    from security_agent.db.session import get_engine
+
+    Base.metadata.create_all(get_engine())
+
 
 def _session_now(db, now: datetime) -> datetime:
     """Naive timestamps for SQLite, aware for Postgres (matches scheduler)."""
@@ -158,8 +192,11 @@ def run_once(*, max_runs: int = 100) -> dict:
 
 
 def main() -> None:
+    from security_agent.sandbox import assert_sandbox_image
     from security_agent.worker import build_graph
 
+    ensure_schema()  # schema before any query (this worker migrates itself)
+    assert_sandbox_image()  # image before any scan (fail loud, not per-run)
     build_graph()  # fail fast when the pipeline does not compile
     reap_stale_runs(older_than_hours=0)  # boot: prior incarnation is dead by definition
     log.warning("worker ready")

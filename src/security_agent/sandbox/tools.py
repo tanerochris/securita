@@ -132,11 +132,19 @@ def _docker_command(
 ) -> tuple[list[str], str | None]:
     """Fresh disposable container per tool call (follow-up #1).
 
-    The workdir is bind-mounted at /work and host paths under it in argv
-    and env are rewritten, so callers keep using host paths. No worker
-    secrets are forwarded: child_env is already allowlist-sanitized.
+    The workdir is shared at /work and paths under it in argv and env are
+    rewritten, so callers keep using worker paths. No worker secrets are
+    forwarded: child_env is already allowlist-sanitized.
     Network is off unless the caller explicitly needs egress (git clone).
+
+    Sharing goes through the named work volume, never a host bind: the
+    daemon resolves bind sources on ITS host, where worker-container
+    paths like /sandbox-work do not exist (Docker Desktop refuses with
+    "mounts denied"; Linux would mount a silently empty dir). Only
+    workdirs under SANDBOX_WORK_ROOT take the volume path; anything
+    else keeps the legacy bind mount.
     """
+    import os
     import shutil
 
     from security_agent.config import get_settings
@@ -151,16 +159,36 @@ def _docker_command(
     network = getattr(settings, "sandbox_network", "none") or "none"
     if allow_network and network == "none":
         network = "bridge"
+    root = getattr(settings, "sandbox_work_root", "") or ""
+    root = root.strip() if isinstance(root, str) else ""
+    volume = getattr(settings, "sandbox_work_volume", "") or ""
+    volume = volume.strip() if isinstance(volume, str) else ""
     work = cwd
     scratch: str | None = None
     if work is None:
-        scratch = tempfile.mkdtemp(prefix="sandbox-cwd-")
+        scratch = tempfile.mkdtemp(prefix="sandbox-cwd-", dir=root or None)
         work = scratch
 
     def rewrite(value: str) -> str:
         if cwd and (value == cwd or value.startswith(cwd.rstrip("/") + "/")):
             return "/work" + value[len(cwd) :]
         return value
+
+    # Volume share only when the workdir is really contained in the shared
+    # root (normalized, so /sandbox-work/../etc cannot become a subpath).
+    subpath: str | None = None
+    if root and volume and work:
+        norm_root, norm_work = os.path.normpath(root), os.path.normpath(work)
+        if norm_work == norm_root:
+            subpath = ""
+        elif norm_work.startswith(norm_root.rstrip("/") + "/"):
+            subpath = os.path.relpath(norm_work, norm_root)
+    if subpath is None:
+        mount_argv = ["-v", f"{work}:/work"]
+    elif subpath in ("", "."):
+        mount_argv = ["--mount", f"type=volume,src={volume},dst=/work"]
+    else:
+        mount_argv = ["--mount", f"type=volume,src={volume},dst=/work,volume-subpath={subpath}"]
 
     docker_argv = [
         "docker",
@@ -174,8 +202,7 @@ def _docker_command(
         "1",
         "--pids-limit",
         "256",
-        "-v",
-        f"{work}:/work",
+        *mount_argv,
         "-w",
         "/work",
     ]

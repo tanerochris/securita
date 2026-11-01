@@ -26,6 +26,47 @@ def test_dashboard_requires_login():
     assert r.status_code == 401
 
 
+def test_browser_session_redirects_to_login():
+    """Browser navigations never see the raw session JSON — they land on /login."""
+    browser = {"Accept": "text/html,application/xhtml+xml"}
+    client.cookies.clear()
+    missing = client.get("/dashboard", headers=browser, follow_redirects=False)
+    assert missing.status_code == 303
+    assert missing.headers["location"] == "/login"
+    client.cookies.set("app_session", "bogus-session")
+    expired = client.get("/dashboard", headers=browser, follow_redirects=False)
+    assert expired.status_code == 303
+    assert expired.headers["location"] == "/login?expired=1"
+    landed = client.get("/login?expired=1")
+    assert "Your session expired." in landed.text
+    # API-style callers keep the JSON contract.
+    assert client.get("/dashboard").status_code == 401
+    client.cookies.clear()
+
+
+def test_landing_route_and_not_found_page():
+    from security_agent.app import accounts as svc
+    from security_agent.db.models import Role
+
+    browser = {"Accept": "text/html,application/xhtml+xml"}
+    client.cookies.clear()
+    anon = client.get("/", follow_redirects=False)
+    assert anon.status_code == 303 and anon.headers["location"] == "/login"
+    email = "landing@example.com"
+    user = svc.get_user_by_email(email)
+    if user is None:
+        user = svc.create_user(email, None, Role.REPORTER)
+    client.cookies.set("app_session", svc.create_session(user.id))
+    authed = client.get("/", follow_redirects=False)
+    assert authed.status_code == 303 and authed.headers["location"] == "/dashboard"
+    page = client.get("/no-such-page-here", headers=browser)
+    assert page.status_code == 404
+    assert "Page not found" in page.text and "Go to dashboard" in page.text
+    api = client.get("/no-such-page-here")
+    assert api.status_code == 404 and api.json() == {"detail": "Not Found"}
+    client.cookies.clear()
+
+
 def test_signup_login_dashboard_flow():
     from security_agent.app import accounts as svc
     from security_agent.db.models import Role

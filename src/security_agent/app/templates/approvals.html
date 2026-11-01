@@ -1,17 +1,142 @@
-{% extends "base.html" %}{% block content %}<h1>Approval queue</h1>
-<h2>Pending ({{ pending|length }})</h2>
-{% for ctx in pending %}{% set g = ctx.gate %}<h3>#{{ g.id }} {{ g.action.value }} — {{ ctx.repo_name }}</h3>
-<p>Target: {{ g.target }}{% if ctx.advisories %} · Advisories: {{ ctx.advisories|join(", ") }}{% endif %} · Expires: {{ g.expires_at }} UTC{% if g.reason %} · Note: {{ g.reason }}{% endif %}</p>
-{% if ctx.can_decide %}<form method="post" action="/approvals/{{ g.id }}/approve" style="display:inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Approve</button></form>
-<form method="post" action="/approvals/{{ g.id }}/deny" style="display:inline"><input type="hidden" name="csrf" value="{{ csrf }}"><input name="reason" placeholder="reason"><button class="btn-secondary" type="submit">Deny</button></form>{% endif %}
-{% endfor %}
-<h2>Decided history</h2>
-<table><tr><th>ID</th><th>Action</th><th>Repo</th><th>Decision</th><th>Decider</th><th>Source</th></tr>
-{% for ctx in history %}{% set g = ctx.gate %}<tr><td>{{ g.id }}</td><td>{{ g.action.value }}</td><td>{{ ctx.repo_name }}</td><td>{{ g.status.value }}</td><td>{{ ctx.decider_email or "—" }}</td><td>{{ g.source or "—" }}</td>{% if g.status.value == "approved" and g.action.value == "merge" %}<td><form method="post" action="/approvals/{{ g.id }}/merge"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Merge now</button></form></td>{% endif %}</tr>{% endfor %}</table>
-{% if is_owner %}<h2>Delegate approval to a Developer</h2>
-<form method="post" action="/approvals/delegations"><input type="hidden" name="csrf" value="{{ csrf }}"><label>Email <input name="email" type="email" required></label>
-<label>Classes (comma-separated, blank for all) <input name="classes" placeholder="merge,rotation,publish"></label>
-<button type="submit">Delegate (24h)</button></form>
-<h2>Delegations</h2>
-<table><tr><th>ID</th><th>Owner</th><th>Delegate</th><th>Classes</th><th>Expires</th><th>Revoked</th></tr>
-{% for d in delegations %}<tr><td>{{ d.id }}</td><td>{{ d.owner_id }}</td><td>{{ d.delegate_id }}</td><td>{{ (d.classes or ["all"])|join(", ") }}</td><td>{{ d.expires_at }}</td><td>{{ d.revoked_at or "" }}</td>{% if not d.revoked_at %}<td><form method="post" action="/approvals/delegations/{{ d.id }}/revoke"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-danger" type="submit">Revoke</button></form></td>{% endif %}</tr>{% endfor %}</table>{% endif %}{% endblock %}
+{% extends "base.html" %}
+{% block title %}Approvals — Securita{% endblock %}
+{% block page_title %}Approvals{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-start gap-4">
+  <div class="min-w-0">
+    <h1 class="text-[26px] leading-tight md:text-[30px]">Approval queue</h1>
+    <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Merge, rotation, and publish gates wait here for a human decision. Pending gates expire after 72 hours and re-queue automatically, up to three times.</p>
+    <p class="mt-2.5 flex flex-wrap gap-2 text-xs font-semibold">
+      <span class="inline-flex rounded-full bg-brand-primary px-2.5 py-1 text-white">{{ pending|length }} pending</span>
+      <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">{{ history|length }} decided</span>
+    </p>
+  </div>
+</div>
+
+<section class="mt-7" aria-labelledby="pending-heading">
+  <h2 id="pending-heading" class="text-lg">Pending ({{ pending|length }})</h2>
+  {% if pending %}
+  <ul class="mt-3 space-y-3.5">
+    {% for ctx in pending %}{% set g = ctx.gate %}
+    <li class="rounded-xl bg-white p-5 shadow-card">
+      <div class="flex flex-wrap items-center gap-2.5">
+        <span class="inline-flex rounded-full bg-brand-navy px-2.5 py-1 text-xs font-bold text-white">#{{ g.id }} {{ g.action.value }}</span>
+        <span class="text-sm font-bold text-brand-navy">{{ ctx.repo_name }}</span>
+        <span class="ml-auto inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Expires {{ g.expires_at }} UTC</span>
+      </div>
+      <p class="mt-2.5 max-w-3xl break-all text-sm text-slate-600">{{ g.target }}</p>
+      {% if ctx.advisories %}
+      <p class="mt-2 flex flex-wrap gap-1.5">
+        {% for adv in ctx.advisories %}<span class="inline-flex rounded-md bg-brand-mist px-2 py-0.5 text-xs font-bold text-brand-deep">{{ adv }}</span>{% endfor %}
+      </p>
+      {% endif %}
+      {% if g.reason %}<p class="mt-2 max-w-3xl text-[13px] leading-relaxed text-slate-600">Note: {{ g.reason }}</p>{% endif %}
+      {% if ctx.can_decide %}
+      <div class="mt-4 flex flex-wrap items-end gap-3 border-t border-brand-mist pt-4">
+        <form method="post" action="/approvals/{{ g.id }}/approve">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>
+            Approve
+          </button>
+        </form>
+        <form class="flex flex-wrap items-end gap-2.5" method="post" action="/approvals/{{ g.id }}/deny">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <label class="text-xs font-bold text-slate-600">Reason
+            <input class="mt-1 block min-w-[200px]" name="reason" placeholder="Why deny this gate?" aria-label="Deny reason for gate {{ g.id }}">
+          </label>
+          <button class="btn-secondary" type="submit">Deny</button>
+        </form>
+      </div>
+      {% else %}
+      <p class="mt-4 border-t border-brand-mist pt-3.5 text-[13px] text-slate-600">Awaiting an Owner, Maintainer, or delegated Developer decision.</p>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="mt-3 flex items-center gap-3.5 rounded-xl bg-white px-5 py-4 shadow-card">
+    <span class="grid h-10 w-10 flex-none place-items-center rounded-full bg-brand-mist text-brand-primary" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10z"/><path d="m9 11.5 2 2 4-4.5"/></svg></span>
+    <div>
+      <p class="text-sm font-bold text-brand-navy">Approval queue is clear</p>
+      <p class="text-[13px] text-slate-600">New merge, rotation, and publish gates will wait here for a decision.</p>
+    </div>
+  </div>
+  {% endif %}
+</section>
+
+<section class="mt-7" aria-labelledby="history-heading">
+  <h2 id="history-heading" class="text-lg">Decided history</h2>
+  {% if history %}
+  <div class="brand-table mt-3 overflow-x-auto rounded-xl">
+    <table>
+      <thead><tr><th>ID</th><th>Action</th><th>Repo</th><th>Decision</th><th>Decider</th><th>Source</th><th></th></tr></thead>
+      <tbody>
+      {% for ctx in history %}{% set g = ctx.gate %}
+        <tr>
+          <td class="font-bold text-brand-navy">#{{ g.id }}</td>
+          <td>{{ g.action.value }}</td>
+          <td>{{ ctx.repo_name }}</td>
+          <td>
+            {% if g.status.value == "approved" %}<span class="inline-flex rounded-full bg-brand-primary px-2.5 py-0.5 text-xs font-bold text-white">approved</span>
+            {% elif g.status.value == "denied" %}<span class="inline-flex rounded-full bg-brand-navy px-2.5 py-0.5 text-xs font-bold text-white">denied</span>
+            {% else %}<span class="inline-flex rounded-full bg-brand-mist px-2.5 py-0.5 text-xs font-bold text-brand-deep">{{ g.status.value }}</span>{% endif %}
+          </td>
+          <td class="text-slate-600">{{ ctx.decider_email or "—" }}</td>
+          <td class="text-slate-600">{{ g.source or "—" }}</td>
+          <td>{% if g.status.value == "approved" and g.action.value == "merge" %}<form method="post" action="/approvals/{{ g.id }}/merge"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Merge now</button></form>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="mt-3 rounded-xl bg-white px-5 py-4 text-[13px] text-slate-600 shadow-card">No decisions recorded yet. Approved, denied, and expired gates appear here.</div>
+  {% endif %}
+</section>
+
+{% if is_owner %}
+<section class="mt-7 rounded-xl bg-white p-5 shadow-card" aria-labelledby="delegate-heading">
+  <h2 id="delegate-heading" class="text-lg">Delegate approval to a Developer</h2>
+  <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Grant time-boxed approval rights (24 hours, revocable). Developers approve only under an active delegation.</p>
+  <form class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end" method="post" action="/approvals/delegations">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div>
+      <label class="text-sm font-bold text-brand-deep" for="delegEmail">Developer email</label>
+      <input class="mt-1.5 w-full" id="delegEmail" name="email" type="email" required autocomplete="off" placeholder="dev@company.com">
+    </div>
+    <div>
+      <label class="text-sm font-bold text-brand-deep" for="delegClasses">Gate classes <span class="font-medium text-slate-500">(blank for all)</span></label>
+      <input class="mt-1.5 w-full" id="delegClasses" name="classes" autocomplete="off" placeholder="merge,rotation,publish">
+    </div>
+    <button type="submit">Delegate (24h)</button>
+  </form>
+</section>
+
+<section class="mt-6" aria-labelledby="delegations-heading">
+  <h2 id="delegations-heading" class="text-lg">Delegations</h2>
+  {% if delegations %}
+  <div class="brand-table mt-3 overflow-x-auto rounded-xl">
+    <table>
+      <thead><tr><th>ID</th><th>Owner</th><th>Delegate</th><th>Classes</th><th>Expires</th><th>Revoked</th><th></th></tr></thead>
+      <tbody>
+      {% for d in delegations %}
+        <tr>
+          <td class="font-bold text-brand-navy">#{{ d.id }}</td>
+          <td class="text-slate-600">{{ d.owner_id }}</td>
+          <td class="text-slate-600">{{ d.delegate_id }}</td>
+          <td>{% for c in (d.classes or ["all"]) %}<span class="mr-1 inline-flex rounded-md bg-brand-mist px-2 py-0.5 text-xs font-bold text-brand-deep">{{ c }}</span>{% endfor %}</td>
+          <td class="text-slate-600">{{ d.expires_at }}</td>
+          <td class="text-slate-600">{{ d.revoked_at or "active" }}</td>
+          <td>{% if not d.revoked_at %}<form method="post" action="/approvals/delegations/{{ d.id }}/revoke" data-confirm data-confirm-title="Revoke this delegation?" data-confirm-message="The delegate will immediately lose approval rights granted by this delegation. Past decisions stay recorded." data-confirm-action="Revoke"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-danger" type="submit">Revoke</button></form>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="mt-3 rounded-xl bg-white px-5 py-4 text-[13px] text-slate-600 shadow-card">No delegations granted yet.</div>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

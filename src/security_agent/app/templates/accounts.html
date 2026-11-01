@@ -1,6 +1,77 @@
-{% extends "base.html" %}{% block content %}<h1>Accounts</h1>
-<ul>{% for u in users %}<li>{{ u.email }} — {{ u.role }}{% if u.disabled %} (disabled){% endif %}</li>{% endfor %}</ul>
-<h2>Invite</h2>
-<form method="post" action="/accounts/invite"><input type="hidden" name="csrf" value="{{ csrf }}"><label>Email <input name="email" type="email" required></label>
-<label>Role <select name="role"><option>owner</option><option>maintainer</option><option>developer</option><option>reporter</option></select></label>
-<button type="submit">Send invite</button></form>{% endblock %}
+{% extends "base.html" %}
+{% block title %}Accounts — Securita{% endblock %}
+{% block page_title %}Accounts{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-start gap-4">
+  <div class="min-w-0">
+    <h1 class="text-[26px] leading-tight md:text-[30px]">Accounts</h1>
+    <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Owner-only administration. New members join through single-use invites; accounts are disabled, never deleted, and the last Owner is protected.</p>
+    <p class="mt-2.5 flex flex-wrap gap-2 text-xs font-semibold">
+      <span class="inline-flex rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep">{{ users|length }} users</span>
+      <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">{{ users|selectattr("disabled")|list|length }} disabled</span>
+    </p>
+  </div>
+</div>
+
+<section class="mt-6" aria-labelledby="users-heading">
+  <h2 id="users-heading" class="text-lg">Users</h2>
+  <div class="brand-table mt-3 overflow-x-auto rounded-xl">
+    <table>
+      <thead><tr><th>Email</th><th>Role</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      {% for u in users %}
+        <tr>
+          <td class="font-semibold text-brand-navy">{{ u.email }}</td>
+          <td>
+            <form class="flex flex-wrap items-center gap-2" method="post" action="/accounts/{{ u.id }}/role">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <label class="sr-only" for="role-{{ u.id }}">Role for {{ u.email }}</label>
+              <select id="role-{{ u.id }}" name="role" aria-label="Role for {{ u.email }}">
+                {% for r in ["owner", "maintainer", "developer", "reporter"] %}
+                <option value="{{ r }}" {% if u.role.value == r %}selected{% endif %}>{{ r }}</option>
+                {% endfor %}
+              </select>
+              <button type="submit">Set role</button>
+            </form>
+          </td>
+          <td>
+            {% if u.disabled %}<span class="inline-flex rounded-full bg-brand-navy px-2.5 py-0.5 text-xs font-bold text-white">disabled</span>
+            {% else %}<span class="inline-flex rounded-full bg-brand-mist px-2.5 py-0.5 text-xs font-bold text-brand-deep">active</span>{% endif %}
+          </td>
+          <td>
+            {% if not u.disabled %}
+            <form method="post" action="/accounts/{{ u.id }}/disable" data-confirm data-confirm-title="Disable this account?" data-confirm-message="{{ u.email }} will immediately lose access. The account stays in the list so you can audit past decisions." data-confirm-action="Disable account">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <button class="btn-danger" type="submit">Disable</button>
+            </form>
+            {% else %}<span class="text-[13px] text-slate-500">No actions</span>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="mt-6 rounded-xl bg-white p-5 shadow-card" aria-labelledby="invite-heading">
+  <h2 id="invite-heading" class="text-lg">Invite a member</h2>
+  <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Issues a single-use invite link, shown once and valid for 72 hours. The invitee completes signup with the email address below.</p>
+  <form class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-[1.2fr_1fr_auto] md:items-end" method="post" action="/accounts/invite">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div>
+      <label class="text-sm font-bold text-brand-deep" for="inviteEmail">Email</label>
+      <input class="mt-1.5 w-full" id="inviteEmail" name="email" type="email" required autocomplete="off" placeholder="teammate@company.com">
+    </div>
+    <div>
+      <label class="text-sm font-bold text-brand-deep" for="inviteRole">Role</label>
+      <select class="mt-1.5 w-full" id="inviteRole" name="role">
+        <option>owner</option>
+        <option>maintainer</option>
+        <option>developer</option>
+        <option selected>reporter</option>
+      </select>
+    </div>
+    <button type="submit">Send invite</button>
+  </form>
+</section>
+{% endblock %}

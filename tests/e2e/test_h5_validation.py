@@ -235,7 +235,8 @@ def test_graph_runs_secrets_stage_without_topology_change(tmp_path, monkeypatch)
         _fake_betterleaks(),
         mock.patch("security_agent.worker.news.poll_news", return_value={}),
         mock.patch(
-            "security_agent.worker.news.run_matcher", return_value={"items": 0, "boosts": 0}
+            "security_agent.worker.news_intel.process_news",
+            return_value={"classified": 0, "major": 0, "minted": 0, "linked": 0},
         ),
     ):
         final = graph.invoke({"repo_id": repo.id, "run_id": run_id})

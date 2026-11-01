@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Repositories — AI Security Agent{% endblock %}
+{% block title %}Repositories — Securita{% endblock %}
 {% block page_title %}Repositories{% endblock %}
 {% block content %}
 <h1 class="text-[28px] leading-tight md:text-[32px]">Repositories</h1>
@@ -8,7 +8,7 @@
 {% if repos %}
 <div class="brand-table mt-5 overflow-x-auto rounded-xl">
   <table>
-    <thead><tr><th>Name</th><th>Source</th><th>Schedule</th><th>Last scan</th></tr></thead>
+    <thead><tr><th>Name</th><th>Source</th><th>Schedule</th><th>Last scan</th>{% if can_manage %}<th>Actions</th>{% endif %}</tr></thead>
     <tbody>
     {% for r in repos %}
     {% set u = r.url or "" %}
@@ -30,6 +30,14 @@
         <td class="max-w-[420px] truncate text-slate-600" title="{{ r.url or r.local_path }}">{{ r.url or r.local_path }}</td>
         <td>{{ r.schedule_hours }}h</td>
         <td class="text-slate-600">{{ r.last_scan_at or "never" }}</td>
+        {% if can_manage %}
+        <td>
+          <form method="post" action="/repos/{{ r.id }}/disconnect" data-confirm data-confirm-title="Disconnect this repository?" data-confirm-message="Findings, patch proposals, approvals, scan history, and stored tokens will be permanently deleted from the agent. The repository on the provider (or the local folder) stays untouched. This cannot be undone." data-confirm-action="Disconnect">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button class="btn-danger" type="submit">Disconnect</button>
+          </form>
+        </td>
+        {% endif %}
       </tr>
     {% endfor %}
     </tbody>
@@ -61,7 +69,7 @@
           <td>
             <span class="flex flex-wrap gap-2">
               <a class="font-bold text-brand-primary" href="/providers/{{ c.id }}/repos">Browse repos</a>
-              <form method="post" action="/providers/{{ c.id }}/disconnect">
+              <form method="post" action="/providers/{{ c.id }}/disconnect" data-confirm data-confirm-title="Disconnect this account?" data-confirm-message="The stored token for this provider account will be deleted. Repositories linked through it keep their data but can no longer sync until you reconnect." data-confirm-action="Disconnect">
                 <input type="hidden" name="csrf" value="{{ csrf }}">
                 <button class="btn-secondary" type="submit">Disconnect</button>
               </form>

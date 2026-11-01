@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page not found — Securita</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script type="text/javascript">
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          brand: {
+            mist: "#E0F2FE",
+            sky: "#7DD3FC",
+            primary: "#0284C7",
+            deep: "#0C4A6E",
+            navy: "#082F49"
+          }
+        },
+        fontFamily: {
+          sans: ['"Plus Jakarta Sans"', "ui-sans-system", "system-ui", "sans-serif"]
+        }
+      }
+    }
+  }
+</script>
+<style>
+  body { font-family: "Plus Jakarta Sans", ui-sans-system, system-ui, sans-serif; }
+  :focus-visible { outline: 2px solid #0284C7; outline-offset: 2px; border-radius: 4px; }
+</style>
+</head>
+<body class="bg-[#F6FBFF] text-slate-600 antialiased">
+<main class="flex min-h-screen flex-col items-center justify-center px-4 py-12 text-center">
+  <a href="/dashboard" class="flex items-center gap-2.5 rounded-lg" aria-label="Securita home">
+    <span class="grid h-11 w-11 place-items-center rounded-[10px] bg-brand-primary text-white shadow-[0_2px_8px_rgba(2,132,199,0.5)]" aria-hidden="true">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10z"/><path d="m9 11.5 2 2 4-4.5"/></svg>
+    </span>
+    <span class="text-left leading-tight">
+      <span class="block text-base font-extrabold tracking-tight text-brand-navy">Securita</span>
+      <span class="block text-xs font-medium text-brand-primary">AI code security</span>
+    </span>
+  </a>
+  <p class="mt-10 text-[88px] font-extrabold leading-none tracking-tight text-brand-mist md:text-[120px]" aria-hidden="true">404</p>
+  <h1 class="mt-4 text-[26px] font-extrabold tracking-tight text-brand-navy md:text-[30px]">Page not found</h1>
+  <p class="mx-auto mt-3 max-w-md text-[15px] leading-relaxed">The page you are looking for moved, never existed, or the item it pointed at was disconnected. Check the address, or head back somewhere safe.</p>
+  <div class="mt-8 flex flex-wrap justify-center gap-2.5">
+    <a class="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-brand-primary bg-brand-primary px-5 py-3 text-sm font-semibold text-white shadow-[0_1px_3px_rgba(2,132,199,0.35)] transition-colors duration-200 hover:border-brand-deep hover:bg-brand-deep" href="/dashboard">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+      Go to dashboard
+    </a>
+    <a class="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-[#BAE6FD] bg-white px-5 py-3 text-sm font-semibold text-brand-deep shadow-[0_1px_2px_rgba(8,47,73,0.08)] transition-colors duration-200 hover:border-brand-sky hover:bg-brand-mist hover:text-brand-navy" href="/login">Log in</a>
+  </div>
+  <p class="mt-8 max-w-md text-[13px] leading-relaxed text-slate-500">If you followed a link inside the app to get here, that link is stale — let your workspace Owner know.</p>
+</main>
+</body>
+</html>

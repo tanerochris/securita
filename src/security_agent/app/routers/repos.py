@@ -87,6 +87,10 @@ def repo_detail(request: Request, repo_id: int, user: User = Depends(get_current
     repo = _repo_or_404(repo_id)
     active = lifecycle.list_open_findings(repo_id)
     open_secrets = lifecycle.list_open_secrets(repo_id)
+    from security_agent.worker.news_intel import list_repo_news, repo_relevance_map
+    from security_agent.worker.repo_profile import build_repo_profile
+
+    repo_news = list_repo_news(repo_id)
     return templates.TemplateResponse(
         request,
         "repo.html",
@@ -95,13 +99,25 @@ def repo_detail(request: Request, repo_id: int, user: User = Depends(get_current
             "active": active,
             "silent_count": len(lifecycle.list_silent_findings(repo_id)),
             "open_secrets": open_secrets,
+            "repo_news": repo_news,
+            "repo_relevance": repo_relevance_map([i.id for i in repo_news], repo_id),
+            "repo_profile": build_repo_profile(repo_id),
             "proposals": lifecycle.list_repo_proposals(repo_id)[:10],
             "runs": lifecycle.list_repo_runs(repo_id),
             "csrf": make_csrf(),
             "can_scan": user.role != Role.REPORTER,
+            "can_manage": user.role in (Role.OWNER, Role.MAINTAINER),
             "is_owner": user.role == Role.OWNER,
         },
     )
+
+
+@router.post("/{repo_id}/disconnect", dependencies=[Depends(require_csrf)])
+def disconnect(repo_id: int, _manager: User = Depends(require_approver)):
+    """Disconnect a repo: local data goes, the provider repo is untouched."""
+    _repo_or_404(repo_id)
+    repo_svc.disconnect_repo(repo_id)
+    return RedirectResponse("/repos", status_code=303)
 
 
 @router.post("/{repo_id}/scan", dependencies=[Depends(require_csrf)])
@@ -144,11 +160,26 @@ def new_webhook_secret(request: Request, repo_id: int, _owner: User = Depends(re
 
 
 @router.get("/{repo_id}/findings", response_class=HTMLResponse)
-def findings_view(request: Request, repo_id: int, user: User = Depends(get_current_user)):
+def findings_view(
+    request: Request,
+    repo_id: int,
+    user: User = Depends(get_current_user),
+    page: int = 1,
+    per: str = "25",
+):
     from security_agent.app.main import templates
 
     repo = _repo_or_404(repo_id)
-    active = lifecycle.list_open_findings(repo_id)
+    per_value = per if per in ("25", "50", "100", "all") else "25"
+    total = lifecycle.count_open_findings(repo_id)
+    limit = None if per_value == "all" else int(per_value)
+    pages = max(1, -(-total // limit)) if limit else 1
+    page = min(max(1, page), pages)
+    active = lifecycle.list_open_findings(
+        repo_id, limit=limit, offset=(page - 1) * limit if limit else 0
+    )
+    start = (page - 1) * limit + 1 if limit and total else (1 if total else 0)
+    end = min(total, page * limit) if limit else total
     silent = lifecycle.list_silent_findings(repo_id)
     return templates.TemplateResponse(
         request,
@@ -160,6 +191,12 @@ def findings_view(request: Request, repo_id: int, user: User = Depends(get_curre
             "secrets": lifecycle.list_repo_secrets(repo_id),
             "can_rotate": user.role in (Role.OWNER, Role.MAINTAINER),
             "csrf": make_csrf(),
+            "page": page,
+            "per": per_value,
+            "total": total,
+            "pages": pages,
+            "start": start,
+            "end": end,
         },
     )
 
@@ -190,4 +227,35 @@ def patches_view(request: Request, repo_id: int, user: User = Depends(get_curren
         request,
         "patches.html",
         {"repo": repo, "proposals": lifecycle.list_repo_proposals(repo_id)},
+    )
+
+
+@router.get("/{repo_id}/runs/{run_id}", response_class=HTMLResponse)
+def run_detail(request: Request, repo_id: int, run_id: int, user: User = Depends(get_current_user)):
+    from security_agent.app.main import templates
+
+    repo = _repo_or_404(repo_id)
+    run = lifecycle.get_run(run_id)
+    if run is None or run.repo_id != repo_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown run.")
+    duration = None
+    if run.started_at and run.finished_at:
+        duration = (run.finished_at - run.started_at).total_seconds()
+    reachable, verdicts = lifecycle.count_run_verdicts(run_id)
+    usage = lifecycle.list_run_usage(run_id)
+    return templates.TemplateResponse(
+        request,
+        "run.html",
+        {
+            "repo": repo,
+            "run": run,
+            "duration_seconds": duration,
+            "findings": lifecycle.list_run_findings(run_id),
+            "secrets": lifecycle.list_run_secrets(run_id),
+            "reachable": reachable,
+            "verdicts": verdicts,
+            "usage": usage,
+            "usage_tokens": sum(u.total_tokens for u in usage),
+            "usage_cost": sum(u.cost_usd for u in usage),
+        },
     )

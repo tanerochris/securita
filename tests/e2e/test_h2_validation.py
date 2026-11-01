@@ -215,7 +215,8 @@ def test_withhold_approval_merges_nothing(tmp_path, monkeypatch):
         mock.patch.object(scan_mod, "kev_exploited_ids", return_value=set()),
         mock.patch("security_agent.worker.news.poll_news", return_value={}),
         mock.patch(
-            "security_agent.worker.news.run_matcher", return_value={"items": 0, "boosts": 0}
+            "security_agent.worker.news_intel.process_news",
+            return_value={"classified": 0, "major": 0, "minted": 0, "linked": 0},
         ),
         _refresh_fake(),
     ):

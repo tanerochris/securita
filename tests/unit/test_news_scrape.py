@@ -7,11 +7,10 @@ from urllib.parse import urlparse
 import pytest
 from sqlalchemy import select
 
-from security_agent.control import repos
-from security_agent.db.models import Finding, NewsBoost, NewsItem, RepoKind
+from security_agent.db.models import NewsItem
 from security_agent.db.session import session_scope
 from security_agent.worker import news as news_mod
-from security_agent.worker.news import FeedError, enrich_item, match_item, scrape_article
+from security_agent.worker.news import FeedError, enrich_item, scrape_article
 
 
 @pytest.fixture(autouse=True)
@@ -188,22 +187,12 @@ def test_throttle_state_evicted_and_bounded():
     assert len(news_mod._last_fetch) <= news_mod._THROTTLE_MAX_HOSTS
 
 
-def test_match_item_scrapes_then_boosts():
-    repo = repos.connect_repo("scrape-m", RepoKind.GIT, url="https://example.com/s.git")
-    with session_scope() as db:
-        finding = Finding(
-            repo_id=repo.id,
-            package="left-pad",
-            installed_version="1.0.0",
-            advisory_id="CVE-2026-60002",
-        )
-        db.add(finding)
-        db.flush()
-        fid = finding.id
+def test_enrich_item_scrapes_cves_for_classifier():
     item = _item("Advisory text forthcoming")
     page = b"<html><body>CVE-2026-60002 patched.</body></html>"
     with mock.patch.object(news_mod, "_http_stream", return_value=_stream_page(page)):
-        assert match_item(item) >= 1
+        assert enrich_item(item) is True
     with session_scope() as db:
-        rows = list(db.scalars(select(NewsBoost).where(NewsBoost.finding_id == fid)))
-        assert [(b.weight, b.matched_on) for b in rows] == [(100, "CVE-2026-60002")]
+        row = db.get(NewsItem, item)
+        assert row.cve_ids == ["CVE-2026-60002"]
+        assert "CVE-2026-60002" in (row.body_excerpt or "")

@@ -42,14 +42,15 @@ def _stub(name: str):
 
 
 def _fetch_signals(state: AgentState) -> dict:
-    """H3: poll Tier-2 news sources and match items against findings.
+    """H3: poll Tier-2 news sources, then classify and mint intel.
 
     Tier-2 signals must never gate Tier-1 scanning: each half is isolated
     so a news outage still lets the pipeline reach the sandbox scan.
     """
     import logging
 
-    from security_agent.worker.news import poll_news, run_matcher
+    from security_agent.worker.news import poll_news
+    from security_agent.worker.news_intel import process_news
 
     log = logging.getLogger(__name__)
     try:
@@ -57,9 +58,9 @@ def _fetch_signals(state: AgentState) -> dict:
     except Exception as exc:  # noqa: BLE001 - news must never block a scan
         log.warning("fetch_signals poll failed: %s", exc)
     try:
-        run_matcher()
+        process_news()
     except Exception as exc:  # noqa: BLE001 - news must never block a scan
-        log.warning("fetch_signals match failed: %s", exc)
+        log.warning("fetch_signals intel failed: %s", exc)
     return {"done": ["fetch_signals"]}
 
 

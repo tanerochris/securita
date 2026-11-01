@@ -158,8 +158,10 @@ def test_clone_argv_shape_and_redaction(tmp_path):
     repo = repos.connect_repo(
         "clone-r", RepoKind.GIT, url="https://example.com/c.git", token="tok-123"
     )
+    dest = tmp_path / "dest"
+    (dest / ".git").mkdir(parents=True)  # mocked clone: checkout visible on the worker
     with mock.patch.object(scan_mod, "run_allowlisted") as fake:
-        clone_repo(repo, tmp_path / "dest")
+        clone_repo(repo, dest)
     assert fake.call_count == 2
     (name, args), kwargs = fake.call_args_list[0]
     assert name == "git"
@@ -335,6 +337,33 @@ def test_run_scan_end_to_end_with_fixture(tmp_path):
     }
 
 
+def test_clone_repo_fails_loud_when_checkout_invisible_on_worker(tmp_path):
+    """Volume split: git "succeeded" container-side, worker sees an empty dir."""
+    repo = repos.connect_repo(
+        "clone-split", RepoKind.GIT, url="https://example.com/s.git", token="tok-1"
+    )
+    dest = tmp_path / "dest"
+    dest.mkdir()  # mkdtemp left this behind; the clone landed elsewhere
+    with mock.patch.object(scan_mod, "run_allowlisted", return_value=""):
+        with pytest.raises(ScanError, match="not shared"):
+            clone_repo(repo, dest)
+
+
+def test_run_scan_clone_split_fails_instead_of_empty_scan():
+    """Run #8 regression: invisible checkout must FAIL loud, never "nothing to scan"."""
+    repo = repos.connect_repo("split-r", RepoKind.GIT, url="https://example.com/s.git")
+    with session_scope() as db:
+        run_id = db.scalar(select(ScanRun.id).where(ScanRun.repo_id == repo.id))
+    with mock.patch.object(scan_mod, "run_allowlisted", return_value=""):
+        result = run_scan(repo.id, run_id)
+    assert result["status"] == "failed"
+    with session_scope() as db:
+        run = db.get(ScanRun, run_id)
+        assert run.status == RunStatus.FAILED
+        assert "not shared" in (run.notes or "")
+        assert "nothing to scan" not in (run.notes or "")
+
+
 def test_run_scan_failure_recorded(tmp_path):
     repo = repos.connect_repo("fail-r", RepoKind.GIT, url="https://example.com/f.git")
     with session_scope() as db:
@@ -362,7 +391,8 @@ def test_graph_scan_node_runs_real_scan():
     with (
         mock.patch("security_agent.worker.news.poll_news", return_value={}),
         mock.patch(
-            "security_agent.worker.news.run_matcher", return_value={"items": 0, "boosts": 0}
+            "security_agent.worker.news_intel.process_news",
+            return_value={"classified": 0, "major": 0, "minted": 0, "linked": 0},
         ),
         mock.patch.object(
             scan_mod, "run_scan", return_value={"status": "done", "finding_ids": [7]}

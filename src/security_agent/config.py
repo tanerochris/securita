@@ -35,11 +35,20 @@ class Settings(BaseSettings):
     news_rss_feeds: str = Field(default="", alias="NEWS_RSS_FEEDS")
     news_poll_hours: float = Field(default=1.0, alias="NEWS_POLL_HOURS")
     news_hn_max_pages: int = Field(default=5, alias="NEWS_HN_MAX_PAGES")
+    news_classify_enabled: bool = Field(default=True, alias="NEWS_CLASSIFY_ENABLED")
+    news_classify_max_items: int = Field(default=20, alias="NEWS_CLASSIFY_MAX_ITEMS")
+    news_mint_enabled: bool = Field(default=True, alias="NEWS_MINT_ENABLED")
+    news_relevance_enabled: bool = Field(default=True, alias="NEWS_RELEVANCE_ENABLED")
+    news_relevance_max_pairs: int = Field(default=50, alias="NEWS_RELEVANCE_MAX_PAIRS")
     secrets_config_path: str = Field(default="", alias="SECRETS_CONFIG_PATH")
     # Sandbox execution (follow-up #1): auto = docker in prod, host otherwise.
     sandbox_backend: str = Field(default="auto", alias="SANDBOX_BACKEND")
     sandbox_image: str = Field(default="security-agent-sandbox:latest", alias="SANDBOX_IMAGE")
     sandbox_work_root: str = Field(default="", alias="SANDBOX_WORK_ROOT")
+    # Daemon-side name of the volume mounted at SANDBOX_WORK_ROOT (compose
+    # pins it via `name:` so it is not project-prefixed). Sibling sandbox
+    # containers share workdirs through this volume, never host bind paths.
+    sandbox_work_volume: str = Field(default="sandbox-work", alias="SANDBOX_WORK_VOLUME")
     sandbox_network: str = Field(default="none", alias="SANDBOX_NETWORK")
     # Audit backend (follow-up #2): memory (dev/test) or loki.
     audit_backend: str = Field(default="memory", alias="AUDIT_BACKEND")

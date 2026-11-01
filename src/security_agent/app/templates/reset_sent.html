@@ -1,3 +1,13 @@
-{% extends "base.html" %}{% block content %}<h1>Check your inbox</h1>
-<p>If the account exists, a reset link was sent (expires in 1 hour).</p>
-<p><a href="/login">Back to login</a></p>{% endblock %}
+{% extends "base_auth.html" %}
+{% block title %}Check your inbox — Securita{% endblock %}
+{% block content %}
+<div class="text-center">
+  <span class="mx-auto grid h-14 w-14 place-items-center rounded-full bg-brand-mist text-brand-primary" aria-hidden="true">
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+  </span>
+  <h1 class="mt-4 text-[24px] font-extrabold tracking-tight text-brand-navy">Check your inbox</h1>
+  <p class="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-slate-600">If the account exists, a reset link was sent. It expires in 1 hour and can be used once. No email in a few minutes? Check spam, then request another link.</p>
+  <a class="btn-primary mt-6 w-full !py-3" href="/login">Back to login</a>
+  <p class="mt-4 text-sm"><a class="font-bold text-brand-primary hover:text-brand-deep" href="/reset">Request another link</a></p>
+</div>
+{% endblock %}

@@ -249,11 +249,12 @@ def tick(now: datetime | None = None) -> list[ScanRun]:
     )
     from security_agent.notify.digest import maybe_send_digest
     from security_agent.worker.deliver import purge_old_deliveries
-    from security_agent.worker.news import poll_news, run_matcher
+    from security_agent.worker.news import poll_news
+    from security_agent.worker.news_intel import process_news
 
     def _news() -> None:
         poll_news()
-        run_matcher()
+        process_news()
 
     for label, job in (
         ("gate sweep", lambda: sweep_expired_gates(now)),

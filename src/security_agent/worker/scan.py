@@ -111,6 +111,20 @@ def clone_repo(repo: Repo, dest: Path, *, depth: int | None = 1) -> None:
             run_allowlisted("git", ["remote", "set-url", "origin", url], cwd=str(dest))
         except (RuntimeError, TimeoutError) as exc:
             log.debug("origin strip failed (workdir is temp): %s", exc)
+    if not (dest / ".git").exists():
+        # The clone wrote container-side but the worker sees no checkout:
+        # the work volume is not shared (SANDBOX_WORK_ROOT/VOLUME
+        # mismatch, or the stack was not recreated after a compose
+        # change). Fail loud — every caller mixes worker-side reads
+        # with container-side tools, so an invisible checkout would
+        # scan as a silently empty repo ("nothing to scan").
+        raise ScanError(
+            f"clone finished but {dest} has no .git on the worker: the sandbox "
+            "work volume is not shared between the worker and its tool "
+            "containers (SANDBOX_WORK_ROOT/SANDBOX_WORK_VOLUME mismatch?). "
+            "Recreate the stack with `docker compose up -d --build` so both "
+            "mount the same volume."
+        )
 
 
 def ensure_lockfile(workdir: Path) -> tuple[Path, bool]:

@@ -92,7 +92,8 @@ def test_h6_digest_flows_through_tick_on_schedule():
         with (
             mock.patch("security_agent.worker.news.poll_news", return_value={}),
             mock.patch(
-                "security_agent.worker.news.run_matcher", return_value={"items": 0, "boosts": 0}
+                "security_agent.worker.news_intel.process_news",
+                return_value={"classified": 0, "major": 0, "minted": 0, "linked": 0},
             ),
             mock.patch("security_agent.notify.transports.smtplib.SMTP") as fake_smtp,
             mock_notify_http() as fake_post,

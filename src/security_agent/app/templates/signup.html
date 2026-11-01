@@ -1,6 +1,30 @@
-{% extends "base.html" %}{% block content %}<h1>Create account</h1>
-{% if open %}<p>First signup becomes Owner.</p>{% else %}<p>Invite required.</p>{% endif %}
-<form method="post" action="/signup"><input type="hidden" name="csrf" value="{{ csrf }}"><label>Email <input name="email" type="email" required></label>
-<label>Password <input name="password" type="password" required minlength="12"></label>
-<label>Invite token <input name="token" value="{{ token }}"></label>
-<button type="submit">Sign up</button></form>{% endblock %}
+{% extends "base_auth.html" %}
+{% block title %}Create account — Securita{% endblock %}
+{% block content %}
+<h1 class="text-[24px] font-extrabold tracking-tight text-brand-navy">Create account</h1>
+{% if open %}
+<p class="mt-1 text-sm leading-relaxed text-slate-600">This workspace has no users yet. The first signup becomes the <strong class="font-bold text-brand-navy">Owner</strong> with full control.</p>
+{% else %}
+<p class="mt-1 text-sm leading-relaxed text-slate-600">This workspace is invite-only. Paste the single-use invite token from your invitation to continue.</p>
+{% endif %}
+
+<form class="mt-6 space-y-4" method="post" action="/signup">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div>
+    <label class="auth-label" for="email">Email</label>
+    <input class="auth-input" id="email" name="email" type="email" required autocomplete="email" placeholder="you@company.com">
+  </div>
+  <div>
+    <label class="auth-label" for="password">Password</label>
+    <input class="auth-input" id="password" name="password" type="password" required minlength="12" autocomplete="new-password" placeholder="At least 12 characters" aria-describedby="pwHint">
+    <p class="mt-1.5 text-xs text-slate-500" id="pwHint">12 characters minimum. You can enable MFA later from your session.</p>
+  </div>
+  <div>
+    <label class="auth-label" for="token">Invite token {% if open %}<span class="font-medium text-slate-500">(not needed for the first account)</span>{% endif %}</label>
+    <input class="auth-input" id="token" name="token" value="{{ token }}" autocomplete="off" placeholder="Paste invite token">
+  </div>
+  <button class="btn-primary w-full !py-3" type="submit">Create account</button>
+</form>
+
+<p class="mt-6 border-t border-brand-mist pt-5 text-center text-sm text-slate-600">Already have an account? <a class="font-bold text-brand-primary hover:text-brand-deep" href="/login">Log in</a></p>
+{% endblock %}

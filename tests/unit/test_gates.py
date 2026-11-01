@@ -303,7 +303,8 @@ def test_graph_merge_node_and_withhold():
     with (
         mock.patch("security_agent.worker.news.poll_news", return_value={}),
         mock.patch(
-            "security_agent.worker.news.run_matcher", return_value={"items": 0, "boosts": 0}
+            "security_agent.worker.news_intel.process_news",
+            return_value={"classified": 0, "major": 0, "minted": 0, "linked": 0},
         ),
         mock.patch.object(scan_mod, "run_scan", return_value={"finding_ids": []}),
         mock.patch.object(reach_mod, "run_reachability", return_value={"verdict_ids": []}),
@@ -329,7 +330,8 @@ def test_tick_sweeps_expired_gates():
     with (
         mock.patch("security_agent.worker.news.poll_news", return_value={}),
         mock.patch(
-            "security_agent.worker.news.run_matcher", return_value={"items": 0, "boosts": 0}
+            "security_agent.worker.news_intel.process_news",
+            return_value={"classified": 0, "major": 0, "minted": 0, "linked": 0},
         ),
     ):
         tick()

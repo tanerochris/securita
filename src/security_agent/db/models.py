@@ -302,6 +302,7 @@ class Finding(Base):
     issue_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     news_weight: Mapped[int] = mapped_column(default=0)
     news_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    provenance: Mapped[str] = mapped_column(String(20), default="scanner")
     first_run_id: Mapped[int | None] = mapped_column(ForeignKey("scan_runs.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -422,6 +423,56 @@ class NewsItem(Base):
     )
     cve_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
     body_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Standalone intel: LLM verdict (major/minor/not_security, NULL = unclassified),
+    # category (vulnerability/exploit/patch/breach/leak/other), and mint marker.
+    verdict: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    category: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    classified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    minted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class NewsFindingLink(Base):
+    """One news item concerning one finding; kind is minted or linked."""
+
+    __tablename__ = "news_finding_links"
+    __table_args__ = (
+        UniqueConstraint("news_item_id", "finding_id", name="uq_news_link_item_finding"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    news_item_id: Mapped[int] = mapped_column(ForeignKey("news_items.id"), index=True)
+    finding_id: Mapped[int] = mapped_column(ForeignKey("findings.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class NewsRepoRelevance(Base):
+    """Per-repo relevance of one news item (localized feed, FR-6).
+
+    Global classification (`NewsItem.verdict`) answers "is this a major
+    security story at all?"; this row answers "does it matter to *this*
+    repository?" — `direct` when the story concerns code/dependencies the
+    repo actually uses, `platform` when it concerns an OS, runtime, cloud,
+    hosting, or hardware target the repo plausibly deploys to, and
+    `irrelevant` otherwise. One row per (item, repo); the deterministic
+    finding-link path and the model-backed assessment both write here.
+    """
+
+    __tablename__ = "news_repo_relevance"
+    __table_args__ = (
+        UniqueConstraint("news_item_id", "repo_id", name="uq_news_relevance_item_repo"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    news_item_id: Mapped[int] = mapped_column(ForeignKey("news_items.id"), index=True)
+    repo_id: Mapped[int] = mapped_column(ForeignKey("repos.id"), index=True)
+    relevance: Mapped[str] = mapped_column(String(20), index=True)
+    score: Mapped[int] = mapped_column(default=0)
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    matched_signals: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    assessed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
 
 
 class NewsBoost(Base):

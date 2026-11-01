@@ -11,17 +11,27 @@ import secrets
 from datetime import UTC, datetime
 from urllib.parse import urlparse
 
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select, update
 
 from security_agent.audit import get_shared_log
 from security_agent.crypto import decrypt_field, encrypt_field
 from security_agent.db.keys import get_encryption_key
 from security_agent.db.models import (
+    Approval,
     EncryptedToken,
+    Finding,
+    ModelUsage,
+    NewsBoost,
+    NewsFindingLink,
+    NewsRepoRelevance,
+    Proposal,
     Repo,
     RepoKind,
     RunTrigger,
     ScanRun,
+    SecretBaseline,
+    SecretFinding,
+    Verdict,
 )
 from security_agent.db.session import session_scope
 
@@ -123,6 +133,59 @@ def connect_repo(
         db.flush()
         db.expunge(repo)
         return repo
+
+
+def disconnect_repo(repo_id: int) -> None:
+    """Remove a repo and everything it owns; the provider repo is untouched.
+
+    Dependents go first (Postgres enforces the FKs): boosts/verdicts hang
+    off findings and runs, the cost ledger hangs off runs, proposals and
+    secrets reference each other, and the encrypted credential rows are
+    keyed by owner label, not FK.
+    """
+    with session_scope() as db:
+        repo = db.get(Repo, repo_id)
+        if repo is None:
+            raise ValueError(f"Unknown repo {repo_id}.")
+        finding_ids = select(Finding.id).where(Finding.repo_id == repo_id)
+        run_ids = select(ScanRun.id).where(ScanRun.repo_id == repo_id)
+        db.execute(delete(NewsBoost).where(NewsBoost.finding_id.in_(finding_ids)))
+        db.execute(delete(NewsFindingLink).where(NewsFindingLink.finding_id.in_(finding_ids)))
+        db.execute(delete(NewsRepoRelevance).where(NewsRepoRelevance.repo_id == repo_id))
+        db.execute(
+            delete(Verdict).where(
+                or_(
+                    Verdict.finding_id.in_(finding_ids),
+                    Verdict.run_id.in_(run_ids),
+                )
+            )
+        )
+        db.execute(delete(Approval).where(Approval.repo_id == repo_id))
+        db.execute(
+            update(SecretFinding).where(SecretFinding.repo_id == repo_id).values(proposal_id=None)
+        )
+        db.execute(delete(Proposal).where(Proposal.repo_id == repo_id))
+        db.execute(delete(SecretFinding).where(SecretFinding.repo_id == repo_id))
+        db.execute(delete(SecretBaseline).where(SecretBaseline.repo_id == repo_id))
+        db.execute(delete(Finding).where(Finding.repo_id == repo_id))
+        # Cost ledger rows point at the runs; Postgres blocks the run
+        # delete until they are gone (NFR-8: spend history dies with the repo).
+        db.execute(delete(ModelUsage).where(ModelUsage.run_id.in_(run_ids)))
+        db.execute(delete(ScanRun).where(ScanRun.repo_id == repo_id))
+        db.execute(
+            delete(EncryptedToken).where(
+                EncryptedToken.owner.in_(
+                    [
+                        _TOKEN_OWNER.format(repo_id),
+                        _WEBHOOK_OWNER.format(repo_id),
+                        _MERGE_OWNER.format(repo_id),
+                    ]
+                )
+            )
+        )
+        db.delete(repo)
+        db.flush()
+    audit.append(action_class="repo", decision="disconnect", line=f"repo={repo_id} removed")
 
 
 def list_repos() -> list[Repo]:

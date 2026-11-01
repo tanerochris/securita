@@ -1,4 +1,4 @@
-"""H3 slice A: boost-aware ordering + news retention."""
+"""H3 slice A: relevance ordering (no news join) + news retention."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -32,36 +32,30 @@ def _seed_item(**fields) -> int:
         return row.id
 
 
-def test_boost_breaks_ties_after_severity():
+def test_severity_orders_without_news_join():
     repo = repos.connect_repo("news-ord", RepoKind.GIT, url="https://example.com/n.git")
-    plain = _seed_finding(repo.id, "CVE-PLAIN", severity_score=5.0)
-    boosted = _seed_finding(repo.id, "CVE-BOOST", severity_score=5.0)
-    item = _seed_item(title="CVE-BOOST discussed", url="https://news.example/1")
-    with session_scope() as db:
-        db.add(NewsBoost(finding_id=boosted, news_item_id=item, weight=100, matched_on="CVE-BOOST"))
-        row = db.get(Finding, boosted)
-        row.news_weight = 100
-        row.news_url = "https://news.example/1"
+    low = _seed_finding(repo.id, "CVE-PLAIN", severity_score=5.0)
+    high = _seed_finding(repo.id, "CVE-HIGH", severity_score=9.0)
     ordered = [f.id for f in list_open_findings(repo.id)]
-    assert ordered.index(boosted) < ordered.index(plain)
+    assert ordered.index(high) < ordered.index(low)
 
 
-def test_purge_old_news_recomputes_findings():
+def test_purge_old_news_drops_stale_items_and_legacy_boosts():
     repo = repos.connect_repo("news-purge", RepoKind.GIT, url="https://example.com/p.git")
-    fid = _seed_finding(repo.id, "CVE-OLD", news_weight=100, news_url="https://news.example/old")
+    fid = _seed_finding(repo.id, "CVE-OLD")
     old = _seed_item(title="old", url="https://news.example/old")
     with session_scope() as db:
         db.add(NewsBoost(finding_id=fid, news_item_id=old, weight=100, matched_on="CVE-OLD"))
         db.get(NewsItem, old).fetched_at = datetime.now(UTC) - timedelta(days=91)
     assert purge_old_news() == 1
     with session_scope() as db:
-        row = db.get(Finding, fid)
-        assert (row.news_weight, row.news_url) == (0, None)
+        assert db.get(NewsItem, old) is None
         assert db.scalar(select(NewsBoost).where(NewsBoost.finding_id == fid)) is None
+        assert db.get(Finding, fid) is not None  # findings never purged with news
     fresh = _seed_item(title="fresh")
-    with session_scope() as db:
-        db.add(NewsBoost(finding_id=fid, news_item_id=fresh, weight=10, matched_on="left-pad"))
     assert purge_old_news() == 0
+    with session_scope() as db:
+        assert db.get(NewsItem, fresh) is not None
 
 
 def test_purge_old_polls_removes_stale_rows():

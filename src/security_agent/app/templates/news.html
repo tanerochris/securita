@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Security news — Securita{% endblock %}
+{% block page_title %}Security news{% endblock %}
+{% block content %}
+<div class="max-w-3xl">
+  <h1 class="text-[26px] leading-tight md:text-[30px]">Security news</h1>
+  <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Major security stories only — vulnerabilities, exploits, patches, breaches, and leaks classified by the model under a strict impact bar. Each story is then judged per repository: directly relevant to its code, relevant to a platform it can be deployed to, or not shown for that repo.</p>
+  {% if repo_filter %}
+  <p class="mt-2.5 text-sm text-slate-600">Localized for <span class="font-bold text-brand-deep">{{ repo_name }}</span>, most relevant first — <a class="font-bold text-brand-primary hover:text-brand-deep" href="/news">all repositories</a></p>
+  {% endif %}
+</div>
+
+<section class="mt-7" aria-labelledby="feed-heading">
+  <h2 id="feed-heading" class="sr-only">Latest major security stories</h2>
+  {% if items %}
+  <ol class="space-y-3">
+  {% for item in items %}
+    <li class="rounded-xl bg-white px-5 py-4 shadow-card">
+      <div class="flex flex-wrap items-center gap-2 text-xs font-bold">
+        <span class="inline-flex rounded-full bg-brand-navy px-2.5 py-1 text-white">{{ item.category or "other" }}</span>
+        {% for cve in (item.cve_ids or [])[:4] %}
+        <span class="inline-flex rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep">{{ cve }}</span>
+        {% endfor %}
+        <span class="ml-auto font-semibold text-slate-500">{{ item.published_at.strftime("%Y-%m-%d") if item.published_at else "undated" }}</span>
+      </div>
+      <p class="mt-2.5 text-[15px] font-bold leading-snug text-brand-deep">
+        {% if item.url and (item.url.startswith('http://') or item.url.startswith('https://')) %}<a class="hover:text-brand-primary" href="{{ item.url }}">{{ item.title }}</a>{% else %}{{ item.title }}{% endif %}
+      </p>
+      {% if item.summary %}<p class="mt-1.5 text-[13px] leading-relaxed text-slate-600">{{ item.summary[:500] }}</p>{% endif %}
+      {% if repo_filter and relevance.get(item.id) %}
+      {% set rel = relevance[item.id] %}
+      <p class="mt-2 text-[13px] leading-relaxed text-slate-600"><span class="inline-flex rounded-full {% if rel[0] == 'direct' %}bg-brand-navy text-white{% else %}bg-brand-mist text-brand-deep{% endif %} px-2.5 py-1 text-xs font-bold">{{ rel[0] }} · {{ rel[1] }}</span>{% if rel[2] %} <span>{{ rel[2] }}</span>{% endif %}</p>
+      {% elif relevance_tags.get(item.id) %}
+      <p class="mt-2 flex flex-wrap gap-2 text-xs font-semibold">
+        {% for rid, rname, rlevel, rscore in relevance_tags[item.id][:6] %}
+        <a class="inline-flex rounded-full bg-white px-2.5 py-1 text-brand-primary shadow-[inset_0_0_0_1px_#BAE6FD] hover:text-brand-deep" href="/news?repo={{ rid }}">{{ rname }} · {{ rlevel }} {{ rscore }}</a>
+        {% endfor %}
+      </p>
+      {% endif %}
+      {% if tags.get(item.id) %}
+      <p class="mt-2 flex flex-wrap gap-2 text-xs font-semibold">
+        {% for rid, rname in tags[item.id][:6] %}
+        <a class="inline-flex rounded-full bg-white px-2.5 py-1 text-brand-primary shadow-[inset_0_0_0_1px_#BAE6FD] hover:text-brand-deep" href="/repos/{{ rid }}">{{ rname }}</a>
+        {% endfor %}
+      </p>
+      {% endif %}
+    </li>
+  {% endfor %}
+  </ol>
+  {% else %}
+  <div class="mt-3 rounded-xl bg-white px-5 py-8 text-center shadow-card">
+    <p class="text-sm font-semibold text-brand-deep">No major security stories yet</p>
+    <p class="mx-auto mt-1 max-w-md text-[13px] text-slate-600">Newly polled items appear here once classified as major{% if repo_filter %} and assessed relevant to this repository{% endif %}. Minor and non-security items are filtered out.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

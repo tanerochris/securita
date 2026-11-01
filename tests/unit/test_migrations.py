@@ -24,6 +24,10 @@ CHAIN = [
     "0009_secret_indexes",
     "0010_news_hardening",
     "0011_h6_notify_cost",
+    "0012_provider_connections",
+    "0013_news_intel",
+    "0014_news_finding_links",
+    "0015_news_relevance",
 ]
 
 
@@ -58,11 +62,20 @@ def test_migration_chain_upgrades_and_0007_roundtrips(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path}/mig.db")
     modules = [_load(name) for name in CHAIN]
     _run(engine, *modules)
+    assert "verdict" in _columns(engine, "news_items")
+    assert "category" in _columns(engine, "news_items")
+    assert "classified_at" in _columns(engine, "news_items")
+    assert "minted_at" in _columns(engine, "news_items")
+    assert "provenance" in _columns(engine, "findings")
+    assert "connection_id" in _columns(engine, "repos")
     assert "ecosystem" in _columns(engine, "findings")
     assert "news_weight" in _columns(engine, "findings")
     assert "secret_finding_id" in _columns(engine, "proposals")
     assert "rule_id" in _columns(engine, "secret_findings")
     assert "baseline_sha" in _columns(engine, "secret_baselines")
+    assert "relevance" in _columns(engine, "news_repo_relevance")
+    assert "score" in _columns(engine, "news_repo_relevance")
+    assert "matched_signals" in _columns(engine, "news_repo_relevance")
     eco = _load("0007_ecosystem")
     _run(engine, eco, direction="downgrade")
     assert "ecosystem" not in _columns(engine, "findings")
@@ -150,12 +163,57 @@ def test_migration_0011_roundtrips(tmp_path):
         return {ix["name"]: ix for ix in sa_inspect(engine).get_indexes(table)}
 
     assert "ix_scan_runs_status_started" in indexes("scan_runs")
-    _run(engine, modules[-1], direction="downgrade")
+    mod11 = _load("0011_h6_notify_cost")
+    _run(engine, mod11, direction="downgrade")
     tables = sa_inspect(engine).get_table_names()
     for table in ("notify_channels", "notify_routes", "notify_state", "model_usage"):
         assert table not in tables
     cols = _columns(engine, "scan_runs")
     assert "claimed_by" not in cols and "parked" not in cols
-    _run(engine, modules[-1])
+    _run(engine, mod11)
     assert "notify_channels" in sa_inspect(engine).get_table_names()
     assert "claimed_by" in _columns(engine, "scan_runs")
+
+
+def test_migration_0013_roundtrips(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path}/mig13.db")
+    modules = [_load(name) for name in CHAIN]
+    _run(engine, *modules)
+    assert "verdict" in _columns(engine, "news_items")
+    assert "provenance" in _columns(engine, "findings")
+    mod13 = _load("0013_news_intel")
+    _run(engine, mod13, direction="downgrade")
+    assert "verdict" not in _columns(engine, "news_items")
+    assert "provenance" not in _columns(engine, "findings")
+    _run(engine, mod13)
+    assert "verdict" in _columns(engine, "news_items")
+    assert "provenance" in _columns(engine, "findings")
+
+
+def test_migration_0015_roundtrips(tmp_path):
+    from sqlalchemy import inspect as sa_inspect
+
+    engine = create_engine(f"sqlite:///{tmp_path}/mig15.db")
+    modules = [_load(name) for name in CHAIN]
+    _run(engine, *modules)
+    assert "news_repo_relevance" in sa_inspect(engine).get_table_names()
+    mod15 = _load("0015_news_relevance")
+    _run(engine, mod15, direction="downgrade")
+    assert "news_repo_relevance" not in sa_inspect(engine).get_table_names()
+    _run(engine, mod15)
+    assert "news_repo_relevance" in sa_inspect(engine).get_table_names()
+
+
+def test_migration_0014_roundtrips(tmp_path):
+    from sqlalchemy import inspect as sa_inspect
+
+    engine = create_engine(f"sqlite:///{tmp_path}/mig14.db")
+    modules = [_load(name) for name in CHAIN]
+    _run(engine, *modules)
+    assert "news_finding_links" in sa_inspect(engine).get_table_names()
+    assert "kind" in _columns(engine, "news_finding_links")
+    mod14 = _load("0014_news_finding_links")
+    _run(engine, mod14, direction="downgrade")
+    assert "news_finding_links" not in sa_inspect(engine).get_table_names()
+    _run(engine, mod14)
+    assert "news_finding_links" in sa_inspect(engine).get_table_names()
