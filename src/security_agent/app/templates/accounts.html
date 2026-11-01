@@ -5,7 +5,6 @@
 <div class="flex flex-wrap items-start gap-4">
   <div class="min-w-0">
     <h1 class="text-[26px] leading-tight md:text-[30px]">Accounts</h1>
-    <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Owner-only administration. New members join through single-use invites; accounts are disabled, never deleted, and the last Owner is protected.</p>
     <p class="mt-2.5 flex flex-wrap gap-2 text-xs font-semibold">
       <span class="inline-flex rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep">{{ users|length }} users</span>
       <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">{{ users|selectattr("disabled")|list|length }} disabled</span>

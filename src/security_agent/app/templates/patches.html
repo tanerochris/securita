@@ -8,7 +8,6 @@
   <div class="min-w-0">
     <p class="text-sm font-semibold text-slate-600"><a class="font-bold text-brand-primary hover:text-brand-deep" href="/repos/{{ repo.id }}">&larr; {{ repo.name }}</a></p>
     <h1 class="mt-1 text-[26px] leading-tight md:text-[30px]">Patches — {{ repo.name }}</h1>
-    <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Verified dependency bumps proposed by the agent. Nothing merges from here — every merge is approved and executed from the approval queue.</p>
     <p class="mt-2.5 flex flex-wrap gap-2 text-xs font-semibold">
       <span class="inline-flex rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep">{{ proposals|length }} total</span>
       <span class="inline-flex rounded-full bg-brand-primary px-2.5 py-1 text-white">{{ open_count }} open</span>

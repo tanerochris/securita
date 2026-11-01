@@ -174,6 +174,15 @@ def test_run_once_heartbeat_renews_during_long_run():
                 "security_agent.worker.news_intel.process_news",
                 return_value={"classified": 0, "major": 0, "minted": 0, "linked": 0},
             ),
+            mock.patch("security_agent.worker.scheduler.dep_tick", return_value=[]),
+            mock.patch(
+                "security_agent.worker.deps_check.drain_dep_checks",
+                return_value={"executed": 0, "failed": 0},
+            ),
+            mock.patch(
+                "security_agent.worker.deps_check.drain_dep_patches",
+                return_value={"proposal_ids": [], "errors": []},
+            ),
         ):
             summary = worker_main.run_once()
     finally:

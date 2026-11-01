@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     # Model-written PR titles/bodies (FR-5); the deterministic template
     # stays as the fallback when disabled, keyless, or on any model miss.
     pr_text_model_enabled: bool = Field(default=True, alias="PR_TEXT_MODEL_ENABLED")
+    # Model-written dependency impact summaries (D6); the deterministic
+    # evidence template stays as the fallback when disabled, keyless, or
+    # on any model miss. Budgeted separately from the security pipeline.
+    deps_report_model_enabled: bool = Field(default=True, alias="DEPS_REPORT_MODEL_ENABLED")
     # Policy RAG (D4): the operator picks the embeddings provider.
     # "local" (default) runs a small ONNX model in-process via fastembed
     # — no extra service. "ollama" talks to an Ollama server's

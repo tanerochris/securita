@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Notifications — Securita{% endblock %}
+{% block page_title %}Notifications{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-start gap-4">
+  <div class="min-w-0">
+    <h1 class="text-[26px] leading-tight md:text-[30px]">Notifications</h1>
+    <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Dashboard notification pool. v1 carries dependency events only: new impact reports, patch results, and check failures.</p>
+  </div>
+  {% if items %}
+  <form class="ml-auto" method="post" action="/notifications/read-all">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="btn-secondary" type="submit">Mark all read</button>
+  </form>
+  {% endif %}
+</div>
+
+{% if items %}
+<ol class="mt-6 space-y-3">
+  {% for n in items %}
+  <li class="rounded-xl bg-white px-5 py-4 shadow-card {% if not n.read %}shadow-[inset_3px_0_0_0_#0284C7,0_1px_3px_rgba(8,47,73,0.08)]{% endif %}">
+    <div class="flex flex-wrap items-center gap-2 text-xs font-bold">
+      <span class="inline-flex rounded-full {% if n.read %}bg-brand-mist text-brand-deep{% else %}bg-brand-navy text-white{% endif %} px-2.5 py-1">{{ n.kind }}</span>
+      <span class="ml-auto font-semibold text-slate-500">{{ n.created_at }}</span>
+    </div>
+    <p class="mt-2 text-[15px] font-bold leading-snug text-brand-deep">
+      {% if n.report_id and n.repo_id %}<a class="hover:text-brand-primary" href="/repos/{{ n.repo_id }}/dependencies/report/{{ n.report_id }}">{{ n.title }}</a>
+      {% elif n.repo_id %}<a class="hover:text-brand-primary" href="/repos/{{ n.repo_id }}/dependencies">{{ n.title }}</a>
+      {% else %}{{ n.title }}{% endif %}
+    </p>
+    {% if n.body %}<p class="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-slate-600">{{ n.body[:600] }}</p>{% endif %}
+    {% if not n.read %}
+    <form class="mt-3" method="post" action="/notifications/{{ n.id }}/read">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="btn-secondary" type="submit">Mark read</button>
+    </form>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<div class="mt-6 flex items-center gap-3.5 rounded-xl bg-white px-5 py-4 shadow-card">
+  <span class="grid h-10 w-10 flex-none place-items-center rounded-full bg-brand-mist text-brand-primary" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></span>
+  <div>
+    <p class="text-sm font-bold text-brand-navy">No notifications</p>
+    <p class="text-[13px] text-slate-600">Dependency reports, patch results, and check failures will land here.</p>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

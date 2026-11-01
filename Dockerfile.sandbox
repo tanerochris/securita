@@ -19,8 +19,14 @@ ARG BETTERLEAKS_SHA256_ARM64=88e96e09b0c44dd45c2991173340e035850a700040f8fa894cb
 ARG OSV_SCANNER_SHA256_AMD64=160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b
 ARG OSV_SCANNER_SHA256_ARM64=4061ef4c021ed3c47f203b818f337e351336cc5cd67c0274fc36bd1dfc728dd7
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates git ripgrep nodejs npm \
+    && apt-get install -y --no-install-recommends curl ca-certificates git ripgrep nodejs npm python3-pip \
     && rm -rf /var/lib/apt/lists/* \
+    && corepack enable \
+    && (yarn --version && pnpm --version && python3 -m pip --version) \
+    && UV_TOOL_BIN_DIR=/usr/local/bin uv tool install "poetry==2.2.1" \
+    && UV_TOOL_BIN_DIR=/usr/local/bin uv tool install "pdm==2.26.9" \
+    && UV_TOOL_BIN_DIR=/usr/local/bin uv tool install "pipenv==2025.0.4" \
+    && (poetry --version && pdm --version && pipenv --version) \
     && ARCH="$(dpkg --print-architecture)" \
     && case "$ARCH" in \
         amd64) BL_ARCH=x64; OSV_ARCH=amd64; \

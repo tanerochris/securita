@@ -77,6 +77,7 @@ _SAMPLES = {
         "files_blob": "blob",
     },
     "adapt_search_followup": {"prompt": "p", "search_results": "s"},
+    "deps_summary": {"max_words": "400", "sections": "left-pad 1.3.0 -> 1.4.0 (patch)"},
     "draft_pr": {
         "package": "p",
         "from_version": "1",

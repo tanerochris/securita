@@ -39,6 +39,15 @@ def test_run_once_executes_claimed_run():
             "security_agent.worker.news_intel.process_news",
             return_value={"classified": 0, "major": 0, "minted": 0, "linked": 0},
         ),
+        mock.patch("security_agent.worker.scheduler.dep_tick", return_value=[]),
+        mock.patch(
+            "security_agent.worker.deps_check.drain_dep_checks",
+            return_value={"executed": 0, "failed": 0},
+        ),
+        mock.patch(
+            "security_agent.worker.deps_check.drain_dep_patches",
+            return_value={"proposal_ids": [], "errors": []},
+        ),
     ):
         summary = worker_main.run_once()
     graph.invoke.assert_any_call({"repo_id": repo.id, "run_id": _run(repo.id).id})
@@ -57,6 +66,15 @@ def test_run_once_isolates_crash():
         mock.patch(
             "security_agent.worker.news_intel.process_news",
             return_value={"classified": 0, "major": 0, "minted": 0, "linked": 0},
+        ),
+        mock.patch("security_agent.worker.scheduler.dep_tick", return_value=[]),
+        mock.patch(
+            "security_agent.worker.deps_check.drain_dep_checks",
+            return_value={"executed": 0, "failed": 0},
+        ),
+        mock.patch(
+            "security_agent.worker.deps_check.drain_dep_patches",
+            return_value={"proposal_ids": [], "errors": []},
         ),
     ):
         summary = worker_main.run_once()

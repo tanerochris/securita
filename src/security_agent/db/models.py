@@ -236,6 +236,13 @@ class Repo(Base):
     last_scan_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
+    # Dependency freshness (D14/D15): per-repo check interval override.
+    # NULL inherits the install-wide setting; 0 disables automatic checks
+    # (manual and on-connect checks still work); >0 is hours between checks.
+    dep_schedule_hours: Mapped[int | None] = mapped_column(nullable=True, default=None)
+    dep_last_check_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     # Policy RAG (D3): README extraction feeds repo guidance unless the
     # operator opts out. NULL (pre-migration rows) reads as enabled.
     readme_policy_enabled: Mapped[bool | None] = mapped_column(nullable=True, default=True)
@@ -758,3 +765,187 @@ class PolicyRunSnapshot(Base):
     doc_key: Mapped[str] = mapped_column(String(64))
     version: Mapped[int] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class DependencyStatus(enum.StrEnum):
+    """Freshness-table row state (dependency updates D2/D7/D10/D11/D19/D20/D21/D23)."""
+
+    UP_TO_DATE = "up_to_date"
+    UPDATE_AVAILABLE = "update_available"
+    AWAITING_DECISION = "awaiting_decision"
+    PROPOSED = "proposed"
+    DECLINED = "declined"
+    IGNORED = "ignored"
+    COVERED_BY_FINDING = "covered_by_finding"
+    CHECK_FAILED = "check_failed"
+    REPORT_PENDING_CAP = "report_pending_cap"
+
+
+class Dependency(Base):
+    """One tracked production package per (repo, ecosystem, manifest, package).
+
+    Direct production deps only (D3/D22); transitive packages stay with the
+    vulnerability Finding pipeline. Installed version resolves from the
+    manifest's own lockfile when one exists, else the manifest spec (D3).
+    The row cross-links to a Finding when the security tag applies (D1/D2)
+    and to the Proposal once an approved update is patched (D2/D8).
+    """
+
+    __tablename__ = "dependencies"
+    __table_args__ = (
+        UniqueConstraint(
+            "repo_id",
+            "ecosystem",
+            "manifest_path",
+            "package",
+            name="uq_dependency_repo_eco_manifest_pkg",
+        ),
+        Index("ix_dependencies_repo_status", "repo_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    repo_id: Mapped[int] = mapped_column(ForeignKey("repos.id"), index=True)
+    ecosystem: Mapped[str] = mapped_column(String(50))  # npm | pip
+    manifest_path: Mapped[str] = mapped_column(String(2000))  # repo-relative, D18 key leg
+    package: Mapped[str] = mapped_column(String(500), index=True)
+    section: Mapped[str | None] = mapped_column(String(100), nullable=True)  # D22 label
+    manifest_spec: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    installed_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    latest_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    wanted_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    update_class: Mapped[str | None] = mapped_column(String(10), nullable=True)  # major|minor|patch
+    security: Mapped[bool] = mapped_column(default=False)
+    finding_id: Mapped[int | None] = mapped_column(ForeignKey("findings.id"), nullable=True)
+    proposal_id: Mapped[int | None] = mapped_column(ForeignKey("proposals.id"), nullable=True)
+    status: Mapped[DependencyStatus] = mapped_column(
+        _stored(DependencyStatus, "dependency_status"),
+        default=DependencyStatus.UP_TO_DATE,
+    )
+    declined_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    ignored_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    ignored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    stale: Mapped[bool] = mapped_column(default=False)  # last-known values (D19)
+    check_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class DependencyCheck(Base):
+    """One per-repo freshness run in its own disposable sandbox (D4/D5).
+
+    Separate run type, status, and failure domain from ScanRun: a failed
+    freshness check never fails or delays a security scan, and vice versa.
+    """
+
+    __tablename__ = "dependency_checks"
+    __table_args__ = (
+        # Single-flight invariant, mirroring scan_runs: at most one
+        # in-flight check per repo, enforced atomically.
+        Index(
+            "uq_dependency_checks_one_running",
+            "repo_id",
+            unique=True,
+            sqlite_where=text("status = 'running'"),
+            postgresql_where=text("status = 'running'"),
+        ),
+        Index("ix_dependency_checks_status_started", "status", "started_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    repo_id: Mapped[int] = mapped_column(ForeignKey("repos.id"), index=True)
+    status: Mapped[RunStatus] = mapped_column(
+        _stored(RunStatus, "run_status"), default=RunStatus.RUNNING
+    )
+    trigger: Mapped[RunTrigger] = mapped_column(_stored(RunTrigger, "run_trigger"))
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    manifests: Mapped[list | None] = mapped_column(JSON, nullable=True)  # per-manifest outcomes
+    update_set_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)  # D14
+    report_id: Mapped[int | None] = mapped_column(
+        ForeignKey("dependency_reports.id"), nullable=True
+    )
+    token_usage: Mapped[int] = mapped_column(default=0)  # deps-budget accounting (D23)
+    claimed_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DependencyReport(Base):
+    """One combined impact report per DependencyCheck (D6/D9).
+
+    Per-package findings are sections inside it; the approver decides once
+    on the whole report with per-package exclusions (D10). Decisions are
+    recorded here (decider, reason, included/excluded keys) and audit-logged
+    (D7). No bump, adaptation, or test-run happens before approval.
+    """
+
+    __tablename__ = "dependency_reports"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    repo_id: Mapped[int] = mapped_column(ForeignKey("repos.id"), index=True)
+    check_id: Mapped[int | None] = mapped_column(
+        ForeignKey("dependency_checks.id"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|decided|superseded
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)  # model-written (D6)
+    sections: Mapped[list] = mapped_column(JSON, default=list)  # per-package impact sections
+    update_set_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_backed: Mapped[bool] = mapped_column(default=False)
+    undecided_keys: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    decided_keys: Mapped[list | None] = mapped_column(JSON, nullable=True)  # approved for patching
+    excluded_keys: Mapped[list | None] = mapped_column(JSON, nullable=True)  # unticked (D10)
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decision_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class DashboardNotification(Base):
+    """Stored dashboard notification record (D17).
+
+    The header icon + listing read from this pool, fed in v1 only by
+    dependency events (new combined report, patch result, check failure).
+    Built for extension: other event types reuse the same record later.
+    Rows are visible to every signed-in user; read state is per user in
+    NotificationRead.
+    """
+
+    __tablename__ = "dashboard_notifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(50), index=True)  # deps-report|deps-patch|deps-failure
+    repo_id: Mapped[int | None] = mapped_column(ForeignKey("repos.id"), nullable=True, index=True)
+    report_id: Mapped[int | None] = mapped_column(
+        ForeignKey("dependency_reports.id"), nullable=True
+    )
+    check_id: Mapped[int | None] = mapped_column(
+        ForeignKey("dependency_checks.id"), nullable=True
+    )
+    title: Mapped[str] = mapped_column(String(300))
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
+
+
+class NotificationRead(Base):
+    """Per-user read marker for one dashboard notification (D17)."""
+
+    __tablename__ = "notification_reads"
+    __table_args__ = (
+        UniqueConstraint(
+            "notification_id", "user_id", name="uq_notification_read_notif_user"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    notification_id: Mapped[int] = mapped_column(
+        ForeignKey("dashboard_notifications.id"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

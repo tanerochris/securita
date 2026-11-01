@@ -238,6 +238,37 @@ def new_worker_id() -> str:
     return f"worker-{uuid.uuid4().hex[:12]}"
 
 
+def dep_tick(now: datetime | None = None) -> list:
+    """One dependency poll iteration: reap, then a SCHEDULED check per due repo.
+
+    Isolated from the security scan tick (D5): dependency failures never
+    fail or delay a security scan, and vice versa.
+    """
+    from security_agent.db.models import RunTrigger
+    from security_agent.worker.deps_check import (
+        dep_due_repos,
+        enqueue_dependency_check,
+        reap_stale_dep_checks,
+    )
+
+    try:
+        reap_stale_dep_checks()
+    except Exception as exc:  # noqa: BLE001 - housekeeping never fails the tick
+        log.warning("dep reap failed: %s", exc)
+    enqueued = []
+    try:
+        due = dep_due_repos(now)
+    except Exception as exc:  # noqa: BLE001 - dep scheduling never fails the tick
+        log.warning("dep due query failed: %s", exc)
+        return []
+    for repo in due:
+        try:
+            enqueued.append(enqueue_dependency_check(repo.id, RunTrigger.SCHEDULED))
+        except Exception as exc:  # noqa: BLE001 - one bad repo never fails the tick
+            log.warning("dep enqueue failed for repo %d: %s", repo.id, exc)
+    return enqueued
+
+
 def tick(now: datetime | None = None) -> list[ScanRun]:
     """One poll iteration: sweeps, retention, news, then a SCHEDULED run per due repo."""
     from security_agent.control.cost import purge_old_usage

@@ -50,6 +50,7 @@ def create_app() -> FastAPI:
         git_providers,
         health,
         news,
+        notifications,
         policies,
         repos,
         settings,
@@ -100,6 +101,7 @@ def create_app() -> FastAPI:
     app.include_router(webhooks.router)
     app.include_router(git_providers.router)
     app.include_router(repos.router)
+    app.include_router(notifications.router)
     app.include_router(news.router)
     app.include_router(policies.router)
     app.include_router(approvals.router)

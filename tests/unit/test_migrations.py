@@ -29,6 +29,7 @@ CHAIN = [
     "0014_news_finding_links",
     "0015_news_relevance",
     "0016_policy_rag",
+    "0017_dependencies",
 ]
 
 
@@ -77,6 +78,13 @@ def test_migration_chain_upgrades_and_0007_roundtrips(tmp_path):
     assert "relevance" in _columns(engine, "news_repo_relevance")
     assert "score" in _columns(engine, "news_repo_relevance")
     assert "matched_signals" in _columns(engine, "news_repo_relevance")
+    assert "dep_schedule_hours" in _columns(engine, "repos")
+    assert "dep_last_check_at" in _columns(engine, "repos")
+    assert "manifest_path" in _columns(engine, "dependencies")
+    assert "update_set_hash" in _columns(engine, "dependency_checks")
+    assert "sections" in _columns(engine, "dependency_reports")
+    assert "kind" in _columns(engine, "dashboard_notifications")
+    assert "notification_id" in _columns(engine, "notification_reads")
     eco = _load("0007_ecosystem")
     _run(engine, eco, direction="downgrade")
     assert "ecosystem" not in _columns(engine, "findings")

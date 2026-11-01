@@ -21,6 +21,11 @@ def _page(request: Request, *, notice: str = "", is_owner: bool = True):
     from security_agent.app.main import templates
     from security_agent.config import get_settings
     from security_agent.control.cost import effective_cap, list_parked_runs, spend_today
+    from security_agent.control.deps import (
+        deps_budget_state,
+        deps_notify_email_enabled,
+        get_dep_check_hours,
+    )
     from security_agent.notify import list_channels
     from security_agent.notify.digest import get_digest_schedule
 
@@ -45,6 +50,9 @@ def _page(request: Request, *, notice: str = "", is_owner: bool = True):
             "warn_usd": settings.spend_warn_daily_usd,
             "critical_usd": settings.spend_critical_daily_usd,
             "parked": list_parked_runs(),
+            "dep_hours": get_dep_check_hours(),
+            "dep_budget": deps_budget_state(),
+            "dep_email": deps_notify_email_enabled(),
             "notice": notice,
             "is_owner": is_owner,
             "csrf": __import__(
@@ -267,3 +275,39 @@ def resume(
     except (ValueError, PermissionError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return _redirect(f"Run {outcome['run_id']} resumed under cap {outcome['cap']} tokens.")
+
+
+@router.post("/deps/cadence", dependencies=[Depends(require_csrf)])
+def save_dep_cadence(hours: str = Form(...), user: User = Depends(require_approver)):
+    """Install-wide dependency-check interval (D15); repos may override."""
+    from security_agent.control.deps import set_dep_check_hours
+
+    try:
+        value = set_dep_check_hours(int(hours), user)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _redirect(f"Dependency checks every {value}h.")
+
+
+@router.post("/deps/budget", dependencies=[Depends(require_csrf)])
+def save_dep_budget(cap: str = Form(...), user: User = Depends(require_approver)):
+    """Separate dependency token budget (D23); parked reports resume on raise."""
+    from security_agent.control.deps import set_deps_token_cap
+
+    try:
+        value = set_deps_token_cap(int(cap), user)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _redirect(f"Dependency budget set to {value} tokens/24h.")
+
+
+@router.post("/deps/notify", dependencies=[Depends(require_csrf)])
+def save_dep_notify(enabled: str = Form(""), _owner: User = Depends(require_owner)):
+    """Opt dependency pool entries into email fan-out (D16, default off)."""
+    from security_agent.control.deps import set_deps_notify_email
+
+    try:
+        set_deps_notify_email(enabled == "on", _owner)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _redirect("Dependency notification delivery saved.")

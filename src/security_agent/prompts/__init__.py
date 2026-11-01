@@ -20,6 +20,7 @@ _TEMPLATE_DIR = "templates"
 PROMPT_NAMES = (
     "adapt",
     "adapt_search_followup",
+    "deps_summary",
     "draft_pr",
     "draft_pr_template_block",
     "news_classify",

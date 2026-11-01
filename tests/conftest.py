@@ -20,6 +20,9 @@ os.environ.setdefault("EMBEDDING_PROVIDER", "off")
 # PR copy: tests keep the deterministic template unless they inject a
 # fake model, so delivery tests never call a live chat endpoint.
 os.environ.setdefault("PR_TEXT_MODEL_ENABLED", "false")
+# Dependency summaries: same hermetic default as PR copy — the live path
+# runs only with an injected fake model.
+os.environ.setdefault("DEPS_REPORT_MODEL_ENABLED", "false")
 # Bot identity: delivery tests assert the committed default identity;
 # a customized BOT_NAME/BOT_EMAIL in the workspace .env must not leak in.
 os.environ.setdefault("BOT_NAME", "security-agent-bot")

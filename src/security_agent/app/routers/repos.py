@@ -209,6 +209,238 @@ def patches_view(request: Request, repo_id: int, user: User = Depends(get_curren
     )
 
 
+def _dependencies_page(request: Request, repo_id: int, user: User, *, notice: str = ""):
+    from security_agent.app.main import templates
+    from security_agent.control import deps as deps_svc
+    from security_agent.db.models import DependencyCheck
+
+    repo = _repo_or_404(repo_id)
+    rows = deps_svc.list_repo_dependencies(repo_id)
+    grouped: list[tuple[str, list]] = []
+    for row in rows:
+        if grouped and grouped[-1][0] == row.manifest_path:
+            grouped[-1][1].append(row)
+        else:
+            grouped.append((row.manifest_path, [row]))
+    with session_scope() as db:
+        from sqlalchemy import select
+
+        checks = list(
+            db.scalars(
+                select(DependencyCheck)
+                .where(DependencyCheck.repo_id == repo_id)
+                .order_by(DependencyCheck.id.desc())
+                .limit(10)
+            )
+        )
+        for c in checks:
+            db.expunge(c)
+    latest = deps_svc.latest_report(repo_id)
+    anchors: dict[str, str] = {}
+    if latest is not None:
+        for section in latest.sections or []:
+            if section.get("key") and section.get("anchor"):
+                anchors[section["key"]] = section["anchor"]
+    cap_note = ""
+    if checks and checks[0].manifests is not None:
+        failed = [m for m in checks[0].manifests if m.get("status") != "ok"]
+        if failed:
+            cap_note = "; ".join(
+                f"{m.get('manifest')}: {m.get('error', 'check failed')}" for m in failed
+            )
+    truncated_note = ""
+    if checks and checks[0].notes and "capped" in (checks[0].notes or ""):
+        truncated_note = "Manifest walk hit the safety cap; some manifests were not checked."
+    return templates.TemplateResponse(
+        request,
+        "dependencies.html",
+        {
+            "repo": repo,
+            "grouped": grouped,
+            "report": latest,
+            "anchors": anchors,
+            "checks": checks,
+            "cap_note": cap_note,
+            "truncated_note": truncated_note,
+            "interval": deps_svc.effective_dep_interval(repo),
+            "override": repo.dep_schedule_hours,
+            "global_hours": deps_svc.get_dep_check_hours(),
+            "budget": deps_svc.deps_budget_state(),
+            "notice": notice,
+            "csrf": make_csrf(),
+            "can_check": user.role != Role.REPORTER,
+            "can_decide": user.role in (Role.OWNER, Role.MAINTAINER),
+        },
+    )
+
+
+@router.get("/{repo_id}/dependencies", response_class=HTMLResponse)
+def dependencies_view(request: Request, repo_id: int, user: User = Depends(get_current_user)):
+    return _dependencies_page(
+        request, repo_id, user, notice=request.query_params.get("notice", "")
+    )
+
+
+@router.post("/{repo_id}/dependencies/check", dependencies=[Depends(require_csrf)])
+def dependencies_check(repo_id: int, _user: User = Depends(require_developer)):
+    from security_agent.db.models import RunTrigger
+    from security_agent.worker.deps_check import enqueue_dependency_check
+
+    _repo_or_404(repo_id)
+    enqueue_dependency_check(repo_id, RunTrigger.MANUAL)
+    return RedirectResponse(f"/repos/{repo_id}/dependencies", status_code=303)
+
+
+@router.post("/{repo_id}/dependencies/report", dependencies=[Depends(require_csrf)])
+def dependencies_force_report(repo_id: int, _user: User = Depends(require_developer)):
+    """Manual "Generate report": forces a combined report on the next check run."""
+    from security_agent.db.models import RunTrigger
+    from security_agent.worker.deps_check import enqueue_dependency_check
+
+    _repo_or_404(repo_id)
+    enqueue_dependency_check(repo_id, RunTrigger.MANUAL, notes="force-report")
+    return RedirectResponse(f"/repos/{repo_id}/dependencies", status_code=303)
+
+
+@router.get("/{repo_id}/dependencies/report/latest", response_class=HTMLResponse)
+def dependencies_latest_report(
+    request: Request, repo_id: int, user: User = Depends(get_current_user)
+):
+    from security_agent.control import deps as deps_svc
+
+    _repo_or_404(repo_id)
+    report = deps_svc.latest_report(repo_id)
+    if report is None:
+        return _dependencies_page(request, repo_id, user, notice="No impact report yet.")
+    return _report_page(request, repo_id, user, report.id)
+
+
+@router.get("/{repo_id}/dependencies/report/{report_id}", response_class=HTMLResponse)
+def dependencies_report_view(
+    request: Request, repo_id: int, report_id: int, user: User = Depends(get_current_user)
+):
+    return _report_page(request, repo_id, user, report_id)
+
+
+def _report_page(request: Request, repo_id: int, user: User, report_id: int):
+    from security_agent.app.main import templates
+    from security_agent.control import deps as deps_svc
+
+    repo = _repo_or_404(repo_id)
+    report = deps_svc.get_report(report_id)
+    if report is None or report.repo_id != repo_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown report.")
+    decider = None
+    if report.decided_by is not None:
+        with session_scope() as db:
+            decider = db.get(User, report.decided_by)
+            if decider is not None:
+                db.expunge(decider)
+    return templates.TemplateResponse(
+        request,
+        "dep_report.html",
+        {
+            "repo": repo,
+            "report": report,
+            "decider": decider,
+            "csrf": make_csrf(),
+            "can_decide": user.role in (Role.OWNER, Role.MAINTAINER),
+            "notice": request.query_params.get("notice", ""),
+        },
+    )
+
+
+@router.post(
+    "/{repo_id}/dependencies/report/{report_id}/decide", dependencies=[Depends(require_csrf)]
+)
+def dependencies_decide(
+    repo_id: int,
+    report_id: int,
+    included: list[str] = Form(default=[]),
+    reason: str = Form(""),
+    user: User = Depends(require_approver),
+):
+    """One decision on the combined report: ticked go to patching (D7/D10)."""
+    from security_agent.control import deps as deps_svc
+
+    _repo_or_404(repo_id)
+    try:
+        deps_svc.decide_report(report_id, user, included, reason=reason)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return RedirectResponse(
+        f"/repos/{repo_id}/dependencies/report/{report_id}", status_code=303
+    )
+
+
+@router.post("/{repo_id}/dependencies/{dep_id}/decline", dependencies=[Depends(require_csrf)])
+def dependencies_decline(
+    repo_id: int, dep_id: int, reason: str = Form(""), user: User = Depends(require_approver)
+):
+    from security_agent.control import deps as deps_svc
+
+    _repo_or_404(repo_id)
+    try:
+        deps_svc.decline_version(dep_id, user, reason=reason)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return RedirectResponse(f"/repos/{repo_id}/dependencies", status_code=303)
+
+
+@router.post("/{repo_id}/dependencies/{dep_id}/ignore", dependencies=[Depends(require_csrf)])
+def dependencies_ignore(
+    repo_id: int, dep_id: int, reason: str = Form(""), user: User = Depends(require_approver)
+):
+    from security_agent.control import deps as deps_svc
+
+    _repo_or_404(repo_id)
+    try:
+        deps_svc.ignore_package(dep_id, user, reason=reason)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return RedirectResponse(f"/repos/{repo_id}/dependencies", status_code=303)
+
+
+@router.post("/{repo_id}/dependencies/{dep_id}/unignore", dependencies=[Depends(require_csrf)])
+def dependencies_unignore(repo_id: int, dep_id: int, user: User = Depends(require_approver)):
+    from security_agent.control import deps as deps_svc
+
+    _repo_or_404(repo_id)
+    try:
+        deps_svc.unignore_package(dep_id, user)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return RedirectResponse(f"/repos/{repo_id}/dependencies", status_code=303)
+
+
+@router.post("/{repo_id}/dependencies/cadence", dependencies=[Depends(require_csrf)])
+def dependencies_cadence(
+    repo_id: int,
+    mode: str = Form(...),
+    hours: str = Form("24"),
+    user: User = Depends(require_approver),
+):
+    """Per-repo cadence override: inherit, never, or every N hours (D15)."""
+    from security_agent.control import deps as deps_svc
+
+    _repo_or_404(repo_id)
+    try:
+        if mode == "inherit":
+            value = None
+        elif mode == "never":
+            value = 0
+        elif mode == "hours":
+            value = int(hours)
+            if value < 1:
+                raise ValueError("Interval must be at least 1 hour.")
+        else:
+            raise ValueError("Unknown cadence mode.")
+        deps_svc.set_repo_dep_interval(repo_id, value, user)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return RedirectResponse(f"/repos/{repo_id}/dependencies", status_code=303)
+
+
 @router.get("/{repo_id}/runs/{run_id}", response_class=HTMLResponse)
 def run_detail(request: Request, repo_id: int, run_id: int, user: User = Depends(get_current_user)):
     from security_agent.app.main import templates

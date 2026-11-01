@@ -134,6 +134,7 @@
       <a class="nav-link" href="/dashboard"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>Dashboard</a>
       <a class="nav-link" href="/repos"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Repos</a>
       <a class="nav-link" href="/news"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h13v12H4z"/><path d="M17 9h3v9h-3"/><path d="M7 10h7M7 13h7"/></svg>News</a>
+      <a class="nav-link" href="/notifications"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>Notifications</a>
       <a class="nav-link" href="/policies"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h7"/></svg>Policies</a>
       <a class="nav-link" href="/approvals"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10z"/><path d="m9 11.5 2 2 4-4.5"/></svg>Approvals{% if pending_approvals %}<span class="ml-auto rounded-full bg-brand-primary px-2 py-0.5 text-[11px] font-bold text-white">{{ pending_approvals }}</span>{% endif %}</a>
       <a class="nav-link" href="/accounts"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M17.5 15.4c2 .6 3.4 2.1 4 4.6"/></svg>Accounts</a>
@@ -160,12 +161,14 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10z"/><path d="m9 11.5 2 2 4-4.5"/></svg>
         </span>
         <span class="text-sm font-extrabold tracking-tight">Securita</span>
-        {% if user %}<span class="ml-auto max-w-[45%] truncate text-xs text-brand-mist">{{ user.email }}</span>{% endif %}
+        <a href="/notifications" class="ml-auto grid h-8 w-8 place-items-center rounded-lg text-white hover:bg-white/10" aria-label="Notifications"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></a>
+        {% if user %}<span class="max-w-[45%] truncate text-xs text-brand-mist">{{ user.email }}</span>{% endif %}
       </div>
       <nav class="flex gap-1 overflow-x-auto px-3 pb-3" aria-label="Primary">
         <a class="nav-link whitespace-nowrap" href="/dashboard">Dashboard</a>
         <a class="nav-link whitespace-nowrap" href="/repos">Repos</a>
         <a class="nav-link whitespace-nowrap" href="/news">News</a>
+        <a class="nav-link whitespace-nowrap" href="/notifications">Notifications</a>
         <a class="nav-link whitespace-nowrap" href="/policies">Policies</a>
         <a class="nav-link whitespace-nowrap" href="/approvals">Approvals</a>
         <a class="nav-link whitespace-nowrap" href="/accounts">Accounts</a>
@@ -178,6 +181,7 @@
       <p class="text-sm font-semibold text-brand-deep">{% block page_title %}Security workspace{% endblock %}</p>
       <span class="inline-flex items-center gap-1.5 rounded-full bg-brand-mist px-2.5 py-1 text-xs font-semibold text-brand-deep"><span class="h-2 w-2 rounded-full bg-brand-primary" aria-hidden="true"></span>Live queue</span>
       {% if user %}<p class="ml-auto truncate text-sm text-slate-600">Signed in as <span class="font-semibold text-brand-navy">{{ user.email }}</span> <span class="text-slate-500">({{ user.role }})</span></p>{% endif %}
+      <span hx-get="/notifications/count" hx-trigger="load" hx-swap="outerHTML"><a href="/notifications" class="grid h-9 w-9 place-items-center rounded-lg text-brand-deep hover:bg-brand-mist" aria-label="Notifications"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></a></span>
     </div>
 
     <main id="main" class="mx-auto w-full max-w-[1440px] px-4 md:px-6 lg:px-8 py-6 lg:py-8">{% block content %}{% endblock %}</main>

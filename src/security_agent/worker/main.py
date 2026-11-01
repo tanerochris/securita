@@ -154,8 +154,21 @@ def _claim_heartbeat(run_id: int, worker_id: str, stop: threading.Event) -> None
 def run_once(*, max_runs: int = 100) -> dict:
     """One iteration: tick the scheduler, drain claimed runs oldest-first."""
     from security_agent.worker import build_graph
+    from security_agent.worker.deps_check import drain_dep_checks, drain_dep_patches
+    from security_agent.worker.scheduler import dep_tick
 
     enqueued = tick()
+    dep_enqueued = dep_tick()
+    dep_drain: dict = {"executed": 0, "failed": 0}
+    dep_patches: dict = {"proposal_ids": [], "errors": []}
+    try:
+        dep_drain = drain_dep_checks(WORKER_ID)
+    except Exception:  # noqa: BLE001 - dep checks never kill the worker loop
+        log.exception("dependency check drain failed")
+    try:
+        dep_patches = drain_dep_patches()
+    except Exception:  # noqa: BLE001 - dep patches never kill the worker loop
+        log.exception("dependency patch drain failed")
     graph = build_graph()
     executed = failed = parked = 0
     while executed + failed + parked < max_runs:
@@ -188,17 +201,28 @@ def run_once(*, max_runs: int = 100) -> dict:
             finally:
                 stop.set()
                 beat.join(timeout=10)
-    return {"enqueued": len(enqueued), "executed": executed, "failed": failed, "parked": parked}
+    return {
+        "enqueued": len(enqueued),
+        "executed": executed,
+        "failed": failed,
+        "parked": parked,
+        "dep_enqueued": len(dep_enqueued),
+        "dep_executed": dep_drain.get("executed", 0),
+        "dep_failed": dep_drain.get("failed", 0),
+        "dep_proposals": dep_patches.get("proposal_ids", []),
+    }
 
 
 def main() -> None:
     from security_agent.sandbox import assert_sandbox_image
     from security_agent.worker import build_graph
+    from security_agent.worker.deps_check import reap_stale_dep_checks
 
     ensure_schema()  # schema before any query (this worker migrates itself)
     assert_sandbox_image()  # image before any scan (fail loud, not per-run)
     build_graph()  # fail fast when the pipeline does not compile
     reap_stale_runs(older_than_hours=0)  # boot: prior incarnation is dead by definition
+    reap_stale_dep_checks(older_than_hours=0)  # same for dependency checks (D5)
     log.warning("worker ready")
     while True:
         try:

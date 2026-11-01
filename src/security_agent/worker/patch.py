@@ -1119,9 +1119,24 @@ def run_patch(
                     "reason": "policy guardrail held this finding out of patching",
                 }
             )
+    from security_agent.worker.deps_patch import live_dep_proposal_for_package
+
     groups: dict[tuple[str, str], list[Finding]] = {}
     for finding in candidates:
         if finding.id not in allowed:
+            continue
+        # D20, reverse direction: two live PRs bumping the same package
+        # never coexist. A live dependency PR owns the bump; the finding
+        # queues behind it and the rescan resolves it when that PR lands
+        # at a version >= the fix.
+        if live_dep_proposal_for_package(repo_id, finding.package):
+            results.append(
+                {
+                    "finding_ids": [finding.id],
+                    "outcome": "queued",
+                    "reason": "queued behind a live dependency PR for this package (D20)",
+                }
+            )
             continue
         eco = (finding.ecosystem or "").lower() or "unknown"
         groups.setdefault((eco, finding.package), []).append(finding)

@@ -26,6 +26,20 @@ MANIFEST: dict[str, list[str]] = {
     "ripgrep": ["rg", "--no-heading", "--line-number"],
     "git": ["git"],
     "npm": ["npm"],
+    # Dependency freshness (D4/D12): native PM CLIs only — no registry
+    # HTTP from the host/worker. Binaries ship in the sandbox image
+    # (corepack shims for yarn/pnpm, pinned pip installs for the Python
+    # managers); every call needs allow_network.
+    "yarn": ["yarn"],
+    "pnpm": ["pnpm"],
+    "uv": ["uv"],
+    # Python lockfile refresh (D8/D12): re-lock only, never installs
+    # into the repo. Callers pass the narrow argv per lock kind.
+    "poetry": ["poetry"],
+    "pdm": ["pdm"],
+    "pipenv": ["pipenv"],
+    # `pip index versions <pkg>` — metadata read only, never installs.
+    "pip-index": ["python3", "-m", "pip", "index", "versions"],
     # Test-dep installs only (FR-7 D4). Wheels-only (no sdist setup.py ever
     # runs), no prompts, no version-check phone-home, no shared cache.
     "pip-install": [

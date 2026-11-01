@@ -4,7 +4,6 @@
 {% block content %}
 <div class="max-w-3xl">
   <h1 class="text-[26px] leading-tight md:text-[30px]">Security news</h1>
-  <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Major security stories only — vulnerabilities, exploits, patches, breaches, and leaks classified by the model under a strict impact bar. Each story is then judged per repository: directly relevant to its code, relevant to a platform it can be deployed to, or not shown for that repo.</p>
   {% if repo_filter %}
   <p class="mt-2.5 text-sm text-slate-600">Localized for <span class="font-bold text-brand-deep">{{ repo_name }}</span>, most relevant first — <a class="font-bold text-brand-primary hover:text-brand-deep" href="/news">all repositories</a></p>
   {% endif %}

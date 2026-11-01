@@ -18,12 +18,17 @@ from security_agent.crypto import decrypt_field, encrypt_field
 from security_agent.db.keys import get_encryption_key
 from security_agent.db.models import (
     Approval,
+    DashboardNotification,
+    Dependency,
+    DependencyCheck,
+    DependencyReport,
     EncryptedToken,
     Finding,
     ModelUsage,
     NewsBoost,
     NewsFindingLink,
     NewsRepoRelevance,
+    NotificationRead,
     Proposal,
     Repo,
     RepoKind,
@@ -119,10 +124,14 @@ def connect_repo(
             connection_id=connection_id,
             schedule_hours=schedule_hours,
             last_scan_at=datetime.now(UTC),
+            dep_last_check_at=datetime.now(UTC),
         )
         db.add(repo)
         db.flush()
         db.add(ScanRun(repo_id=repo.id, trigger=RunTrigger.CONNECT))
+        # Dependency freshness gets its own on-connect check (D5), with
+        # its own run type and failure domain.
+        db.add(DependencyCheck(repo_id=repo.id, trigger=RunTrigger.CONNECT))
         if token:
             db.add(
                 EncryptedToken(
@@ -161,6 +170,24 @@ def disconnect_repo(repo_id: int) -> None:
             )
         )
         db.execute(delete(Approval).where(Approval.repo_id == repo_id))
+        # Dependency tracking: rows reference findings/proposals, so they
+        # go before both. Checks and reports reference each other; null
+        # the check leg first, then reports, then checks.
+        db.execute(delete(Dependency).where(Dependency.repo_id == repo_id))
+        db.execute(
+            update(DependencyCheck)
+            .where(DependencyCheck.repo_id == repo_id)
+            .values(report_id=None)
+        )
+        db.execute(delete(DependencyReport).where(DependencyReport.repo_id == repo_id))
+        db.execute(delete(DependencyCheck).where(DependencyCheck.repo_id == repo_id))
+        notif_ids = select(DashboardNotification.id).where(
+            DashboardNotification.repo_id == repo_id
+        )
+        db.execute(
+            delete(NotificationRead).where(NotificationRead.notification_id.in_(notif_ids))
+        )
+        db.execute(delete(DashboardNotification).where(DashboardNotification.repo_id == repo_id))
         db.execute(
             update(SecretFinding).where(SecretFinding.repo_id == repo_id).values(proposal_id=None)
         )

@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Impact report #{{ report.id }} — {{ repo.name }} — Securita{% endblock %}
+{% block page_title %}Impact report{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-start gap-4">
+  <div class="min-w-0">
+    <p class="text-sm font-semibold text-slate-600"><a class="font-bold text-brand-primary hover:text-brand-deep" href="/repos/{{ repo.id }}/dependencies">&larr; Dependencies</a></p>
+    <h1 class="mt-1 text-[26px] leading-tight md:text-[30px]">Impact report #{{ report.id }}</h1>
+    <p class="mt-2 flex flex-wrap gap-2 text-xs font-semibold">
+      <span class="inline-flex rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep">{{ report.status }}</span>
+      <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">{{ report.sections|length }} updates</span>
+      <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">{% if report.model_backed %}model-written summary{% else %}evidence template (no model summary){% endif %}</span>
+      <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">{{ report.created_at }}</span>
+    </p>
+  </div>
+</div>
+
+{% if notice %}
+<div class="mt-4 rounded-xl bg-brand-mist px-5 py-3 text-sm font-semibold text-brand-deep" role="status">{{ notice }}</div>
+{% endif %}
+
+<section class="mt-6 rounded-xl bg-white p-5 shadow-card" aria-labelledby="summary-heading">
+  <h2 id="summary-heading" class="text-lg">Summary assessment</h2>
+  <div class="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-600">{{ report.summary or "No summary." }}</div>
+</section>
+
+{% if report.status == 'pending' and can_decide %}
+<form method="post" action="/repos/{{ repo.id }}/dependencies/report/{{ report.id }}/decide">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+{% endif %}
+{% for s in report.sections %}
+<section id="{{ s.anchor or ('pkg-' ~ loop.index) }}" class="mt-6 rounded-xl bg-white p-5 shadow-card" aria-labelledby="pkg-{{ loop.index }}-heading">
+  <div class="flex flex-wrap items-center gap-3">
+    {% if report.status == 'pending' and can_decide %}
+    <input type="checkbox" name="included" value="{{ s.key }}" checked aria-label="Include {{ s.package }}">
+    {% endif %}
+    <h2 id="pkg-{{ loop.index }}-heading" class="font-mono !text-[15px]">{{ s.package }}</h2>
+    <span class="inline-flex rounded-full bg-brand-mist px-2.5 py-1 text-xs font-bold text-brand-deep">{{ s.ecosystem }}</span>
+    {% if s.update_class %}<span class="inline-flex rounded-md px-2 py-0.5 text-xs font-bold {% if s.update_class == 'major' %}bg-brand-navy text-white{% elif s.update_class == 'minor' %}bg-brand-primary text-white{% else %}bg-brand-mist text-brand-deep{% endif %}">{{ s.update_class }}</span>{% endif %}
+    {% if s.security %}<span class="inline-flex rounded-full bg-brand-navy px-2 py-0.5 text-[11px] font-bold text-white">security</span>{% endif %}
+  </div>
+  <p class="mt-2 font-mono text-[13px] text-slate-600">{{ s.manifest_path }} · {{ s.section or "" }} · {{ s.installed or "?" }} &rarr; {{ s.latest }}{% if s.wanted and s.wanted != s.latest %} · in-range: {{ s.wanted }}{% endif %}</p>
+  {% if s.advisories %}<p class="mt-2 text-[13px] text-slate-600"><strong class="font-bold text-brand-navy">Fixes:</strong> {{ s.advisories|join(", ") }}</p>{% endif %}
+  {% if s.breaking_flag %}<p class="mt-2 text-[13px] font-semibold text-brand-navy">{{ s.breaking_flag }}</p>{% endif %}
+  {% if s.wanted_note %}<p class="mt-1 text-[13px] text-slate-600">{{ s.wanted_note }}</p>{% endif %}
+  {% if s.peer_note %}<p class="mt-1 text-[13px] text-slate-600">{{ s.peer_note }}</p>{% endif %}
+  {% if s.repo_url and (s.repo_url.startswith('http://') or s.repo_url.startswith('https://')) %}<p class="mt-1 text-[13px] text-slate-600">Upstream: <a class="break-all" href="{{ s.repo_url }}">{{ s.repo_url }}</a></p>{% endif %}
+  <p class="mt-1 text-[13px] text-slate-600"><strong class="font-bold text-brand-navy">Changelog:</strong> {{ s.changelog }}</p>
+  <div class="mt-3">
+    <h3 class="text-sm">Usage in this repo ({{ (s.usage_sites or [])|length }})</h3>
+    {% if s.usage_sites %}
+    <ul class="mt-1.5 space-y-1 font-mono text-[13px] text-slate-600">
+      {% for site in s.usage_sites[:50] %}
+      <li>{{ site }}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="mt-1 text-[13px] text-slate-600">No usage sites found in first-party code (UNDETERMINED whether unused or missed by search).</p>
+    {% endif %}
+  </div>
+</section>
+{% endfor %}
+
+{% if report.status == 'pending' and can_decide %}
+<div class="mt-6 rounded-xl bg-brand-navy p-5 text-white shadow-card">
+  <h2 class="!text-white text-lg">Decide once for this report</h2>
+  <p class="mt-1.5 text-sm leading-relaxed text-brand-mist">Ticked packages go to patching (grouped into PRs, grouping disclosed). Unticked packages are declined for this version only and rejoin when a newer version appears. Merge still needs the usual approval gate.</p>
+  <label class="mt-4 block text-sm font-bold" for="decReason">Reason (optional, audit-logged)</label>
+  <input class="mt-1.5 w-full !text-brand-navy" id="decReason" name="reason" type="text" maxlength="500" placeholder="Why approve these updates?">
+  <button class="mt-4" type="submit">Approve ticked updates</button>
+</div>
+</form>
+{% elif report.status != 'pending' %}
+<section class="mt-6 rounded-xl bg-white p-5 shadow-card" aria-labelledby="decision-heading">
+  <h2 id="decision-heading" class="text-lg">Decision</h2>
+  <p class="mt-1.5 text-sm text-slate-600">
+    Decided by <strong class="font-bold text-brand-navy">{{ decider.email if decider else "unknown" }}</strong>
+    {% if report.decided_at %}on {{ report.decided_at }}{% endif %}.
+    Approved {{ (report.decided_keys or [])|length }}, excluded {{ (report.excluded_keys or [])|length }}.
+  </p>
+  {% if report.decision_reason %}<p class="mt-1 text-sm text-slate-600">Reason: {{ report.decision_reason }}</p>{% endif %}
+  {% if report.excluded_keys %}
+  <p class="mt-2 font-mono text-[13px] text-slate-600">Excluded: {{ report.excluded_keys|join(", ") }}</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}
