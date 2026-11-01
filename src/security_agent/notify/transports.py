@@ -1,10 +1,11 @@
-"""FR-13 channel transports: email (SMTP+STARTTLS), Slack, generic webhook.
+"""FR-13 channel transports: email (SMTP+STARTTLS), Slack, Discord, Telegram,
+PagerDuty, generic webhook.
 
 Each send opens a fresh short-lived connection (no shared clients, no
 leaks across threads), enforces timeouts and payload caps, and raises a
 NotifyError the caller converts to an audit warning — delivery must
 never break the pipeline that triggered it. Secrets (passwords, webhook
-URLs) arrive as arguments and are never logged.
+URLs, bot tokens, routing keys) arrive as arguments and are never logged.
 """
 
 import hashlib
@@ -12,6 +13,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import re
 import smtplib
 import socket
 import ssl
@@ -25,6 +27,16 @@ log = logging.getLogger(__name__)
 
 TIMEOUT_SECONDS = 15
 MAX_BODY_CHARS = 100_000
+DISCORD_MAX_CHARS = 2000
+TELEGRAM_MAX_CHARS = 4096
+PAGERDUTY_EVENTS_URL = "https://events.pagerduty.com/v2/enqueue"
+PAGERDUTY_SEVERITIES = {
+    "critical": "critical",
+    "high": "error",
+    "medium": "warning",
+    "low": "info",
+    "info": "info",
+}
 
 
 class NotifyError(RuntimeError):
@@ -229,6 +241,66 @@ def send_slack(webhook_url: str, subject: str, body: str, *, link: str = "") -> 
     if link:
         text += f"\n<{link[:2000]}|Open dashboard>"
     _post_pinned(url, what="Slack", json_body={"text": text})
+
+
+def send_discord(webhook_url: str, subject: str, body: str, *, link: str = "") -> None:
+    """Discord incoming-webhook POST; raises NotifyError on any failure."""
+    url = _check_http_url(webhook_url, allow_http=False, what="Discord")
+    text = subject[:500]
+    if body:
+        text += "\n" + body
+    if link:
+        text += f"\nOpen dashboard: {link[:2000]}"
+    _post_pinned(url, what="Discord", json_body={"content": text[:DISCORD_MAX_CHARS]})
+
+
+def send_telegram(bot_token: str, chat_id: str, subject: str, body: str, *, link: str = "") -> None:
+    """Bot API sendMessage (plain text); raises NotifyError on any failure."""
+    token = (bot_token or "").strip()
+    if not token or len(token) > 200 or re.fullmatch(r"[A-Za-z0-9:_-]+", token) is None:
+        raise NotifyError("Telegram bot token is missing or invalid")
+    target = str(chat_id or "").strip()
+    if not target or len(target) > 64:
+        raise NotifyError("Telegram chat id is missing")
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    text = subject[:500]
+    if body:
+        text += "\n" + body
+    if link:
+        text += f"\nOpen dashboard: {link[:2000]}"
+    _post_pinned(
+        url,
+        what="Telegram",
+        json_body={
+            "chat_id": target,
+            "text": text[:TELEGRAM_MAX_CHARS],
+            "disable_web_page_preview": True,
+        },
+    )
+
+
+def send_pagerduty(
+    routing_key: str, severity: str, subject: str, body: str, *, link: str = ""
+) -> None:
+    """Events API v2 trigger; raises NotifyError on any failure."""
+    key = (routing_key or "").strip()
+    if not key or len(key) > 200 or re.fullmatch(r"[A-Za-z0-9]+", key) is None:
+        raise NotifyError("PagerDuty routing key is missing or invalid")
+    details = {"body": body[:4000]}
+    if link:
+        details["dashboard"] = link[:2000]
+    payload = {
+        "routing_key": key,
+        "event_action": "trigger",
+        "dedup_key": "security-agent-" + hashlib.sha256(subject.encode()).hexdigest()[:16],
+        "payload": {
+            "summary": (subject[:1024] or "security-agent alert"),
+            "source": "security-agent",
+            "severity": PAGERDUTY_SEVERITIES.get(severity, "info"),
+            "custom_details": details,
+        },
+    }
+    _post_pinned(PAGERDUTY_EVENTS_URL, what="PagerDuty", json_body=payload)
 
 
 def webhook_payload(severity: str, subject: str, body: str, *, link: str = "") -> dict:

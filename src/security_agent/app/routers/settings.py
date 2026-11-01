@@ -129,6 +129,9 @@ def add_channel(
     password: str = Form(""),
     url: str = Form(""),
     signing_key: str = Form(""),
+    bot_token: str = Form(""),
+    chat_id: str = Form(""),
+    routing_key: str = Form(""),
     _owner: User = Depends(require_owner),
 ):
     from security_agent.notify import create_channel
@@ -143,8 +146,12 @@ def add_channel(
                 "to": [a.strip() for a in to.split(",") if a.strip()],
             }
             secret = {"password": password}
-        elif kind in ("slack", "webhook"):
+        elif kind in ("slack", "discord", "webhook"):
             config, secret = {}, {"url": url, "signing_key": signing_key}
+        elif kind == "telegram":
+            config, secret = {"chat_id": chat_id}, {"bot_token": bot_token}
+        elif kind == "pagerduty":
+            config, secret = {}, {"routing_key": routing_key}
         else:
             raise ValueError(f"Unknown channel kind {kind!r}.")
         channel = create_channel(kind, name, config=config, secret=secret)
@@ -165,6 +172,9 @@ def edit_channel(
     password: str = Form(""),
     url: str = Form(""),
     signing_key: str = Form(""),
+    bot_token: str = Form(""),
+    chat_id: str = Form(""),
+    routing_key: str = Form(""),
     _owner: User = Depends(require_owner),
 ):
     """Owner-only channel update; kind is immutable, blank secrets are kept."""
@@ -177,10 +187,17 @@ def edit_channel(
             "username": username,
             "from_addr": from_addr,
             "to": [a.strip() for a in to.split(",") if a.strip()],
+            "chat_id": chat_id,
         }
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Email port must be a number.") from exc
-    secret = {"password": password, "url": url, "signing_key": signing_key}
+    secret = {
+        "password": password,
+        "url": url,
+        "signing_key": signing_key,
+        "bot_token": bot_token,
+        "routing_key": routing_key,
+    }
     try:
         update_channel(channel_id, name, config=config, secret=secret)
     except KeyError as exc:

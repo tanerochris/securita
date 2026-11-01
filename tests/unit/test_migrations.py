@@ -30,6 +30,7 @@ CHAIN = [
     "0015_news_relevance",
     "0016_policy_rag",
     "0017_dependencies",
+    "0018_notify_extra_channels",
 ]
 
 

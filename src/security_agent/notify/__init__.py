@@ -1,4 +1,5 @@
-"""FR-13 notifications: severity-routed events over email/Slack/webhook.
+"""FR-13 notifications: severity-routed events over email/Slack/Discord/
+Telegram/PagerDuty/webhook.
 
 Events declare their severity at the call site; routes map severities
 to channels. Approval requests fan out to ALL channels (FR-9 D5).
@@ -9,6 +10,7 @@ encrypted under `notify-channel:{id}` and are never re-viewed.
 
 import json
 import logging
+import re
 from urllib.parse import urlparse
 
 from sqlalchemy import delete, select
@@ -21,8 +23,11 @@ from security_agent.db.models import ChannelKind, EncryptedToken, NotifyChannel,
 from security_agent.db.session import session_scope
 from security_agent.notify.transports import (
     NotifyError,
+    send_discord,
     send_email,
+    send_pagerduty,
     send_slack,
+    send_telegram,
     send_webhook,
     validate_email_config,
     webhook_payload,
@@ -95,8 +100,14 @@ def _validate_email(config: dict) -> dict:
         raise ValueError(str(exc)) from exc
 
 
+_DISCORD_HOSTS = {"discord.com", "discordapp.com", "ptb.discord.com", "canary.discord.com"}
+_TG_TOKEN_RE = re.compile(r"^\d+:[A-Za-z0-9_-]{20,}$")
+_TG_CHAT_RE = re.compile(r"^(-?\d{1,20}|@[A-Za-z0-9_]{1,63})$")
+_PD_KEY_RE = re.compile(r"^[0-9a-fA-F]{32}$")
+
+
 def _validate_hook_secret(channel_kind: ChannelKind, secret: dict) -> tuple[dict, dict]:
-    """Validated (config, secret) for Slack/webhook; same rules for create/update."""
+    """Validated (config, secret) for Slack/Discord/webhook; same rules for create/update."""
     url = secret.get("url", "")
     if not isinstance(url, str) or not url.strip() or len(url) > 2000:
         raise ValueError("A webhook URL secret is required.")
@@ -104,12 +115,43 @@ def _validate_hook_secret(channel_kind: ChannelKind, secret: dict) -> tuple[dict
         parts = urlparse(url.strip())
     except ValueError as exc:
         raise ValueError(f"Webhook URL is invalid: {exc}") from exc
-    schemes = {"https"} if channel_kind == ChannelKind.SLACK else {"http", "https"}
+    https_only = channel_kind in (ChannelKind.SLACK, ChannelKind.DISCORD)
+    schemes = {"https"} if https_only else {"http", "https"}
     if parts.scheme not in schemes or not parts.hostname:
-        want = "https" if channel_kind == ChannelKind.SLACK else "http(s)"
+        want = "https" if channel_kind != ChannelKind.WEBHOOK else "http(s)"
         raise ValueError(f"Webhook URL must be {want} with a host.")
+    if channel_kind == ChannelKind.DISCORD:
+        if (parts.hostname or "").lower() not in _DISCORD_HOSTS:
+            raise ValueError("Discord URL must be a discord.com webhook.")
+        if not parts.path.startswith("/api/webhooks/"):
+            raise ValueError("Discord URL must be an /api/webhooks/ URL.")
     clean = {"url": url.strip(), "signing_key": str(secret.get("signing_key", ""))[:500]}
     return {"host": _display_host(url)[:500]}, clean
+
+
+def _validate_telegram(
+    config: dict, secret: dict, *, require_token: bool
+) -> tuple[dict, dict | None]:
+    """Validated (config, secret) for Telegram; blank token keeps the stored one on update."""
+    chat_id = str((config or {}).get("chat_id", "")).strip()
+    if _TG_CHAT_RE.match(chat_id) is None:
+        raise ValueError("Telegram chat id is invalid (numeric id or @channel).")
+    token = str((secret or {}).get("bot_token", "")).strip()
+    if not token:
+        if require_token:
+            raise ValueError("Telegram bot token is required.")
+        return {"chat_id": chat_id}, None
+    if len(token) > 200 or _TG_TOKEN_RE.match(token) is None:
+        raise ValueError("Telegram bot token is invalid.")
+    return {"chat_id": chat_id}, {"bot_token": token}
+
+
+def _validate_pagerduty_secret(secret: dict) -> tuple[dict, dict]:
+    """Validated (config, secret) for PagerDuty; same rules for create/update."""
+    key = str((secret or {}).get("routing_key", "")).strip()
+    if _PD_KEY_RE.match(key) is None:
+        raise ValueError("PagerDuty routing key must be the 32-character integration key.")
+    return {"host": "events.pagerduty.com"}, {"routing_key": key}
 
 
 def _upsert_token(db, owner: str, ciphertext: str) -> None:
@@ -131,10 +173,11 @@ def create_channel(
     """Create a channel, validating shape; secrets go encrypted, never to config.
 
     Email: config {host, port, username, from_addr, to, use_tls},
-    secret {password}. Slack: secret {url}. Webhook: secret
-    {url, signing_key?}. New channels route all severities until the
-    operator narrows them. Channel, routes, and secret commit in ONE
-    transaction so a crash never leaves a secret-less channel behind.
+    secret {password}. Slack/Discord: secret {url}. Webhook: secret
+    {url, signing_key?}. Telegram: config {chat_id}, secret {bot_token}.
+    PagerDuty: secret {routing_key}. New channels route all severities
+    until the operator narrows them. Channel, routes, and secret commit
+    in ONE transaction so a crash never leaves a secret-less channel behind.
     """
     try:
         channel_kind = ChannelKind(kind)
@@ -144,6 +187,11 @@ def create_channel(
     secret = dict(secret or {})
     if channel_kind == ChannelKind.EMAIL:
         config = _validate_email(config or {})
+    elif channel_kind == ChannelKind.TELEGRAM:
+        config, new_secret = _validate_telegram(config or {}, secret, require_token=True)
+        secret = new_secret or {}
+    elif channel_kind == ChannelKind.PAGERDUTY:
+        config, secret = _validate_pagerduty_secret(secret)
     else:
         config, secret = _validate_hook_secret(channel_kind, secret)
     ciphertext = encrypt_field(json.dumps(secret), get_encryption_key()) if secret else None
@@ -181,6 +229,15 @@ def update_channel(
         new_config = _validate_email(config or {})
         password = str(secret.get("password", ""))
         new_secret = None if not password.strip() else {"password": password}
+    elif channel_kind == ChannelKind.TELEGRAM:
+        # Chat target always updates; a blank token keeps the stored one.
+        new_config, new_secret = _validate_telegram(config or {}, secret, require_token=False)
+    elif channel_kind == ChannelKind.PAGERDUTY:
+        if not str(secret.get("routing_key", "")).strip():
+            new_config = None  # empty secret: keep the stored key and host label
+            new_secret = None
+        else:
+            new_config, new_secret = _validate_pagerduty_secret(secret)
     elif not str(secret.get("url", "")).strip():
         new_config = None  # empty secret: keep the stored secret and host label
         new_secret = None
@@ -323,6 +380,18 @@ def _deliver(
         )
     elif channel.kind == ChannelKind.SLACK:
         send_slack(str(secret.get("url", "")), subject, body, link=link)
+    elif channel.kind == ChannelKind.DISCORD:
+        send_discord(str(secret.get("url", "")), subject, body, link=link)
+    elif channel.kind == ChannelKind.TELEGRAM:
+        send_telegram(
+            str(secret.get("bot_token", "")),
+            str((channel.config or {}).get("chat_id", "")),
+            subject,
+            body,
+            link=link,
+        )
+    elif channel.kind == ChannelKind.PAGERDUTY:
+        send_pagerduty(str(secret.get("routing_key", "")), severity, subject, body, link=link)
     elif channel.kind == ChannelKind.WEBHOOK:
         send_webhook(
             str(secret.get("url", "")),

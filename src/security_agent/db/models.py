@@ -586,14 +586,18 @@ class ChannelKind(enum.StrEnum):
     EMAIL = "email"
     SLACK = "slack"
     WEBHOOK = "webhook"
+    DISCORD = "discord"
+    TELEGRAM = "telegram"
+    PAGERDUTY = "pagerduty"
 
 
 class NotifyChannel(Base):
     """One FR-13 delivery channel; secrets live encrypted, never in `config`.
 
     `config` holds non-secret fields only (SMTP host/port/user/from/to,
-    Slack label, webhook display host). Credentials (SMTP password,
-    webhook URLs) live in `encrypted_tokens` under `notify-channel:{id}`.
+    Slack/Discord/webhook display host, Telegram chat id, PagerDuty host
+    label). Credentials (SMTP password, webhook URLs, bot tokens, routing
+    keys) live in `encrypted_tokens` under `notify-channel:{id}`.
     """
 
     __tablename__ = "notify_channels"

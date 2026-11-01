@@ -130,7 +130,7 @@ Six logical planes mapped onto those services:
 
 ## 6. Integration Plane
 
-- Notifications (FR-13, FR-9 D5): email, Slack, generic webhook (covers pagers); per-severity routing; test-send per channel. Approval requests fan out to all channels.
+- Notifications (FR-13, FR-9 D5): email, Slack, Discord, Telegram, PagerDuty, generic webhook; per-severity routing; test-send per channel. Approval requests fan out to all channels.
 - Provider webhooks (FR-2 D3, FR-5 D5): one signature-verified receiver reused for scan triggers and merge/close reconcile.
 - Signals (FR-6, FR-2): Tier 1 triggers OSV/GHSA/KEV/NVD; Tier 2 HN API + outlet RSS match the stack and raise priority; boost never triggers action alone. Polite scrape fallback only.
 
