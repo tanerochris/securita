@@ -3,6 +3,7 @@
 import enum
 from datetime import UTC, datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     DateTime,
@@ -15,6 +16,10 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+# Policy RAG embedding width. The column DDL pins this value: switching
+# to a model with a different width needs a re-migration + re-embed.
+POLICY_EMBEDDING_DIM = 1536
 
 
 class Base(DeclarativeBase):
@@ -195,6 +200,7 @@ class GateAction(enum.StrEnum):
     MERGE = "merge"
     ROTATION = "rotation"
     PUBLISH = "publish"
+    POLICY = "policy"
 
 
 class GateStatus(enum.StrEnum):
@@ -230,6 +236,9 @@ class Repo(Base):
     last_scan_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
+    # Policy RAG (D3): README extraction feeds repo guidance unless the
+    # operator opts out. NULL (pre-migration rows) reads as enabled.
+    readme_policy_enabled: Mapped[bool | None] = mapped_column(nullable=True, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
@@ -303,6 +312,10 @@ class Finding(Base):
     news_weight: Mapped[int] = mapped_column(default=0)
     news_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     provenance: Mapped[str] = mapped_column(String(20), default="scanner")
+    # Policy RAG (D1c): set while a `block` guardrail stops this finding:
+    # {rule_key, rule_version, reason}. NULL means not blocked. Display
+    # and skip marker only — the checkpoint re-evaluates live rules.
+    policy_block: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     first_run_id: Mapped[int | None] = mapped_column(ForeignKey("scan_runs.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -627,3 +640,121 @@ class ModelUsage(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, index=True
     )
+
+
+class PolicyDocument(Base):
+    """One version of a policy document (D7: edits append, never overwrite).
+
+    `doc_key` is the stable identity across versions; exactly one row per
+    key carries `is_current`. Retrieval serves current + ready rows only.
+    scope is `platform` (repo_id NULL) or `repo`; tasks is a JSON list of
+    worker tasks the doc applies to, NULL/empty meaning all tasks.
+    source is `upload` | `editor` | `readme`; README rows are
+    guidance-only and can never back a guardrail (D3).
+    """
+
+    __tablename__ = "policy_documents"
+    __table_args__ = (
+        UniqueConstraint("doc_key", "version", name="uq_policy_doc_key_version"),
+        Index("ix_policy_docs_current", "doc_key", "is_current"),
+        Index("ix_policy_docs_scope", "scope", "repo_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    doc_key: Mapped[str] = mapped_column(String(64), index=True)
+    version: Mapped[int] = mapped_column(default=1)
+    is_current: Mapped[bool] = mapped_column(default=True)
+    scope: Mapped[str] = mapped_column(String(20))
+    repo_id: Mapped[int | None] = mapped_column(ForeignKey("repos.id"), nullable=True)
+    tasks: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    title: Mapped[str] = mapped_column(String(300))
+    source: Mapped[str] = mapped_column(String(20))
+    file_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    text: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="ready")  # ready | disabled
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class PolicyChunk(Base):
+    """One retrievable chunk of a policy document version.
+
+    Chunks are immutable: a new document version gets new chunk rows, so
+    recorded chunk IDs always resolve to the exact text the run saw.
+    `embedding` is NULL when no embedding provider is available; those
+    rows still serve through keyword fallback.
+    """
+
+    __tablename__ = "policy_chunks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("policy_documents.id"), index=True)
+    chunk_index: Mapped[int] = mapped_column()
+    text: Mapped[str] = mapped_column(Text)
+    source_ref: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    embedding: Mapped[list | None] = mapped_column(Vector(POLICY_EMBEDDING_DIM), nullable=True)
+
+
+class PolicyRule(Base):
+    """One version of a structured guardrail (D1b/D1c).
+
+    `pending` rules come from model extraction or hand authoring and block
+    nothing; `confirmed` rules enforce at checkpoints; `disabled` is the
+    only delete. effect is block | require_approval | silence, plus
+    allow, which is valid only on an `override_of` exception (D2).
+    `match` holds {package?, advisory?, ecosystem?, max_severity?} globs.
+    """
+
+    __tablename__ = "policy_rules"
+    __table_args__ = (
+        UniqueConstraint("rule_key", "version", name="uq_policy_rule_key_version"),
+        Index("ix_policy_rules_current", "rule_key", "is_current"),
+        Index("ix_policy_rules_scope", "scope", "repo_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rule_key: Mapped[str] = mapped_column(String(64), index=True)
+    version: Mapped[int] = mapped_column(default=1)
+    is_current: Mapped[bool] = mapped_column(default=True)
+    scope: Mapped[str] = mapped_column(String(20))
+    repo_id: Mapped[int | None] = mapped_column(ForeignKey("repos.id"), nullable=True)
+    tasks: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    effect: Mapped[str] = mapped_column(String(20))
+    match: Mapped[dict] = mapped_column(JSON, default=dict)
+    reason: Mapped[str] = mapped_column(Text)
+    source_document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("policy_documents.id"), nullable=True
+    )
+    source_quote: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    overridable: Mapped[bool] = mapped_column(default=False)
+    override_of: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    confirmed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class PolicyRunSnapshot(Base):
+    """Guidance versions pinned for one run (D7: stable guidance).
+
+    Captured on first policy use in a run: later retrieval in the same
+    run resolves these versions even if the operator edits mid-run.
+    Guardrails ignore the snapshot and always read latest confirmed.
+    """
+
+    __tablename__ = "policy_run_snapshots"
+    __table_args__ = (UniqueConstraint("run_id", "doc_key", name="uq_policy_snap_run_doc"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("scan_runs.id"), index=True)
+    doc_key: Mapped[str] = mapped_column(String(64))
+    version: Mapped[int] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

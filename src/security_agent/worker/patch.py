@@ -915,6 +915,24 @@ def _mark_unpatchable(finding_id: int, guidance: str) -> None:
             return
         row.guidance = guidance
         db.flush()
+        db.expunge(row)
+    try:
+        from security_agent.control.cost import current_run_id
+        from security_agent.policy.retrieve import retrieve_policy_context
+
+        block, _ = retrieve_policy_context(
+            row.repo_id,
+            "unpatchable-guidance",
+            f"{row.package} {row.advisory_id}",
+            run_id=current_run_id(),
+        )
+        if block:
+            with session_scope() as db:
+                target = db.get(Finding, finding_id)
+                if target is not None:
+                    target.guidance = f"{guidance}\n\nPolicy notes:\n{block}"
+    except Exception as exc:  # noqa: BLE001 - guidance never breaks patching
+        log.warning("policy guidance for finding %d failed: %s", finding_id, exc)
     transition_finding(finding_id, FindingStatus.UNPATCHABLE)
 
 
@@ -1071,16 +1089,40 @@ def run_patch(
     adapt: AdaptHook = null_adapt,
 ) -> dict:
     """Patch every reachable OPEN finding; report-only on exhaustion (FR-4 D4/D6)."""
+    from security_agent.policy.enforce import park_for_policy, pre_patch_check
+    from security_agent.policy.service import PolicyStoreError
+
     assert_host_execution_allowed()
     with session_scope() as db:
         repo = db.get(Repo, repo_id)
         run = db.get(ScanRun, run_id)
         if repo is None or run is None:
             raise ValueError(f"Unknown repo {repo_id} or run {run_id}.")
+        if run.parked:
+            return {"status": "parked", "results": [], "proposal_ids": []}
         db.expunge(repo)
+    candidates = patch_candidates(repo_id)
+    try:
+        gate = pre_patch_check(repo_id, run_id, candidates)
+    except PolicyStoreError as exc:
+        park_for_policy(run_id, str(exc))
+        return {"status": "parked", "results": [], "proposal_ids": []}
+    allowed = set(gate["proceed"])
+    held_out = set(gate["blocked"]) | set(gate["awaiting"])
     results: list[dict] = []
+    for finding in candidates:
+        if finding.id in held_out:
+            results.append(
+                {
+                    "finding_ids": [finding.id],
+                    "outcome": "blocked" if finding.id in gate["blocked"] else "awaiting-approval",
+                    "reason": "policy guardrail held this finding out of patching",
+                }
+            )
     groups: dict[tuple[str, str], list[Finding]] = {}
-    for finding in patch_candidates(repo_id):
+    for finding in candidates:
+        if finding.id not in allowed:
+            continue
         eco = (finding.ecosystem or "").lower() or "unknown"
         groups.setdefault((eco, finding.package), []).append(finding)
     for (eco, package), members in groups.items():

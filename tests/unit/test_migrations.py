@@ -28,6 +28,7 @@ CHAIN = [
     "0013_news_intel",
     "0014_news_finding_links",
     "0015_news_relevance",
+    "0016_policy_rag",
 ]
 
 
@@ -202,6 +203,38 @@ def test_migration_0015_roundtrips(tmp_path):
     assert "news_repo_relevance" not in sa_inspect(engine).get_table_names()
     _run(engine, mod15)
     assert "news_repo_relevance" in sa_inspect(engine).get_table_names()
+
+
+def test_migration_0016_roundtrips(tmp_path):
+    from sqlalchemy import inspect as sa_inspect
+
+    engine = create_engine(f"sqlite:///{tmp_path}/mig16.db")
+    modules = [_load(name) for name in CHAIN]
+    _run(engine, *modules)
+    tables = sa_inspect(engine).get_table_names()
+    for table in (
+        "policy_documents",
+        "policy_chunks",
+        "policy_rules",
+        "policy_run_snapshots",
+    ):
+        assert table in tables
+    assert "readme_policy_enabled" in _columns(engine, "repos")
+    assert "policy_block" in _columns(engine, "findings")
+    mod16 = _load("0016_policy_rag")
+    _run(engine, mod16, direction="downgrade")
+    tables = sa_inspect(engine).get_table_names()
+    for table in (
+        "policy_documents",
+        "policy_chunks",
+        "policy_rules",
+        "policy_run_snapshots",
+    ):
+        assert table not in tables
+    assert "readme_policy_enabled" not in _columns(engine, "repos")
+    assert "policy_block" not in _columns(engine, "findings")
+    _run(engine, mod16)
+    assert "policy_documents" in sa_inspect(engine).get_table_names()
 
 
 def test_migration_0014_roundtrips(tmp_path):

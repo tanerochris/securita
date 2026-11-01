@@ -689,6 +689,8 @@ def run_deliver(
 ) -> dict:
     """Deliver open proposals + file issues for report-only findings (FR-5)."""
     from security_agent.config import get_settings
+    from security_agent.policy.enforce import park_for_policy, pre_deliver_check
+    from security_agent.policy.service import PolicyStoreError
 
     assert_host_execution_allowed()
     with session_scope() as db:
@@ -696,6 +698,8 @@ def run_deliver(
         run = db.get(ScanRun, run_id)
         if repo is None or run is None:
             raise ValueError(f"Unknown repo {repo_id} or run {run_id}.")
+        if run.parked:
+            return {"status": "parked", "proposal_ids": [], "issues": [], "errors": []}
         db.expunge(repo)
     root = Path(delivery_root) if delivery_root else Path("deliveries")
     dashboard = f"{get_settings().public_url}/repos/{repo_id}/findings"
@@ -723,10 +727,19 @@ def run_deliver(
         )
         for f in unpatched:
             db.expunge(f)
+    try:
+        gate = pre_deliver_check(repo_id, run_id, pending)
+    except PolicyStoreError as exc:
+        park_for_policy(run_id, str(exc))
+        return {"status": "parked", "proposal_ids": [], "issues": [], "errors": []}
+    shippable = set(gate["deliver"])
+    pending = [p for p in pending if p.id in shippable]
     delivered: list[int] = []
     issues: list[int] = []
     errors: list[str] = []
     notes: list[str] = []
+    if gate["held"]:
+        notes.append(f"policy held {len(gate['held'])} proposals for review")
     for group in group_by_package(pending):
         try:
             with _fresh_workdir(repo, source_dir) as workdir:

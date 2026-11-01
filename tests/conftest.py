@@ -13,6 +13,17 @@ os.environ["APP_ENV"] = "dev"
 # pydantic-settings reads .env, but real env vars take precedence, so this
 # default keeps select_adapt() on the null hook unless a test opts in.
 os.environ.setdefault("MODEL_ADAPT_ENABLED", "false")
+# Policy RAG: tests run keyword-only unless they stub embeddings.
+# Real env vars take precedence over .env, so the suite never calls a
+# live embeddings endpoint (hermetic, offline-safe).
+os.environ.setdefault("EMBEDDING_PROVIDER", "off")
+# PR copy: tests keep the deterministic template unless they inject a
+# fake model, so delivery tests never call a live chat endpoint.
+os.environ.setdefault("PR_TEXT_MODEL_ENABLED", "false")
+# Bot identity: delivery tests assert the committed default identity;
+# a customized BOT_NAME/BOT_EMAIL in the workspace .env must not leak in.
+os.environ.setdefault("BOT_NAME", "security-agent-bot")
+os.environ.setdefault("BOT_EMAIL", "security-agent@localhost")
 
 import security_agent.db.session as sess_mod  # noqa: E402
 from security_agent.db.models import Base  # noqa: E402

@@ -50,6 +50,7 @@ def create_app() -> FastAPI:
         git_providers,
         health,
         news,
+        policies,
         repos,
         settings,
         sso,
@@ -100,6 +101,7 @@ def create_app() -> FastAPI:
     app.include_router(git_providers.router)
     app.include_router(repos.router)
     app.include_router(news.router)
+    app.include_router(policies.router)
     app.include_router(approvals.router)
     app.include_router(settings.router)
     static_dir = BASE / "static"

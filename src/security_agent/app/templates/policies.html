@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block title %}Platform policies — Securita{% endblock %}
+{% block page_title %}Policies{% endblock %}
+{% block content %}
+<div class="min-w-0">
+  <h1 class="text-[26px] leading-tight md:text-[30px]">Platform policies</h1>
+  <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Company-wide policy documents guide the worker models; confirmed guardrails enforce. Repo policies and README guidance live on each repository page. <a class="font-bold text-brand-primary hover:text-brand-deep" href="/policies/preview">Preview retrieval</a></p>
+</div>
+{% if notice %}
+<div class="mt-4 flex items-start gap-2.5 rounded-xl bg-brand-mist px-4 py-3" role="status">
+  <svg class="mt-0.5 flex-none text-brand-primary" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 5-5.5"/></svg>
+  <p class="text-sm font-semibold text-brand-deep">{{ notice }}</p>
+</div>
+{% endif %}
+
+<section class="mt-6" aria-labelledby="pending-heading">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 id="pending-heading" class="text-lg">Guardrail queue ({{ pending|length }})</h2>
+    <span class="text-sm text-slate-600">Drafted rules block nothing until confirmed.</span>
+  </div>
+  {% if pending %}
+  <div class="brand-table mt-3 overflow-x-auto rounded-xl">
+    <table data-grid data-per-page="25">
+      <thead><tr><th>Key</th><th>Effect</th><th>Match</th><th>Reason</th><th>Source quote</th>{% if can_manage %}<th>Actions</th>{% endif %}</tr></thead>
+      <tbody>
+      {% for r in pending %}
+        <tr>
+          <td class="font-bold text-brand-navy">{{ r.rule_key }}<span class="block text-xs font-medium text-slate-500">v{{ r.version }}</span></td>
+          <td><span class="inline-flex rounded-md bg-brand-navy px-2 py-0.5 text-xs font-bold text-white">{{ r.effect }}</span></td>
+          <td class="max-w-[280px] truncate text-slate-600" title="{{ r.match }}">{{ r.match }}</td>
+          <td class="max-w-[280px] text-slate-600">{{ r.reason }}</td>
+          <td class="max-w-[280px] truncate text-slate-600" title="{{ r.source_quote or '—' }}">{{ r.source_quote or "—" }}</td>
+          {% if can_manage %}
+          <td>
+            <span class="flex flex-wrap gap-1.5">
+              <form method="post" action="/policies/rules/{{ r.rule_key }}/confirm"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Confirm</button></form>
+              <form method="post" action="/policies/rules/{{ r.rule_key }}/disable"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-danger" type="submit">Reject</button></form>
+            </span>
+            <details class="mt-1.5">
+              <summary class="cursor-pointer text-[13px] font-bold text-brand-primary hover:text-brand-deep">Edit</summary>
+              <form class="mt-2 grid min-w-[240px] grid-cols-1 gap-2" method="post" action="/policies/rules/{{ r.rule_key }}/edit">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="full_match" value="on">
+                <label class="text-xs font-bold text-slate-600">Effect<select class="mt-1 block w-full" name="effect">{% for e in effects %}<option value="{{ e }}" {% if r.effect == e %}selected{% endif %}>{{ e }}</option>{% endfor %}</select></label>
+                <label class="text-xs font-bold text-slate-600">Package<input class="mt-1 block w-full" name="package" value="{{ r.match.package or '' }}"></label>
+                <label class="text-xs font-bold text-slate-600">Advisory<input class="mt-1 block w-full" name="advisory" value="{{ r.match.advisory or '' }}"></label>
+                <label class="text-xs font-bold text-slate-600">Ecosystem<input class="mt-1 block w-full" name="ecosystem" value="{{ r.match.ecosystem or '' }}"></label>
+                <label class="text-xs font-bold text-slate-600">Max severity<input class="mt-1 block w-full" name="max_severity" value="{{ r.match.max_severity or '' }}"></label>
+                <label class="text-xs font-bold text-slate-600">Reason<input class="mt-1 block w-full" name="reason" value="{{ r.reason }}"></label>
+                <fieldset><legend class="text-xs font-bold text-slate-600">Tasks (none = all)</legend>
+                  <span class="mt-1 flex flex-wrap gap-2">{% for t in tasks %}<label class="text-xs font-semibold text-slate-600"><input type="checkbox" name="tasks" value="{{ t }}" {% if t in (r.tasks or []) %}checked{% endif %}> {{ t }}</label>{% endfor %}</span>
+                </fieldset>
+                <span><button class="btn-secondary" type="submit">Save new version</button></span>
+              </form>
+            </details>
+          </td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="mt-3 rounded-xl bg-white px-5 py-6 text-center shadow-card">
+    <p class="text-sm font-bold text-brand-navy">Queue empty</p>
+    <p class="mx-auto mt-1 max-w-md text-[13px] text-slate-600">Upload a policy and draft guardrails, or write a rule by hand below.</p>
+  </div>
+  {% endif %}
+</section>
+
+<section class="mt-7" aria-labelledby="confirmed-heading">
+  <h2 id="confirmed-heading" class="text-lg">Enforced rules ({{ confirmed|length }})</h2>
+  {% if confirmed %}
+  <div class="brand-table mt-3 overflow-x-auto rounded-xl">
+    <table data-grid data-per-page="25">
+      <thead><tr><th>Key</th><th>Effect</th><th>Match</th><th>Reason</th><th>Overridable</th>{% if can_manage %}<th>Actions</th>{% endif %}</tr></thead>
+      <tbody>
+      {% for r in confirmed %}
+        <tr>
+          <td class="font-bold text-brand-navy">{{ r.rule_key }}<span class="block text-xs font-medium text-slate-500">v{{ r.version }}</span></td>
+          <td><span class="inline-flex rounded-md bg-brand-primary px-2 py-0.5 text-xs font-bold text-white">{{ r.effect }}</span></td>
+          <td class="max-w-[280px] truncate text-slate-600" title="{{ r.match }}">{{ r.match }}</td>
+          <td class="max-w-[280px] text-slate-600">{{ r.reason }}</td>
+          <td>{% if r.overridable %}<span class="font-bold text-brand-primary">yes</span>{% else %}<span class="text-slate-400">no</span>{% endif %}</td>
+          {% if can_manage %}
+          <td>
+            <form method="post" action="/policies/rules/{{ r.rule_key }}/disable"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-secondary" type="submit">Disable</button></form>
+            <details class="mt-1.5">
+              <summary class="cursor-pointer text-[13px] font-bold text-brand-primary hover:text-brand-deep">Edit</summary>
+              <form class="mt-2 grid min-w-[240px] grid-cols-1 gap-2" method="post" action="/policies/rules/{{ r.rule_key }}/edit">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <input type="hidden" name="full_match" value="on">
+                <label class="text-xs font-bold text-slate-600">Effect<select class="mt-1 block w-full" name="effect">{% for e in effects %}<option value="{{ e }}" {% if r.effect == e %}selected{% endif %}>{{ e }}</option>{% endfor %}</select></label>
+                <label class="text-xs font-bold text-slate-600">Package<input class="mt-1 block w-full" name="package" value="{{ r.match.package or '' }}"></label>
+                <label class="text-xs font-bold text-slate-600">Advisory<input class="mt-1 block w-full" name="advisory" value="{{ r.match.advisory or '' }}"></label>
+                <label class="text-xs font-bold text-slate-600">Ecosystem<input class="mt-1 block w-full" name="ecosystem" value="{{ r.match.ecosystem or '' }}"></label>
+                <label class="text-xs font-bold text-slate-600">Max severity<input class="mt-1 block w-full" name="max_severity" value="{{ r.match.max_severity or '' }}"></label>
+                <label class="text-xs font-bold text-slate-600">Reason<input class="mt-1 block w-full" name="reason" value="{{ r.reason }}"></label>
+                <fieldset><legend class="text-xs font-bold text-slate-600">Tasks (none = all)</legend>
+                  <span class="mt-1 flex flex-wrap gap-2">{% for t in tasks %}<label class="text-xs font-semibold text-slate-600"><input type="checkbox" name="tasks" value="{{ t }}" {% if t in (r.tasks or []) %}checked{% endif %}> {{ t }}</label>{% endfor %}</span>
+                </fieldset>
+                <span><button class="btn-secondary" type="submit">Save new version</button></span>
+              </form>
+            </details>
+          </td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="mt-3 text-sm text-slate-600">No enforced rules yet.</p>
+  {% endif %}
+</section>
+
+<section class="mt-7" aria-labelledby="docs-heading">
+  <h2 id="docs-heading" class="text-lg">Documents ({{ docs|length }})</h2>
+  {% if docs %}
+  <div class="brand-table mt-3 overflow-x-auto rounded-xl">
+    <table data-grid data-per-page="25">
+      <thead><tr><th>Title</th><th>Source</th><th>Version</th><th>Status</th><th>Tasks</th>{% if can_manage %}<th>Actions</th>{% endif %}</tr></thead>
+      <tbody>
+      {% for d in docs %}
+        <tr>
+          <td class="font-semibold text-brand-navy">{{ d.title }}<span class="block text-xs font-medium text-slate-500">{{ d.doc_key }}</span></td>
+          <td>{{ d.source }}{% if d.file_name %}<span class="block text-xs text-slate-500">{{ d.file_name }}</span>{% endif %}</td>
+          <td>v{{ d.version }}</td>
+          <td>{% if d.status == "ready" %}<span class="inline-flex rounded-full bg-brand-primary px-2 py-0.5 text-xs font-bold text-white">ready</span>{% else %}<span class="inline-flex rounded-full bg-white px-2 py-0.5 text-xs font-bold text-slate-500 shadow-[inset_0_0_0_1px_#E0F2FE]">disabled</span>{% endif %}</td>
+          <td class="text-slate-600">{{ (d.tasks or [])|join(", ") or "all" }}</td>
+          {% if can_manage %}
+          <td>
+            <span class="flex flex-wrap gap-1.5">
+              {% if d.source != "readme" %}<form method="post" action="/policies/docs/{{ d.doc_key }}/extract"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-secondary" type="submit">Draft guardrails</button></form>{% endif %}
+              {% if d.status == "ready" %}<form method="post" action="/policies/docs/{{ d.doc_key }}/disable"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-secondary" type="submit">Disable</button></form>{% else %}<form method="post" action="/policies/docs/{{ d.doc_key }}/enable"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Enable</button></form>{% endif %}
+            </span>
+            {% if d.source != "readme" %}
+            <details class="mt-1.5">
+              <summary class="cursor-pointer text-[13px] font-bold text-brand-primary hover:text-brand-deep">Edit</summary>
+              <form class="mt-2 grid min-w-[240px] grid-cols-1 gap-2" method="post" action="/policies/docs/{{ d.doc_key }}/edit">
+                <input type="hidden" name="csrf" value="{{ csrf }}">
+                <label class="text-xs font-bold text-slate-600">Title<input class="mt-1 block w-full" name="title" value="{{ d.title }}"></label>
+                <label class="text-xs font-bold text-slate-600">Text (blank = keep)<textarea class="mt-1 block w-full" name="text" rows="4"></textarea></label>
+                <fieldset><legend class="text-xs font-bold text-slate-600">Tasks (none = all)</legend>
+                  <span class="mt-1 flex flex-wrap gap-2">{% for t in tasks %}<label class="text-xs font-semibold text-slate-600"><input type="checkbox" name="tasks" value="{{ t }}" {% if t in (d.tasks or []) %}checked{% endif %}> {{ t }}</label>{% endfor %}</span>
+                </fieldset>
+                <span><button class="btn-secondary" type="submit">Save new version</button></span>
+              </form>
+            </details>
+            {% endif %}
+          </td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="mt-3 text-sm text-slate-600">No platform documents yet.</p>
+  {% endif %}
+</section>
+
+{% if can_manage %}
+<section class="mt-7 grid grid-cols-1 gap-4 lg:grid-cols-2" aria-label="Add policy">
+  <div class="rounded-xl bg-white p-5 shadow-card">
+    <h2 class="text-lg">Upload policy file</h2>
+    <p class="mt-1 text-sm text-slate-600">Markdown, text, or PDF (1&nbsp;MB max). Secret-looking content is rejected.</p>
+    <form class="mt-3 grid grid-cols-1 gap-2.5" method="post" action="/policies/upload" enctype="multipart/form-data">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="scope" value="platform">
+      <label class="text-xs font-bold text-slate-600">File<input class="mt-1 block w-full" type="file" name="file" accept=".md,.markdown,.txt,.rst,.pdf" required></label>
+      <label class="text-xs font-bold text-slate-600">Title (optional)<input class="mt-1 block w-full" name="title" placeholder="Defaults to the file name"></label>
+      <fieldset><legend class="text-xs font-bold text-slate-600">Tasks (none = all)</legend>
+        <span class="mt-1 flex flex-wrap gap-2">{% for t in tasks %}<label class="text-xs font-semibold text-slate-600"><input type="checkbox" name="tasks" value="{{ t }}"> {{ t }}</label>{% endfor %}</span>
+      </fieldset>
+      <span><button type="submit">Upload</button></span>
+    </form>
+  </div>
+  <div class="rounded-xl bg-white p-5 shadow-card">
+    <h2 class="text-lg">Write policy</h2>
+    <p class="mt-1 text-sm text-slate-600">Free text becomes guidance immediately; guardrails need confirmation.</p>
+    <form class="mt-3 grid grid-cols-1 gap-2.5" method="post" action="/policies/editor">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="scope" value="platform">
+      <label class="text-xs font-bold text-slate-600">Title<input class="mt-1 block w-full" name="title" required></label>
+      <label class="text-xs font-bold text-slate-600">Text<textarea class="mt-1 block w-full" name="text" rows="5" required></textarea></label>
+      <fieldset><legend class="text-xs font-bold text-slate-600">Tasks (none = all)</legend>
+        <span class="mt-1 flex flex-wrap gap-2">{% for t in tasks %}<label class="text-xs font-semibold text-slate-600"><input type="checkbox" name="tasks" value="{{ t }}"> {{ t }}</label>{% endfor %}</span>
+      </fieldset>
+      <span><button type="submit">Save</button></span>
+    </form>
+  </div>
+</section>
+
+<section class="mt-4 rounded-xl bg-white p-5 shadow-card" aria-labelledby="rule-heading">
+  <h2 id="rule-heading" class="text-lg">Write guardrail by hand</h2>
+  <p class="mt-1 text-sm text-slate-600">Structured rules go to the queue as pending, same as extracted ones. Globs allowed (<code>openssl*</code>, <code>CVE-2024-*</code>).</p>
+  <form class="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-3" method="post" action="/policies/rules">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="scope" value="platform">
+    <label class="text-xs font-bold text-slate-600">Effect<select class="mt-1 block w-full" name="effect">{% for e in effects %}<option value="{{ e }}">{{ e }}</option>{% endfor %}</select></label>
+    <label class="text-xs font-bold text-slate-600">Package<input class="mt-1 block w-full" name="package" placeholder="openssl*"></label>
+    <label class="text-xs font-bold text-slate-600">Advisory<input class="mt-1 block w-full" name="advisory" placeholder="CVE-2024-*"></label>
+    <label class="text-xs font-bold text-slate-600">Ecosystem<input class="mt-1 block w-full" name="ecosystem" placeholder="npm"></label>
+    <label class="text-xs font-bold text-slate-600">Max severity<input class="mt-1 block w-full" name="max_severity" placeholder="7.0"></label>
+    <label class="text-xs font-bold text-slate-600">Reason<input class="mt-1 block w-full" name="reason" required></label>
+    <label class="text-xs font-bold text-slate-600">Repos may override<input class="mt-1 block" type="checkbox" name="overridable"></label>
+    <span class="md:col-span-3"><button type="submit">Draft rule</button></span>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

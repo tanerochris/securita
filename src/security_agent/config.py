@@ -57,6 +57,31 @@ class Settings(BaseSettings):
     loki_timeout_seconds: float = Field(default=5.0, alias="LOKI_TIMEOUT_SECONDS")
     # Model-backed patch adaptation (follow-up #3); off until live probe passes.
     model_adapt_enabled: bool = Field(default=False, alias="MODEL_ADAPT_ENABLED")
+    # Model-written PR titles/bodies (FR-5); the deterministic template
+    # stays as the fallback when disabled, keyless, or on any model miss.
+    pr_text_model_enabled: bool = Field(default=True, alias="PR_TEXT_MODEL_ENABLED")
+    # Policy RAG (D4): the operator picks the embeddings provider.
+    # "local" (default) runs a small ONNX model in-process via fastembed
+    # — no extra service. "ollama" talks to an Ollama server's
+    # OpenAI-compatible /v1/embeddings (compose profile "ollama").
+    # "hosted" is any OpenAI-compatible API (empty base/key fall back to
+    # MODEL_*). "off" is keyword retrieval only. Vectors are optional:
+    # chunks without embeddings still serve, never a hard failure.
+    embedding_provider: str = Field(default="local", alias="EMBEDDING_PROVIDER")
+    embedding_base_url: str = Field(default="", alias="EMBEDDING_BASE_URL")
+    embedding_api_key: str = Field(default="", alias="EMBEDDING_API_KEY")
+    embedding_model: str = Field(default="", alias="EMBEDDING_MODEL")
+    embedding_local_cache_dir: str = Field(default="", alias="EMBEDDING_LOCAL_CACHE_DIR")
+    embedding_dim: int = Field(default=1536, alias="EMBEDDING_DIM")
+    embedding_timeout_seconds: float = Field(default=30.0, alias="EMBEDDING_TIMEOUT_SECONDS")
+    # Policy ingestion/retrieval budgets.
+    policy_chunk_chars: int = Field(default=2000, alias="POLICY_CHUNK_CHARS")
+    policy_chunk_overlap_chars: int = Field(default=200, alias="POLICY_CHUNK_OVERLAP_CHARS")
+    policy_top_k: int = Field(default=6, alias="POLICY_TOP_K")
+    policy_prompt_budget_chars: int = Field(default=8000, alias="POLICY_PROMPT_BUDGET_CHARS")
+    policy_upload_max_bytes: int = Field(default=1_000_000, alias="POLICY_UPLOAD_MAX_BYTES")
+    policy_max_chunks_per_doc: int = Field(default=200, alias="POLICY_MAX_CHUNKS_PER_DOC")
+    policy_readme_max_bytes: int = Field(default=200_000, alias="POLICY_README_MAX_BYTES")
     # H6 cost control (NFR-8 D4/D5): per-run token cap + daily spend alerts.
     run_token_cap: int = Field(default=1_000_000, alias="RUN_TOKEN_CAP")
     run_token_warn_fraction: float = Field(default=0.8, alias="RUN_TOKEN_WARN_FRACTION")

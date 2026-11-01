@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Retrieval preview — Securita{% endblock %}
+{% block page_title %}Policies{% endblock %}
+{% block content %}
+<div class="min-w-0">
+  <p class="text-sm font-semibold text-slate-600"><a class="font-bold text-brand-primary hover:text-brand-deep" href="/policies">&larr; Platform policies</a></p>
+  <h1 class="mt-1 text-[26px] leading-tight md:text-[30px]">Retrieval preview</h1>
+  <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">See exactly which policy chunks a worker call would receive for a query. README chunks are badged as untrusted.</p>
+</div>
+
+<form class="mt-4 grid grid-cols-1 gap-2.5 rounded-xl bg-white p-5 shadow-card md:grid-cols-[1fr_200px_200px_auto]" method="get" action="/policies/preview">
+  <label class="text-xs font-bold text-slate-600">Query<input class="mt-1 block w-full" name="q" value="{{ q }}" placeholder="openssl CVE-2024-…" required></label>
+  <label class="text-xs font-bold text-slate-600">Repo<select class="mt-1 block w-full" name="repo_id"><option value="">platform only</option>{% for r in repos %}<option value="{{ r.id }}" {% if repo_id == r.id|string %}selected{% endif %}>{{ r.name }}</option>{% endfor %}</select></label>
+  <label class="text-xs font-bold text-slate-600">Task<select class="mt-1 block w-full" name="task"><option value="">any</option>{% for t in tasks %}<option value="{{ t }}" {% if task == t %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></label>
+  <span class="flex items-end"><button type="submit">Preview</button></span>
+</form>
+
+{% if searched %}
+<section class="mt-6" aria-labelledby="results-heading">
+  <h2 id="results-heading" class="text-lg">Chunks ({{ chunks|length }})</h2>
+  {% if chunks %}
+  <div class="mt-3 grid grid-cols-1 gap-3">
+    {% for c in chunks %}
+    <article class="rounded-xl bg-white p-5 shadow-card">
+      <p class="flex flex-wrap items-center gap-2 text-xs font-bold">
+        <span class="text-brand-navy">{{ c.title }}</span>
+        <span class="inline-flex rounded-md bg-brand-mist px-2 py-0.5 text-brand-deep">{{ c.scope }}</span>
+        {% if c.source == "readme" %}<span class="inline-flex rounded-md bg-brand-navy px-2 py-0.5 text-white">untrusted readme</span>{% else %}<span class="inline-flex rounded-md bg-brand-primary px-2 py-0.5 text-white">{{ c.source }}</span>{% endif %}
+        {% if c.ref %}<span class="text-slate-500">{{ c.ref }}</span>{% endif %}
+        <span class="ml-auto text-slate-500">score {{ c.score }}</span>
+      </p>
+      <p class="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-600">{{ c.text[:1200] }}{% if c.text|length > 1200 %}…{% endif %}</p>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="mt-3 text-sm text-slate-600">No chunks matched — a worker call with this query would see no policy.</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

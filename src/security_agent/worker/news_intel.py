@@ -409,14 +409,23 @@ def assess_relevance(item_id: int, repo_id: int, *, model=None) -> str | None:
             _store_relevance(db, item_id, repo_id, "direct", score, rationale, signals)
         return "direct"
     from security_agent.brain import get_chat_model, tracked_invoke
+    from security_agent.policy.retrieve import retrieve_policy_context
 
+    policy_block = ""
+    try:
+        policy_block, _ = retrieve_policy_context(
+            repo_id,
+            "news-relevance",
+            f"{title or ''} {summary or ''}",
+        )
+    except Exception as exc:  # noqa: BLE001 - guidance never breaks relevance
+        log.warning("policy guidance for relevance failed: %s", exc)
     try:
         bound = model if model is not None else get_chat_model()
-        result = tracked_invoke(
-            bound,
-            _relevance_prompt(profile["summary"], story),
-            task="news-relevance",
-        )
+        prompt = _relevance_prompt(profile["summary"], story)
+        if policy_block:
+            prompt += f"\n\n{policy_block}"
+        result = tracked_invoke(bound, prompt, task="news-relevance")
         parsed = _parse_relevance(str(getattr(result, "content", "") or ""))
     except Exception as exc:  # noqa: BLE001 - relevance never breaks the poll
         log.warning("news relevance failed for item %d repo %d: %s", item_id, repo_id, exc)
@@ -622,6 +631,7 @@ def mint_from_item(item_id: int) -> dict[str, int]:
     of a duplicate. Returns {"minted": n, "linked": m}.
     """
     counts = {"minted": 0, "linked": 0}
+    freshly_minted: list[tuple[int, int]] = []
     with session_scope() as db:
         item = db.get(NewsItem, item_id)
         if item is None or item.verdict != "major" or item.minted_at is not None:
@@ -707,6 +717,12 @@ def mint_from_item(item_id: int) -> dict[str, int]:
                         ["finding-link"],
                     )
                     counts["minted"] += 1
+                    freshly_minted.append((repo_id, row.id))
+    if freshly_minted:
+        from security_agent.policy.enforce import apply_ingest_silence
+
+        for repo_id, finding_id in freshly_minted:
+            apply_ingest_silence(repo_id, [finding_id])
     if not transient_error:
         with session_scope() as db:
             item_row = db.get(NewsItem, item_id)

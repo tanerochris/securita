@@ -7,6 +7,7 @@ model. No probe pass or a disabled flag means the null hook stays in
 charge (D2) — there is no chat-only fallback path.
 """
 
+import contextvars
 import logging
 from pathlib import Path
 
@@ -17,14 +18,50 @@ log = logging.getLogger(__name__)
 _MAX_CONTEXT_FILES = 3
 _MAX_FILE_CHARS = 3000
 _MAX_PROMPT_CHARS = 12000
+_MAX_POLICY_SEARCHES = 2
 _SKIP_PARTS = {"node_modules", ".git", "__pycache__", ".pip-deps"}
 _TEXT_SUFFIXES = {".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".py", ".json", ".toml", ".txt"}
+
+_search_scope: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "policy_search_scope", default=None
+)
 
 
 @tool
 def apply_file_edit(file_path: str, new_content: str) -> str:
     """Replace the full content of one in-repo file with new_content."""
     return "queued"  # host executes the call; see make_model_adapt
+
+
+@tool
+def search_policies(query: str) -> str:
+    """Search company policy documents for guidance on this change.
+
+    The policy context already in your prompt was picked automatically
+    and may miss the section that matters. Call this when: no policy
+    context was provided; the provided context does not mention this
+    package or change type; it refers to sections or documents you
+    cannot see; or the change touches auth, cryptography, networking,
+    or data-handling code, where restrictions are likely. Query with
+    focused terms — a package name, feature, or policy area. At most
+    two searches; then decide with what you have. This searches policy
+    documents only, never the codebase.
+    """
+    return _run_policy_search(query)
+
+
+def _run_policy_search(query: str) -> str:
+    """Execute one scoped policy search for the in-flight adapt call."""
+    scope = _search_scope.get()
+    query = (query or "").strip()
+    if scope is None or not query:
+        return "Policy search is unavailable for this call."
+    from security_agent.policy.retrieve import retrieve_policy_context
+
+    block, _chunk_ids = retrieve_policy_context(
+        scope.get("repo_id"), "adapt", query, run_id=scope.get("run_id")
+    )
+    return block or "No matching policy found for that search."
 
 
 def _context_files(workdir: Path, package: str) -> list[tuple[str, str]]:
@@ -81,23 +118,70 @@ def make_model_adapt(model=None, *, probe_ok: bool | None = None):
 
     def adapt(workdir: Path, finding, target: str, failures: list[str]) -> AdaptResult:
         from security_agent.brain import tracked_invoke
-        from security_agent.control.cost import CostCapExceeded
+        from security_agent.control.cost import CostCapExceeded, current_run_id
 
         bound = model if model is not None else get_chat_model()
         try:
             if hasattr(bound, "bind_tools"):
-                bound = bound.bind_tools([apply_file_edit])
+                bound = bound.bind_tools([apply_file_edit, search_policies])
             context = _context_files(workdir, finding.package)
             files_blob = "\n\n".join(f"--- {rel} ---\n{text}" for rel, text in context)
+            policy_block = ""
+            run_id = current_run_id()
+            try:
+                from security_agent.policy.retrieve import retrieve_policy_context
+
+                policy_block, _ = retrieve_policy_context(
+                    getattr(finding, "repo_id", None),
+                    "adapt",
+                    f"{finding.package} {getattr(finding, 'advisory_id', '')}",
+                    run_id=run_id,
+                )
+            except Exception as exc:  # noqa: BLE001 - guidance never breaks adapt
+                log.warning("policy guidance for adapt failed: %s", exc)
             prompt = (
                 f"A dependency was bumped: {finding.package} "
                 f"{finding.installed_version} -> {target}. Prior failures: "
                 f"{'; '.join(failures)[:2000] or 'none'}. "
                 "Call apply_file_edit for each file that must change for the "
-                "new version; make no edits if none are needed.\n\n"
-                f"{files_blob}"
+                "new version; make no edits if none are needed. "
+                "Company policy context is included below when found. If it "
+                "is missing or does not cover this change, call search_policies "
+                "with focused terms before editing — especially for auth, "
+                "crypto, networking, or data-handling changes. At most two "
+                "searches; if search finds nothing relevant, proceed.\n\n"
+                f"{files_blob}" + (f"\n\n{policy_block}" if policy_block else "")
             )[:_MAX_PROMPT_CHARS]
-            result = tracked_invoke(bound, prompt, task="adapt")
+            token = _search_scope.set(
+                {"repo_id": getattr(finding, "repo_id", None), "run_id": run_id}
+            )
+            try:
+                result = tracked_invoke(bound, prompt, task="adapt")
+                searches_left = _MAX_POLICY_SEARCHES
+                while searches_left > 0:
+                    calls_now = getattr(result, "tool_calls", None) or []
+                    wanted = [
+                        c
+                        for c in calls_now
+                        if isinstance(c, dict) and c.get("name") == "search_policies"
+                    ]
+                    if not wanted:
+                        break
+                    sections: list[str] = []
+                    for call in wanted[:searches_left]:
+                        query = str((call.get("args") or {}).get("query") or "")
+                        sections.append(f"Search '{query}':\n{_run_policy_search(query)}")
+                        searches_left -= 1
+                    follow_up = (
+                        f"{prompt}\n\nPolicy search results:\n\n"
+                        + "\n\n".join(sections)
+                        + "\n\nNow decide the edits for this bump and call "
+                        "apply_file_edit for each file that must change, or "
+                        "make no calls if none are needed."
+                    )[:_MAX_PROMPT_CHARS]
+                    result = tracked_invoke(bound, follow_up, task="adapt")
+            finally:
+                _search_scope.reset(token)
         except (PatchError, CostCapExceeded):
             raise
         except Exception as exc:  # noqa: BLE001 - repair loop catches PatchError only

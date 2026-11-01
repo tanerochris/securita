@@ -6,11 +6,18 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      # In-process embeddings by default (D4): the hosted model
+      # endpoint serves no /embeddings. EMBEDDING_PROVIDER=hosted plus
+      # EMBEDDING_BASE_URL in .env switches to any OpenAI-compatible API.
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
+      EMBEDDING_LOCAL_CACHE_DIR: /app/.fastembed-cache
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ./backups:/app/backups
+      - embed-cache:/app/.fastembed-cache
     develop:
       watch:
         - action: sync+restart
@@ -31,6 +38,8 @@ services:
     env_file:
       - .env
     environment:
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
+      EMBEDDING_LOCAL_CACHE_DIR: /app/.fastembed-cache
       SANDBOX_BACKEND: ${SANDBOX_BACKEND:-docker}
       SANDBOX_IMAGE: ${SANDBOX_IMAGE:-security-agent-sandbox:latest}
       SANDBOX_WORK_ROOT: /sandbox-work
@@ -46,6 +55,7 @@ services:
       # container paths must never be passed as daemon bind sources.
       - /var/run/docker.sock:/var/run/docker.sock
       - sandbox-work:/sandbox-work
+      - embed-cache:/app/.fastembed-cache
     develop:
       watch:
         - action: sync+restart
@@ -59,8 +69,20 @@ services:
         - action: rebuild
           path: uv.lock
 
+  # Opt-in Ollama embeddings (EMBEDDING_PROVIDER=ollama): heavier than
+  # the in-process default, so it only starts with the ollama profile:
+  #   EMBEDDING_PROVIDER=ollama docker compose --profile ollama up -d
+  embed:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    entrypoint: ["/bin/sh", "-c", "ollama serve & until ollama list >/dev/null 2>&1; do sleep 2; done; ollama pull ${EMBEDDING_MODEL:-nomic-embed-text}; wait"]
+    volumes:
+      - embed-models:/root/.ollama
+
   db:
-    image: postgres:16-alpine
+    # pgvector image, same PG 16 major: existing pgdata volumes stay
+    # compatible, and CREATE EXTENSION vector (migration 0016) works.
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-agent}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agent}
@@ -96,6 +118,8 @@ services:
       - "3100:3100"
 
 volumes:
+  embed-cache:
+  embed-models:
   pgdata:
   # Pinned real name: the worker addresses this volume by name when
   # sharing workdirs with sibling sandbox containers (SANDBOX_WORK_VOLUME).

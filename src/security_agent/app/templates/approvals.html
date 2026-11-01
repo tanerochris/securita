@@ -5,7 +5,7 @@
 <div class="flex flex-wrap items-start gap-4">
   <div class="min-w-0">
     <h1 class="text-[26px] leading-tight md:text-[30px]">Approval queue</h1>
-    <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Merge, rotation, and publish gates wait here for a human decision. Pending gates expire after 72 hours and re-queue automatically, up to three times.</p>
+    <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Pending gates expire after 72 hours and re-queue automatically, up to three times.</p>
     <p class="mt-2.5 flex flex-wrap gap-2 text-xs font-semibold">
       <span class="inline-flex rounded-full bg-brand-primary px-2.5 py-1 text-white">{{ pending|length }} pending</span>
       <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">{{ history|length }} decided</span>
@@ -59,7 +59,7 @@
     <span class="grid h-10 w-10 flex-none place-items-center rounded-full bg-brand-mist text-brand-primary" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10z"/><path d="m9 11.5 2 2 4-4.5"/></svg></span>
     <div>
       <p class="text-sm font-bold text-brand-navy">Approval queue is clear</p>
-      <p class="text-[13px] text-slate-600">New merge, rotation, and publish gates will wait here for a decision.</p>
+      <p class="text-[13px] text-slate-600">New merge, rotation, publish, and policy-review gates will wait here for a decision.</p>
     </div>
   </div>
   {% endif %}
@@ -107,7 +107,7 @@
     </div>
     <div>
       <label class="text-sm font-bold text-brand-deep" for="delegClasses">Gate classes <span class="font-medium text-slate-500">(blank for all)</span></label>
-      <input class="mt-1.5 w-full" id="delegClasses" name="classes" autocomplete="off" placeholder="merge,rotation,publish">
+      <input class="mt-1.5 w-full" id="delegClasses" name="classes" autocomplete="off" placeholder="merge,rotation,publish,policy">
     </div>
     <button type="submit">Delegate (24h)</button>
   </form>

@@ -73,12 +73,18 @@ def apply_verdict(finding_id: int, run_id: int, reachable: bool, **fields) -> Ve
         db.flush()
         finding = db.get(Finding, finding_id)
         if finding is not None:
+            policy_silenced = finding.status == FindingStatus.SILENT and (
+                finding.silent_reason or ""
+            ).startswith("policy:")
             if reachable and finding.status in (
                 FindingStatus.SILENT,
                 FindingStatus.RESOLVED,
             ):
-                finding.status = FindingStatus.OPEN
-                finding.silent_reason = None
+                if policy_silenced:
+                    pass  # policy silence outlives verdict flips; the rule owns it
+                else:
+                    finding.status = FindingStatus.OPEN
+                    finding.silent_reason = None
             elif not reachable and finding.status in (
                 FindingStatus.OPEN,
                 FindingStatus.PROPOSED,

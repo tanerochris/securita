@@ -786,6 +786,11 @@ def run_scan(repo_id: int, run_id: int, *, source_dir: Path | None = None) -> di
         if workdir is None:
             workdir = make_workdir(f"scan-{run_id}-")
             clone_repo(repo, workdir)
+        from security_agent.policy.readme import sync_repo_readme
+
+        readme_note = sync_repo_readme(repo_id, workdir)
+        if readme_note:
+            notes.append(readme_note)
         kev = kev_exploited_ids()
         per_file: list[list[dict]] = []
         if (workdir / "package.json").exists() or (workdir / "package-lock.json").exists():
@@ -835,6 +840,11 @@ def run_scan(repo_id: int, run_id: int, *, source_dir: Path | None = None) -> di
             notes.append(f"cross-ecosystem duplicates skipped: {skipped}")
         created, updated, ids = persist_findings(repo_id, run_id, drafts)
         notes.append(f"findings: {created} new, {updated} updated")
+        from security_agent.policy.enforce import apply_ingest_silence
+
+        silenced = apply_ingest_silence(repo_id, ids)
+        if silenced:
+            notes.append(f"policy: {silenced} findings silenced by guardrail")
         notes.extend(secret_notes)
         _finish_run(run_id, RunStatus.DONE, notes)
         from security_agent.worker.deliver import sync_proposal_states
