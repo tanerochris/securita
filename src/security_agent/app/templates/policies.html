@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Platform policies — Securita{% endblock %}
+{% block title %}Platform policies — Scurita{% endblock %}
 {% block page_title %}Policies{% endblock %}
 {% block content %}
 <div class="min-w-0">
@@ -16,7 +16,6 @@
 <section class="mt-6" aria-labelledby="pending-heading">
   <div class="flex flex-wrap items-baseline gap-3">
     <h2 id="pending-heading" class="text-lg">Guardrail queue ({{ pending|length }})</h2>
-    <span class="text-sm text-slate-600">Drafted rules block nothing until confirmed.</span>
   </div>
   {% if pending %}
   <div class="brand-table mt-3 overflow-x-auto rounded-xl">
@@ -178,7 +177,6 @@
   </div>
   <div class="rounded-xl bg-white p-5 shadow-card">
     <h2 class="text-lg">Write policy</h2>
-    <p class="mt-1 text-sm text-slate-600">Free text becomes guidance immediately; guardrails need confirmation.</p>
     <form class="mt-3 grid grid-cols-1 gap-2.5" method="post" action="/policies/editor">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="scope" value="platform">
@@ -194,7 +192,6 @@
 
 <section class="mt-4 rounded-xl bg-white p-5 shadow-card" aria-labelledby="rule-heading">
   <h2 id="rule-heading" class="text-lg">Write guardrail by hand</h2>
-  <p class="mt-1 text-sm text-slate-600">Structured rules go to the queue as pending, same as extracted ones. Globs allowed (<code>openssl*</code>, <code>CVE-2024-*</code>).</p>
   <form class="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-3" method="post" action="/policies/rules">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="scope" value="platform">

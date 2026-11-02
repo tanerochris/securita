@@ -270,7 +270,7 @@ def setup_totp(user_id: int) -> tuple[str, list[str]]:
         user.totp_secret = encrypt_field(secret, key)
         user.backup_code_hashes = [hasher.hash(c) for c in codes]
         email = user.email
-    url = pyotp.totp.TOTP(secret).provisioning_uri(name=email, issuer_name="Securita")
+    url = pyotp.totp.TOTP(secret).provisioning_uri(name=email, issuer_name="Scurita")
     return url, codes
 
 

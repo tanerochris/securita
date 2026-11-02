@@ -116,7 +116,7 @@ def create_app() -> FastAPI:
     )
     from security_agent.db.keys import get_signing_key
 
-    app = FastAPI(title="Securita", lifespan=lifespan)
+    app = FastAPI(title="Scurita", lifespan=lifespan)
     app.add_middleware(SessionMiddleware, secret_key=get_signing_key())
 
     @app.exception_handler(HTTPException)

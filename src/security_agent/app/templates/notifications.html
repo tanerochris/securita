@@ -1,11 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Notifications — Securita{% endblock %}
+{% block title %}Notifications — Scurita{% endblock %}
 {% block page_title %}Notifications{% endblock %}
 {% block content %}
 <div class="flex flex-wrap items-start gap-4">
   <div class="min-w-0">
     <h1 class="text-[26px] leading-tight md:text-[30px]">Notifications</h1>
-    <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Dashboard notification pool. Every event sent to a channel lands here too: findings, secrets, approvals, cost, policy, digests, and dependency updates.</p>
   </div>
   {% if items %}
   <form class="ml-auto" method="post" action="/notifications/read-all">

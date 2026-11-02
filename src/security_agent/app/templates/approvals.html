@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Approvals — Securita{% endblock %}
+{% block title %}Approvals — Scurita{% endblock %}
 {% block page_title %}Approvals{% endblock %}
 {% block content %}
 <div class="flex flex-wrap items-start gap-4">
@@ -98,7 +98,6 @@
 {% if is_owner %}
 <section class="mt-7 rounded-xl bg-white p-5 shadow-card" aria-labelledby="delegate-heading">
   <h2 id="delegate-heading" class="text-lg">Delegate approval to a Developer</h2>
-  <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Grant time-boxed approval rights (24 hours, revocable). Developers approve only under an active delegation.</p>
   <form class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end" method="post" action="/approvals/delegations">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <div>

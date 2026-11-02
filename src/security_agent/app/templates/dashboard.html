@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Dashboard — Securita{% endblock %}
+{% block title %}Dashboard — Scurita{% endblock %}
 {% block page_title %}Security overview{% endblock %}
 {% block content %}
 <div class="flex flex-wrap items-start gap-4">
@@ -108,7 +108,6 @@
 <section class="mt-6 rounded-xl bg-white p-5 shadow-card" aria-labelledby="ai-usage-heading">
   <div class="flex flex-wrap items-baseline gap-3">
     <h2 id="ai-usage-heading" class="text-lg">AI usage</h2>
-    <span class="text-sm text-slate-600">Every model call: pipeline, dependencies, embeddings, probe</span>
     <a class="ml-auto text-sm font-bold text-brand-primary hover:text-brand-deep" href="/settings">Manage cap &rarr;</a>
   </div>
   <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -150,7 +149,7 @@
       <h2 id="trend-heading" class="text-base">Findings opened — last 7 days</h2>
       <span class="ml-auto text-sm font-bold text-brand-navy">{{ trend_total }} total</span>
     </div>
-    <p class="mt-1 text-[13px] text-slate-600">New vulnerability findings per day, all repositories. Hover a point for the daily count.</p>
+    <p class="mt-1 text-[13px] text-slate-600">New vulnerability findings per day, all repositories.</p>
     {% if trend_total %}
     <svg class="mt-4 w-full" viewBox="0 0 640 190" role="img" aria-label="Area chart of findings opened per day over the last 7 days, total {{ trend_total }}">
       <line x1="36" y1="150" x2="620" y2="150" stroke="#E0F2FE" stroke-width="1"/>
@@ -192,7 +191,6 @@
         <div class="mt-1.5 h-2 overflow-hidden rounded-full bg-brand-mist"><div class="h-full rounded-full bg-brand-deep transition-[width] duration-300" style="width: {{ breakdown.kev_pct }}%"></div></div>
       </div>
     </dl>
-    <p class="mt-4 text-[13px] leading-relaxed text-slate-600">Ordering everywhere follows the same rule: KEV first, then severity, then newest. Security headlines live on the standalone <a class="font-bold text-brand-primary hover:text-brand-deep" href="/news">news feed</a>.</p>
   </section>
 </div>
 
@@ -375,7 +373,4 @@
   {% endif %}
 </section>
 
-<div class="mt-8 flex flex-wrap items-center gap-3 border-t border-brand-mist pt-5">
-  <p class="text-[13px] text-slate-600">Session ends after 24 hours, or 30 minutes idle. Use the avatar menu (top right) to open your profile or log out.</p>
-</div>
 {% endblock %}
