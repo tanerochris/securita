@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from security_agent.app import accounts as accounts_svc
 from security_agent.control import deps as deps_svc
@@ -14,6 +14,7 @@ from security_agent.db.models import (
     DependencyStatus,
     Finding,
     FindingStatus,
+    NotifyState,
     Proposal,
     ProposalStatus,
     RepoKind,
@@ -25,6 +26,20 @@ from security_agent.db.session import session_scope
 def _user(role: Role):
     email = f"deps-{role.value}-{datetime.now(UTC).timestamp()}@example.com"
     return accounts_svc.create_user(email, None, role)
+
+
+def _reset_deps_budget():
+    with session_scope() as db:
+        db.execute(
+            delete(NotifyState).where(NotifyState.key.in_(["deps.token_cap", "deps.spend_cap"]))
+        )
+
+
+def _usd(tokens: int) -> float:
+    """Budget dollars for a token count at the configured model price."""
+    from security_agent.config import get_settings
+
+    return tokens * max(0.0, get_settings().model_price_per_mtok_usd) / 1_000_000
 
 
 def _repo():
@@ -80,9 +95,10 @@ def test_cadence_global_and_override():
 
 def test_budget_is_separate_and_ledgers():
     owner = _user(Role.OWNER)
+    _reset_deps_budget()
     state = deps_svc.deps_budget_state()
-    assert state["cap"] >= 1 and not state["exhausted"]
-    deps_svc.set_deps_token_cap(10**9, owner)
+    assert state["cap"] > 0 and not state["exhausted"]
+    deps_svc.set_deps_spend_cap(10**9, owner)
     try:
         out = deps_svc.record_deps_usage("report", 100, 50)
         assert out["total"] == 150
@@ -96,17 +112,48 @@ def test_budget_is_separate_and_ledgers():
             )
             assert row is not None and row.run_id is None  # never touches run caps
     finally:
-        deps_svc.set_deps_token_cap(deps_svc.DEFAULT_DEPS_TOKEN_CAP, owner)
+        _reset_deps_budget()
 
 
 def test_budget_hit_raises():
     owner = _user(Role.OWNER)
-    deps_svc.set_deps_token_cap(1, owner)
+    _reset_deps_budget()
+    deps_svc.set_deps_spend_cap(_usd(10), owner)
     try:
         with pytest.raises(deps_svc.DepsBudgetExceeded):
             deps_svc.record_deps_usage("report", 10, 10)
     finally:
-        deps_svc.set_deps_token_cap(deps_svc.DEFAULT_DEPS_TOKEN_CAP, owner)
+        _reset_deps_budget()
+
+
+def test_legacy_token_budget_still_enforced_as_usd():
+    """Pre-USD installs keep working: deps.token_cap tokens convert at price."""
+    _reset_deps_budget()
+    with session_scope() as db:
+        db.add(NotifyState(key="deps.token_cap", value="1000"))
+    try:
+        assert deps_svc.get_deps_spend_cap() == pytest.approx(_usd(1000))
+        deps_svc.set_deps_spend_cap(1.5, _user(Role.OWNER))
+        with session_scope() as db:
+            assert db.get(NotifyState, "deps.token_cap") is None
+        assert deps_svc.get_deps_spend_cap() == 1.5
+    finally:
+        _reset_deps_budget()
+
+
+def test_deps_budget_roles_floor_and_disable():
+    owner, dev = _user(Role.OWNER), _user(Role.DEVELOPER)
+    _reset_deps_budget()
+    try:
+        with pytest.raises(PermissionError):
+            deps_svc.set_deps_spend_cap(1.0, dev)
+        with pytest.raises(ValueError, match="at least 0"):
+            deps_svc.set_deps_spend_cap(-1.0, owner)
+        deps_svc.set_deps_spend_cap(0, owner)  # disables
+        state = deps_svc.deps_budget_state()
+        assert state["cap"] == 0.0 and state["exhausted"] is False
+    finally:
+        _reset_deps_budget()
 
 
 def test_notify_email_opt_in_owner_only():

@@ -177,18 +177,33 @@
 <section class="mt-6" aria-labelledby="cost-heading">
   <h2 id="cost-heading" class="text-lg">Cost control</h2>
   <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
-    <div class="rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">Per-run cap</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">{{ cap }} <span class="text-sm font-semibold text-slate-500">tokens</span></p></div>
+    <div class="rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">Per-run cap</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">{% if cap > 0 %}{{ cap|usd }}{% else %}off{% endif %}</p></div>
     <div class="rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">Spend today</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">${{ "%.2f"|format(spend) }}</p></div>
     <div class="rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">Warn / critical</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">${{ warn_usd }} <span class="text-slate-400">/</span> ${{ critical_usd }}</p></div>
   </div>
   {% if is_owner %}
   <form class="mt-3.5 flex flex-wrap items-end gap-2.5 rounded-xl bg-white p-4 shadow-card" method="post" action="/settings/cost/cap">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label class="text-sm font-bold text-brand-deep">Per-run cap, tokens
+    <label class="text-sm font-bold text-brand-deep">Per-run cap, USD (0 disables)
       <input class="mt-1.5 block w-44" name="cap" value="{{ cap }}" autocomplete="off">
     </label>
     <button type="submit">Set cap</button>
   </form>
+  {% endif %}
+  <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+    <div class="rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">Spend this month</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">{{ spend_cap.spent|usd }}</p></div>
+    <div class="rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">Monthly spend cap</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">{% if spend_cap.cap > 0 %}{{ spend_cap.cap|usd }} <span class="text-sm font-semibold text-slate-500">({{ spend_cap.pct }}% used)</span>{% else %}off{% endif %}</p></div>
+    <div class="rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">Cap status</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">{% if spend_cap.level == "exceeded" %}exceeded{% elif spend_cap.level == "warn" %}past 80%{% elif spend_cap.cap > 0 %}on track{% else %}no cap{% endif %}</p></div>
+  </div>
+  {% if is_owner %}
+  <form class="mt-3.5 flex flex-wrap items-end gap-2.5 rounded-xl bg-white p-4 shadow-card" method="post" action="/settings/cost/spend-cap">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="text-sm font-bold text-brand-deep">Monthly spend cap, USD (0 disables)
+      <input class="mt-1.5 block w-44" name="cap" value="{{ spend_cap.cap }}" autocomplete="off">
+    </label>
+    <button type="submit">Set monthly cap</button>
+  </form>
+  <p class="mt-2 text-[13px] text-slate-600">Alert-only: warns at 80% and on exceed, once per month; pipelines keep running. Full day / week / month token totals live on the <a class="font-bold text-brand-primary hover:text-brand-deep" href="/dashboard">dashboard</a>.</p>
   {% endif %}
 </section>
 
@@ -197,19 +212,19 @@
   {% if parked %}
   <div class="brand-table mt-3 overflow-x-auto rounded-xl">
     <table data-grid data-per-page="10">
-      <thead><tr><th>Run</th><th>Repo</th><th>Tokens</th><th>Reason</th><th></th></tr></thead>
+      <thead><tr><th>Run</th><th>Repo</th><th>Spend</th><th>Reason</th><th></th></tr></thead>
       <tbody>
       {% for r in parked %}
         <tr>
           <td class="font-bold text-brand-navy">#{{ r.id }}</td>
           <td class="text-slate-600">{{ r.repo_name }}</td>
-          <td class="font-semibold text-brand-navy">{{ r.token_usage }}</td>
+          <td class="font-semibold text-brand-navy">{{ r.spend_usd|usd }}</td>
           <td class="max-w-[420px] text-slate-600">{{ r.reason }}</td>
           <td>
             <form class="flex flex-wrap items-end gap-2" method="post" action="/settings/cost/resume">
               <input type="hidden" name="csrf" value="{{ csrf }}">
               <input type="hidden" name="run_id" value="{{ r.id }}">
-              <label class="text-xs font-bold text-slate-600">New cap
+              <label class="text-xs font-bold text-slate-600">New cap, USD
                 <input class="mt-1 block w-28" name="new_cap" placeholder="{{ cap }}" autocomplete="off">
               </label>
               <button type="submit">Resume</button>
@@ -229,7 +244,7 @@
   <h2 id="deps-heading" class="text-lg">Dependency updates</h2>
   <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
     <div class="rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">Check interval</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">every {{ dep_hours }}h</p></div>
-    <div class="rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">Budget used (24h)</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">{{ dep_budget.spent }} <span class="text-sm font-semibold text-slate-500">/ {{ dep_budget.cap }}</span></p></div>
+    <div class="rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">Budget used (24h)</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">{% if dep_budget.cap > 0 %}{{ dep_budget.spent|usd }} <span class="text-sm font-semibold text-slate-500">/ {{ dep_budget.cap|usd }}</span>{% else %}{{ dep_budget.spent|usd }} <span class="text-sm font-semibold text-slate-500">· no budget</span>{% endif %}</p></div>
     <div class="rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">Channel fan-out</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">{{ "on" if dep_email else "off" }}</p></div>
   </div>
   <form class="mt-3.5 flex flex-wrap items-end gap-2.5 rounded-xl bg-white p-4 shadow-card" method="post" action="/settings/deps/cadence">
@@ -242,7 +257,7 @@
   </form>
   <form class="mt-3 flex flex-wrap items-end gap-2.5 rounded-xl bg-white p-4 shadow-card" method="post" action="/settings/deps/budget">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label class="text-sm font-bold text-brand-deep">Dependency budget, tokens/24h
+    <label class="text-sm font-bold text-brand-deep">Dependency budget, USD/24h (0 disables)
       <input class="mt-1.5 block w-44" name="cap" value="{{ dep_budget.cap }}" autocomplete="off">
     </label>
     <button type="submit">Set budget</button>

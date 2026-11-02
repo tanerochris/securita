@@ -118,3 +118,29 @@ def test_digest_schedule_roundtrip():
         assert resp.status_code == 400
     finally:
         set_digest_schedule(enabled=True, hour_utc=8)
+
+
+def test_save_monthly_spend_cap_roundtrip():
+    from sqlalchemy import delete
+
+    from security_agent.control.cost import effective_spend_cap
+    from security_agent.db.models import NotifyState
+    from security_agent.db.session import session_scope
+
+    _login_as(Role.OWNER)
+    try:
+        resp = client.post(
+            "/settings/cost/spend-cap",
+            data={"csrf": _csrf(), "cap": "250"},
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200 and "Monthly spend cap set to $250.00" in resp.text
+        assert effective_spend_cap() == 250.0
+        assert "Spend this month" in client.get("/settings").text
+        resp = client.post("/settings/cost/spend-cap", data={"csrf": _csrf(), "cap": "-5"})
+        assert resp.status_code == 400
+        resp = client.post("/settings/cost/spend-cap", data={"csrf": _csrf(), "cap": "abc"})
+        assert resp.status_code == 400
+    finally:
+        with session_scope() as db:
+            db.execute(delete(NotifyState).where(NotifyState.key == "cost.spend_cap_monthly"))

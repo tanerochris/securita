@@ -20,7 +20,7 @@ def get_chat_model(task: str | None = None):
 
 
 def tracked_invoke(model, prompt: str, *, task: str):
-    """Invoke + ledger token usage against the current run's cap (NFR-8).
+    """Invoke + ledger token usage and spend against the run's spend cap (NFR-8).
 
     Prefers `usage_metadata`; each side the server omits falls back to
     a disclosed char-based estimate. Raises CostCapExceeded (after

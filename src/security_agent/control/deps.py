@@ -42,11 +42,12 @@ log = logging.getLogger(__name__)
 audit = get_shared_log()
 
 DEFAULT_DEP_CHECK_HOURS = 24
-DEFAULT_DEPS_TOKEN_CAP = 200_000
+DEFAULT_DEPS_SPEND_CAP_USD = 0.40
 DEPS_SPEND_WINDOW_HOURS = 24
 
 _DEP_HOURS_KEY = "deps.check_hours"
-_DEPS_CAP_KEY = "deps.token_cap"
+_DEPS_SPEND_CAP_KEY = "deps.spend_cap"
+_DEPS_CAP_LEGACY_KEY = "deps.token_cap"  # pre-USD token budget, converted at price
 _DEPS_NOTIFY_EMAIL_KEY = "deps.notify_email"
 
 
@@ -123,40 +124,56 @@ def set_repo_dep_interval(repo_id: int, value: int | None, user: User) -> int | 
 # --- Separate dependency budget (D23) ---
 
 
-def get_deps_token_cap() -> int:
-    """Install-wide dependency token budget per rolling 24h window."""
+def get_deps_spend_cap() -> float:
+    """Install-wide dependency spend budget in USD per rolling 24h window.
+
+    Zero disables the budget. A legacy pre-USD token budget converts
+    at the current model price until a USD budget replaces it.
+    """
+    from security_agent.config import get_settings
+
     with session_scope() as db:
-        row = db.get(NotifyState, _DEPS_CAP_KEY)
+        row = db.get(NotifyState, _DEPS_SPEND_CAP_KEY)
         if row is not None:
             try:
-                return max(1, int(row.value))
+                return max(0.0, float(row.value))
             except ValueError:
                 pass
-        return DEFAULT_DEPS_TOKEN_CAP
+        legacy = db.get(NotifyState, _DEPS_CAP_LEGACY_KEY)
+        if legacy is not None:
+            try:
+                price = max(0.0, get_settings().model_price_per_mtok_usd) / 1_000_000
+                return max(0.0, float(legacy.value)) * price
+            except ValueError:
+                pass
+        return DEFAULT_DEPS_SPEND_CAP_USD
 
 
-def set_deps_token_cap(value: int, user: User) -> int:
-    """Owner/Maintainer raises (or lowers) the dependency budget."""
+def set_deps_spend_cap(value: float, user: User) -> float:
+    """Owner/Maintainer raises (or lowers) the dependency budget (0 disables)."""
     if user.role not in (Role.OWNER, Role.MAINTAINER):
         raise PermissionError("Only an Owner or Maintainer may change the dependency budget.")
-    if value < 1:
-        raise ValueError("Budget must be at least 1 token.")
+    if value < 0:
+        raise ValueError("Budget must be at least 0 (0 disables the budget).")
     with session_scope() as db:
-        row = db.get(NotifyState, _DEPS_CAP_KEY)
+        row = db.get(NotifyState, _DEPS_SPEND_CAP_KEY)
         if row is None:
-            db.add(NotifyState(key=_DEPS_CAP_KEY, value=str(value)))
+            db.add(NotifyState(key=_DEPS_SPEND_CAP_KEY, value=str(value)))
         else:
             row.value = str(value)
+        legacy = db.get(NotifyState, _DEPS_CAP_LEGACY_KEY)
+        if legacy is not None:
+            db.delete(legacy)
     audit.append(
         action_class="deps",
         decision="budget",
-        line=f"token_cap={value} by={user.id} role={user.role.value}",
+        line=f"spend_cap_usd={value} by={user.id} role={user.role.value}",
     )
     return value
 
 
-def deps_spend_window(now: datetime | None = None) -> int:
-    """Dependency-ledger tokens inside the rolling 24h window."""
+def deps_spend_window(now: datetime | None = None) -> float:
+    """Dependency-ledger spend in USD inside the rolling 24h window."""
     from security_agent.db.models import ModelUsage
 
     now = now or datetime.now(UTC)
@@ -165,14 +182,14 @@ def deps_spend_window(now: datetime | None = None) -> int:
         bind = db.get_bind()
         if bind is not None and bind.dialect.name == "sqlite":
             cutoff = cutoff.replace(tzinfo=None)
-        return int(
+        return float(
             db.scalar(
-                select(func.coalesce(func.sum(ModelUsage.total_tokens), 0)).where(
+                select(func.coalesce(func.sum(ModelUsage.cost_usd), 0.0)).where(
                     ModelUsage.task.like("deps-%"),
                     ModelUsage.created_at >= cutoff,
                 )
             )
-            or 0
+            or 0.0
         )
 
 
@@ -183,9 +200,12 @@ def record_deps_usage(
 
     Dependency usage rides ModelUsage with a `deps-` task prefix and a
     NULL run id, so it never touches the security pipeline's per-run
-    caps or daily spend alerts (D23 independence both ways).
+    caps or daily spend alerts (D23 independence both ways). It does
+    count toward the overall monthly spend cap, which sums every
+    ledgered call by design.
     """
     from security_agent.config import get_settings
+    from security_agent.control.cost import check_monthly_cap_alerts, format_usd
     from security_agent.db.models import ModelUsage
 
     total = max(0, prompt_tokens) + max(0, completion_tokens)
@@ -202,18 +222,21 @@ def record_deps_usage(
                 estimated=estimated,
             )
         )
+    check_monthly_cap_alerts()
     spent = deps_spend_window()
-    cap = get_deps_token_cap()
-    if spent >= cap:
-        raise DepsBudgetExceeded(f"dependency budget hit ({spent}/{cap} tokens)")
+    cap = get_deps_spend_cap()
+    if cap > 0 and spent >= cap:
+        raise DepsBudgetExceeded(
+            f"dependency budget hit ({format_usd(spent)}/{format_usd(cap)} per 24h)"
+        )
     return {"total": total, "spent": spent, "cap": cap}
 
 
 def deps_budget_state() -> dict:
     """Current budget triple for the Settings page and the tab banner."""
     spent = deps_spend_window()
-    cap = get_deps_token_cap()
-    return {"spent": spent, "cap": cap, "exhausted": spent >= cap}
+    cap = get_deps_spend_cap()
+    return {"spent": spent, "cap": cap, "exhausted": cap > 0 and spent >= cap}
 
 
 def deps_notify_outbound_enabled() -> bool:

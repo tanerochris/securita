@@ -123,7 +123,7 @@ Six logical planes mapped onto those services:
 
 ### 5b. Cost and Recovery (NFR-8/9, FR-15 D4)
 
-- Cost: per-run 1M-token cap default with 80% warning; daily spend alerts warn $25 / critical $100; all Owner-configurable. Hard stop at cap (parked, alert fires, resumes only under raised cap); Owner/Maintainer may raise and resume. Queue backpressure.
+- Cost: per-run $2.00 spend-cap default with 80% warning (0 disables); daily spend alerts warn $25 / critical $100; monthly spend cap alert-only; dependency budget $0.40/24h; all Owner-configurable. Hard stop at per-run cap (parked, alert fires, resumes only under raised cap); Owner/Maintainer may raise and resume. Queue backpressure.
 - Backup: Postgres dumps (+ config + encrypted fields as-stored) to operator-provided path via Compose bind mount (default `./backups`); key material separate, never in same backup.
 - Key ceremony: app-generated on first boot, shown once for operator-held storage outside the install; loss means encrypted fields unrecoverable, tokens re-entered.
 - Restore proof: proven pre-launch and re-proven on every release touching storage/encryption/backup; scratch-stack pass = boots, Owner login works, sample findings/approvals read, secret decrypt fires audit entry.

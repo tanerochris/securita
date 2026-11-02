@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from security_agent.control import deps as deps_svc
 from security_agent.control import repos as repo_svc
@@ -17,6 +17,7 @@ from security_agent.db.models import (
     DependencyStatus,
     Finding,
     FindingStatus,
+    NotifyState,
     Proposal,
     ProposalStatus,
     RepoKind,
@@ -33,6 +34,13 @@ def _repo():
     return repo_svc.connect_repo(
         f"depchk-{datetime.now(UTC).timestamp()}", RepoKind.LOCAL, local_path="/tmp/x"
     )
+
+
+def _reset_deps_budget():
+    with session_scope() as db:
+        db.execute(
+            delete(NotifyState).where(NotifyState.key.in_(["deps.token_cap", "deps.spend_cap"]))
+        )
 
 
 def _settle_checks(repo_id: int):
@@ -324,7 +332,8 @@ def test_budget_park_marks_rows_and_notifies(tmp_path):
     owner = accounts_svc.create_user(
         f"cap-{datetime.now(UTC).timestamp()}@example.com", None, Role.OWNER
     )
-    deps_svc.set_deps_token_cap(1, owner)
+    _reset_deps_budget()
+    deps_svc.set_deps_spend_cap(0.000001, owner)
     try:
         repo = _repo()
         _, out = _run(repo.id, _source(tmp_path), summary_model=_Model("s" * 500))
@@ -335,7 +344,7 @@ def test_budget_park_marks_rows_and_notifies(tmp_path):
         notifs = _notifs(repo.id)
         assert len(notifs) == 1 and "parked" in notifs[0].title
     finally:
-        deps_svc.set_deps_token_cap(deps_svc.DEFAULT_DEPS_TOKEN_CAP, owner)
+        _reset_deps_budget()
 
 
 def test_model_outage_fails_report_only(tmp_path):
@@ -408,13 +417,14 @@ def test_pending_cap_rows_recover_into_next_report(tmp_path):
     owner = accounts_svc.create_user(
         f"rec-{datetime.now(UTC).timestamp()}@example.com", None, Role.OWNER
     )
-    deps_svc.set_deps_token_cap(1, owner)
+    _reset_deps_budget()
+    deps_svc.set_deps_spend_cap(0.000001, owner)
     repo = _repo()
     source = _source(tmp_path)
     try:
         _run(repo.id, source, summary_model=_Model("s" * 500))
     finally:
-        deps_svc.set_deps_token_cap(deps_svc.DEFAULT_DEPS_TOKEN_CAP, owner)
+        _reset_deps_budget()
     rows = {r.package: r for r in _rows(repo.id)}
     assert rows["left-pad"].status == DependencyStatus.REPORT_PENDING_CAP
     _, out = _run(repo.id, source, summary_model=_Model("fresh"))

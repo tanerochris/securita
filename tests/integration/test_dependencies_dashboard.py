@@ -225,6 +225,7 @@ def test_settings_dep_controls():
     csrf = _csrf("/settings")
     resp = client.get("/settings")
     assert "Dependency updates" in resp.text and "every 24h" in resp.text
+    assert "USD/24h" in resp.text
     resp = client.post(
         "/settings/deps/cadence", data={"csrf": csrf, "hours": "48"}, follow_redirects=False
     )
@@ -234,7 +235,7 @@ def test_settings_dep_controls():
         assert "every 48h" in resp.text
         resp = client.post(
             "/settings/deps/budget",
-            data={"csrf": csrf, "cap": "500000"},
+            data={"csrf": csrf, "cap": "500"},
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -245,8 +246,15 @@ def test_settings_dep_controls():
         )
         assert resp.status_code == 303
     finally:
+        from sqlalchemy import delete
+
+        from security_agent.db.models import NotifyState
+
         client.post("/settings/deps/cadence", data={"csrf": csrf, "hours": "24"})
-        client.post("/settings/deps/budget", data={"csrf": csrf, "cap": "200000"})
+        with session_scope() as db:  # back to the default budget
+            db.execute(
+                delete(NotifyState).where(NotifyState.key.in_(["deps.token_cap", "deps.spend_cap"]))
+            )
         client.post("/settings/deps/notify", data={"csrf": csrf})
 
 

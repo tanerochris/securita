@@ -13,7 +13,12 @@ from sqlalchemy import delete, select
 
 from security_agent.app import accounts as accounts_svc
 from security_agent.control import repos as repo_svc
-from security_agent.control.cost import CostCapExceeded, record_usage, resume_run, set_cap
+from security_agent.control.cost import (
+    CostCapExceeded,
+    record_usage,
+    resume_run,
+    set_run_cap,
+)
 from security_agent.control.gates import request_gate
 from security_agent.db.models import GateAction, NotifyState, RepoKind, Role, ScanRun
 from security_agent.db.session import session_scope
@@ -49,7 +54,9 @@ def _cleanup(channels):
     with session_scope() as db:
         db.execute(
             delete(NotifyState).where(
-                NotifyState.key.in_(["cost.run_cap", "digest.last_sent", "cost.spend_alert"])
+                NotifyState.key.in_(
+                    ["cost.run_cap", "cost.run_cap_usd", "digest.last_sent", "cost.spend_alert"]
+                )
             )
         )
     set_digest_schedule(enabled=True, hour_utc=8)
@@ -121,7 +128,10 @@ def test_h6_park_resume_and_reclaim_cycle():
     with session_scope() as db:
         run = db.scalar(select(ScanRun).where(ScanRun.repo_id == repo.id))
         run_id = run.id
-    set_cap(100, owner)
+    from security_agent.config import get_settings
+
+    price = max(0.0, get_settings().model_price_per_mtok_usd) / 1_000_000
+    set_run_cap(100 * price, owner)
     try:
         with (
             mock.patch.object(notify_mod, "notify_event"),
@@ -131,8 +141,8 @@ def test_h6_park_resume_and_reclaim_cycle():
         assert run_id not in [r.id for r in claim_pending_runs("w")]  # parked: unclaimable
         with pytest.raises(ValueError, match="raise the cap"):
             resume_run(run_id, owner)
-        outcome = resume_run(run_id, owner, new_cap=1000)
-        assert outcome["cap"] == 1000
+        outcome = resume_run(run_id, owner, new_cap=1000 * price)
+        assert outcome["cap"] == 1000 * price
         assert run_id in [r.id for r in claim_pending_runs("w", limit=10000)]  # resumed
     finally:
         _cleanup(channels)

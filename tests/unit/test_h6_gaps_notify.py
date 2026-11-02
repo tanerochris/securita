@@ -247,7 +247,7 @@ def test_update_channel_success_validation_and_secret_kept():
 
 
 def test_maintainer_sees_resume_but_not_channel_forms():
-    from security_agent.control.cost import effective_cap, set_cap
+    from security_agent.control.cost import effective_run_cap, set_run_cap
 
     _login_as(Role.OWNER)
     before = {c["id"] for c in list_channels()}
@@ -255,7 +255,7 @@ def test_maintainer_sees_resume_but_not_channel_forms():
     owner = accounts_svc.create_user(
         f"gaps-owner-{datetime.now(UTC).timestamp()}@example.com", None, Role.OWNER
     )
-    old_cap = effective_cap()
+    old_cap = effective_run_cap()
     with session_scope() as db:
         run = db.get(ScanRun, run_id)
         run.parked = True
@@ -279,12 +279,12 @@ def test_maintainer_sees_resume_but_not_channel_forms():
         assert resp.status_code == 403
 
         resp = client.post(
-            "/settings/cost/cap", data={"csrf": _csrf(), "cap": "5000"}, follow_redirects=True
+            "/settings/cost/cap", data={"csrf": _csrf(), "cap": "5"}, follow_redirects=True
         )
-        assert resp.status_code == 200 and "cap set to 5000" in resp.text
+        assert resp.status_code == 200 and "cap set to $5.00" in resp.text
         resp = client.post(
             "/settings/cost/resume",
-            data={"csrf": _csrf(), "run_id": str(run_id), "new_cap": "6000"},
+            data={"csrf": _csrf(), "run_id": str(run_id), "new_cap": "6"},
             follow_redirects=True,
         )
         assert resp.status_code == 200 and "resumed" in resp.text
@@ -292,7 +292,7 @@ def test_maintainer_sees_resume_but_not_channel_forms():
         _login_as(Role.REPORTER)
         assert client.get("/settings").status_code == 403
     finally:
-        set_cap(old_cap, owner)
+        set_run_cap(old_cap, owner)
         _cleanup(before)
 
 

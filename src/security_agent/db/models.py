@@ -283,6 +283,7 @@ class ScanRun(Base):
     parked: Mapped[bool] = mapped_column(default=False)
     park_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     token_usage: Mapped[int] = mapped_column(default=0)
+    cost_usd: Mapped[float] = mapped_column(default=0.0)  # per-run spend-cap accounting
     cost_warned: Mapped[bool] = mapped_column(default=False)
 
 

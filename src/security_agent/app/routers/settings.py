@@ -20,7 +20,12 @@ router = APIRouter(prefix="/settings")
 def _page(request: Request, *, notice: str = "", is_owner: bool = True):
     from security_agent.app.main import templates
     from security_agent.config import get_settings
-    from security_agent.control.cost import effective_cap, list_parked_runs, spend_today
+    from security_agent.control.cost import (
+        effective_run_cap,
+        list_parked_runs,
+        spend_cap_state,
+        spend_today,
+    )
     from security_agent.control.deps import (
         deps_budget_state,
         deps_notify_email_enabled,
@@ -45,10 +50,11 @@ def _page(request: Request, *, notice: str = "", is_owner: bool = True):
             "route_ids": route_ids,
             "severities": SEVERITIES,
             "digest": get_digest_schedule(),
-            "cap": effective_cap(),
+            "cap": effective_run_cap(),
             "spend": spend_today(),
             "warn_usd": settings.spend_warn_daily_usd,
             "critical_usd": settings.spend_critical_daily_usd,
+            "spend_cap": spend_cap_state(),
             "parked": list_parked_runs(),
             "dep_hours": get_dep_check_hours(),
             "dep_budget": deps_budget_state(),
@@ -270,13 +276,28 @@ def save_digest(
 
 @router.post("/cost/cap", dependencies=[Depends(require_csrf)])
 def save_cap(cap: str = Form(...), user: User = Depends(require_approver)):
-    from security_agent.control.cost import set_cap
+    from security_agent.control.cost import format_usd, set_run_cap
 
     try:
-        value = set_cap(int(cap), user)
+        value = set_run_cap(float(cap), user)
     except (ValueError, PermissionError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    return _redirect(f"Per-run cap set to {value} tokens.")
+    if value <= 0:
+        return _redirect("Per-run cap disabled.")
+    return _redirect(f"Per-run cap set to {format_usd(value)}.")
+
+
+@router.post("/cost/spend-cap", dependencies=[Depends(require_csrf)])
+def save_spend_cap(cap: str = Form(...), user: User = Depends(require_approver)):
+    from security_agent.control.cost import set_spend_cap
+
+    try:
+        value = set_spend_cap(float(cap), user)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    if value <= 0:
+        return _redirect("Monthly spend cap disabled.")
+    return _redirect(f"Monthly spend cap set to ${value:.2f}.")
 
 
 @router.post("/cost/resume", dependencies=[Depends(require_csrf)])
@@ -285,13 +306,17 @@ def resume(
     new_cap: str = Form(""),
     owner: User = Depends(require_approver),
 ):
-    from security_agent.control.cost import resume_run
+    from security_agent.control.cost import format_usd, resume_run
 
     try:
-        outcome = resume_run(int(run_id), owner, new_cap=int(new_cap) if new_cap.strip() else None)
+        outcome = resume_run(
+            int(run_id), owner, new_cap=float(new_cap) if new_cap.strip() else None
+        )
     except (ValueError, PermissionError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    return _redirect(f"Run {outcome['run_id']} resumed under cap {outcome['cap']} tokens.")
+    if outcome["cap"] > 0:
+        return _redirect(f"Run {outcome['run_id']} resumed under cap {format_usd(outcome['cap'])}.")
+    return _redirect(f"Run {outcome['run_id']} resumed (no per-run cap set).")
 
 
 @router.post("/deps/cadence", dependencies=[Depends(require_csrf)])
@@ -308,14 +333,17 @@ def save_dep_cadence(hours: str = Form(...), user: User = Depends(require_approv
 
 @router.post("/deps/budget", dependencies=[Depends(require_csrf)])
 def save_dep_budget(cap: str = Form(...), user: User = Depends(require_approver)):
-    """Separate dependency token budget (D23); parked reports resume on raise."""
-    from security_agent.control.deps import set_deps_token_cap
+    """Separate dependency spend budget in USD (D23); parked reports resume on raise."""
+    from security_agent.control.cost import format_usd
+    from security_agent.control.deps import set_deps_spend_cap
 
     try:
-        value = set_deps_token_cap(int(cap), user)
+        value = set_deps_spend_cap(float(cap), user)
     except (ValueError, PermissionError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    return _redirect(f"Dependency budget set to {value} tokens/24h.")
+    if value <= 0:
+        return _redirect("Dependency budget disabled.")
+    return _redirect(f"Dependency budget set to {format_usd(value)}/24h.")
 
 
 @router.post("/deps/notify", dependencies=[Depends(require_csrf)])

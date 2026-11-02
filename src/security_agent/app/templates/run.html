@@ -95,13 +95,13 @@
           <tr>
             <td class="font-semibold text-brand-navy">{{ u.task }}{% if u.estimated %} (est.){% endif %}</td>
             <td>{{ u.total_tokens }}</td>
-            <td>{{ "%.4f"|format(u.cost_usd) }}</td>
+            <td>{{ u.cost_usd|usd }}</td>
           </tr>
         {% endfor %}
         </tbody>
       </table>
     </div>
-    <p class="mt-2 text-[13px] text-slate-600">Total: {{ usage_tokens }} tokens · ${{ "%.4f"|format(usage_cost) }}.</p>
+    <p class="mt-2 text-[13px] text-slate-600">Total: {{ usage_tokens }} tokens · {{ usage_cost|usd }}.</p>
     {% else %}
     <p class="mt-3 rounded-xl bg-white px-5 py-4 text-[13px] text-slate-600 shadow-card">This run spent no model calls.</p>
     {% endif %}

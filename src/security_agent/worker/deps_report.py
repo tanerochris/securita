@@ -402,12 +402,14 @@ def generate_summary(
     else:
         bound = model
     # Pre-check: never pay for a call the budget will only park (D23).
+    from security_agent.control.cost import format_usd
     from security_agent.control.deps import DepsBudgetExceeded, deps_budget_state
 
     budget = deps_budget_state()
     if budget["exhausted"]:
         raise DepsBudgetExceeded(
-            f"dependency budget hit ({budget['spent']}/{budget['cap']} tokens)"
+            f"dependency budget hit ({format_usd(budget['spent'])}/"
+            f"{format_usd(budget['cap'])} per 24h)"
         )
     prompt = render_prompt(
         "deps_summary",

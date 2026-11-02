@@ -42,8 +42,10 @@ _CONFIG_FIELDS = (
     "news_relevance_enabled",
     "news_relevance_max_pairs",
     "run_token_cap",
+    "run_spend_cap_usd",
     "spend_warn_daily_usd",
     "spend_critical_daily_usd",
+    "spend_cap_monthly_usd",
 )
 
 

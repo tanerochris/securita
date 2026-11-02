@@ -1,6 +1,6 @@
 """Typed settings via pydantic-settings (env-driven, no secrets in code)."""
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -86,16 +86,41 @@ class Settings(BaseSettings):
     policy_upload_max_bytes: int = Field(default=1_000_000, alias="POLICY_UPLOAD_MAX_BYTES")
     policy_max_chunks_per_doc: int = Field(default=200, alias="POLICY_MAX_CHUNKS_PER_DOC")
     policy_readme_max_bytes: int = Field(default=200_000, alias="POLICY_README_MAX_BYTES")
-    # H6 cost control (NFR-8 D4/D5): per-run token cap + daily spend alerts.
+    # H6 cost control (NFR-8 D4/D5): per-run spend cap + daily spend alerts.
+    # RUN_SPEND_CAP_USD is the cap; legacy RUN_TOKEN_CAP (tokens) still
+    # converts at the model price when the USD var is unset.
     run_token_cap: int = Field(default=1_000_000, alias="RUN_TOKEN_CAP")
-    run_token_warn_fraction: float = Field(default=0.8, alias="RUN_TOKEN_WARN_FRACTION")
+    run_spend_cap_usd: float | None = Field(default=None, alias="RUN_SPEND_CAP_USD")
+    run_spend_warn_fraction: float = Field(
+        default=0.8,
+        validation_alias=AliasChoices("RUN_SPEND_WARN_FRACTION", "RUN_TOKEN_WARN_FRACTION"),
+    )
     spend_warn_daily_usd: float = Field(default=25.0, alias="SPEND_WARN_DAILY_USD")
     spend_critical_daily_usd: float = Field(default=100.0, alias="SPEND_CRITICAL_DAILY_USD")
     model_price_per_mtok_usd: float = Field(default=2.0, alias="MODEL_PRICE_PER_MTOK_USD")
+    # Overall AI budget: monthly spend cap in USD across every ledgered
+    # model call (security pipeline, dependencies, embeddings, probe).
+    # Alert-only: warn at 80%, exceeded at 100%, once per level per
+    # month; pipelines keep running. Owners/Maintainers can raise it
+    # from the settings page (NotifyState cost.spend_cap_monthly wins).
+    spend_cap_monthly_usd: float = Field(default=500.0, alias="SPEND_CAP_MONTHLY_USD")
     # H6 recovery (NFR-9 D1/D2): backup dir + key-ceremony file target.
     backup_dir: str = Field(default="./backups", alias="BACKUP_DIR")
     backup_retention_count: int = Field(default=14, alias="BACKUP_RETENTION_COUNT")
     master_key_file: str = Field(default="./master.key", alias="MASTER_KEY_FILE")
+
+    @property
+    def run_cap_default_usd(self) -> float:
+        """Default per-run cap in USD (0 disables the cap).
+
+        RUN_SPEND_CAP_USD wins when set; otherwise the legacy
+        RUN_TOKEN_CAP converts at the current model price, so
+        pre-USD installs keep their tuned limit.
+        """
+        if self.run_spend_cap_usd is not None:
+            return max(0.0, self.run_spend_cap_usd)
+        price = max(0.0, self.model_price_per_mtok_usd) / 1_000_000
+        return max(0, self.run_token_cap) * price
 
     @property
     def is_prod(self) -> bool:

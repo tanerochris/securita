@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
 from sqlalchemy import delete, func, select
 
 from security_agent.app import accounts as accounts_svc
@@ -15,7 +16,7 @@ from security_agent.control.cost import (
     check_spend_alerts,
     purge_old_usage,
     record_usage,
-    set_cap,
+    set_run_cap,
 )
 from security_agent.db.models import ModelUsage, NotifyState, RepoKind, Role, ScanRun
 from security_agent.db.session import session_scope
@@ -39,8 +40,16 @@ def _run():
 def _reset_cost_state():
     with session_scope() as db:
         db.execute(
-            delete(NotifyState).where(NotifyState.key.in_(["cost.run_cap", "cost.spend_alert"]))
+            delete(NotifyState).where(
+                NotifyState.key.in_(["cost.run_cap", "cost.run_cap_usd", "cost.spend_alert"])
+            )
         )
+
+
+def _usd(tokens: int) -> float:
+    """Cap dollars for a token count at the configured model price."""
+    price = max(0.0, get_settings().model_price_per_mtok_usd) / 1_000_000
+    return tokens * price
 
 
 def _kinds(fake):
@@ -50,7 +59,7 @@ def _kinds(fake):
 def test_concurrent_record_usage_sums_exactly_with_single_warn_and_park():
     owner, run = _owner(), _run()
     _reset_cost_state()
-    set_cap(1000, owner)  # warn at 800
+    set_run_cap(_usd(999), owner)  # warn at ~799, park at 999 token-equivalents
     threads_n, calls_each, per_call = 8, 5, 25
     expected = threads_n * calls_each * per_call
     assert expected == 1000
@@ -78,6 +87,7 @@ def test_concurrent_record_usage_sums_exactly_with_single_warn_and_park():
         with session_scope() as db:
             row = db.get(ScanRun, run.id)
             assert row.token_usage == expected
+            assert row.cost_usd == pytest.approx(_usd(expected))
             assert row.parked is True
             assert (
                 db.scalar(
@@ -92,7 +102,7 @@ def test_concurrent_record_usage_sums_exactly_with_single_warn_and_park():
 def test_record_usage_on_parked_run_raises_without_second_alert():
     owner, run = _owner(), _run()
     _reset_cost_state()
-    set_cap(100, owner)
+    set_run_cap(_usd(100), owner)
     try:
         with mock.patch("security_agent.notify.notify_event") as fake:
             try:

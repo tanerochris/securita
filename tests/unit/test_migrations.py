@@ -32,6 +32,8 @@ CHAIN = [
     "0017_dependencies",
     "0018_notify_extra_channels",
     "0019_dep_report_guard",
+    "0020_notification_link",
+    "0021_run_spend",
 ]
 
 
@@ -260,3 +262,43 @@ def test_migration_0014_roundtrips(tmp_path):
     assert "news_finding_links" not in sa_inspect(engine).get_table_names()
     _run(engine, mod14)
     assert "news_finding_links" in sa_inspect(engine).get_table_names()
+
+
+def test_migration_0021_backfills_run_spend_and_roundtrips(tmp_path):
+    from sqlalchemy import text
+
+    engine = create_engine(f"sqlite:///{tmp_path}/mig21.db")
+    modules = [_load(name) for name in CHAIN if name != "0021_run_spend"]
+    _run(engine, *modules)
+    assert "cost_usd" not in _columns(engine, "scan_runs")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO repos (id, name, kind, created_at) "
+                "VALUES (1, 'r', 'git', '2026-01-01T00:00:00')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO scan_runs (id, repo_id, status, trigger, started_at) VALUES "
+                "(1, 1, 'running', 'manual', '2026-01-01T00:00:00'), "
+                "(2, 1, 'done', 'manual', '2026-01-01T00:00:00')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO model_usage (run_id, task, cost_usd, created_at) VALUES "
+                "(1, 'adapt', 1.5, '2026-01-01T00:00:00'), "
+                "(1, 'adapt', 0.5, '2026-01-01T00:00:00')"
+            )
+        )
+    mod21 = _load("0021_run_spend")
+    _run(engine, mod21)
+    with engine.begin() as conn:
+        got = conn.execute(text("SELECT id, cost_usd FROM scan_runs ORDER BY id")).all()
+    assert [(row[0], row[1]) for row in got] == [(1, 2.0), (2, 0)]
+    _run(engine, mod21, direction="downgrade")
+    assert "cost_usd" not in _columns(engine, "scan_runs")
+    assert "token_usage" in _columns(engine, "scan_runs")
+    _run(engine, mod21)
+    assert "cost_usd" in _columns(engine, "scan_runs")
