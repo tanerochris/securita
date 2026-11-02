@@ -1,7 +1,7 @@
 """Repo + findings + patches views (FR-12)."""
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
 from security_agent.app.dependencies import (
     get_current_user,
@@ -11,6 +11,7 @@ from security_agent.app.dependencies import (
     require_developer,
     require_owner,
 )
+from security_agent.app.live import LiveState, stream_states
 from security_agent.control import lifecycle
 from security_agent.control import repos as repo_svc
 from security_agent.db.models import Repo, RepoKind, Role, SecretFinding, User
@@ -350,6 +351,50 @@ def _report_page(request: Request, repo_id: int, user: User, report_id: int):
     )
 
 
+@router.get("/{repo_id}/dependencies/checks/{check_id}", response_class=HTMLResponse)
+def dependencies_check_detail(
+    request: Request, repo_id: int, check_id: int, user: User = Depends(get_current_user)
+):
+    from security_agent.app.main import templates
+    from security_agent.control import deps as deps_svc
+
+    repo = _repo_or_404(repo_id)
+    check = deps_svc.get_check(check_id)
+    if check is None or check.repo_id != repo_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown check.")
+    duration = None
+    if check.started_at and check.finished_at:
+        duration = (check.finished_at - check.started_at).total_seconds()
+    return templates.TemplateResponse(
+        request,
+        "dep_check.html",
+        {"repo": repo, "check": check, "duration_seconds": duration},
+    )
+
+
+@router.get("/{repo_id}/dependencies/checks/{check_id}/events")
+def dependencies_check_events(repo_id: int, check_id: int, _user: User = Depends(get_current_user)):
+    """SSE stream of the worker log while a dependency check runs."""
+    from security_agent.control import deps as deps_svc
+
+    _repo_or_404(repo_id)
+    check = deps_svc.get_check(check_id)
+    if check is None or check.repo_id != repo_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown check.")
+
+    def fetch() -> LiveState | None:
+        current = deps_svc.get_check(check_id)
+        if current is None:
+            return None
+        return LiveState(status=current.status, notes=current.notes or "")
+
+    return StreamingResponse(
+        stream_states(fetch),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.post(
     "/{repo_id}/dependencies/report/{report_id}/decide", dependencies=[Depends(require_csrf)]
 )
@@ -469,4 +514,25 @@ def run_detail(request: Request, repo_id: int, run_id: int, user: User = Depends
             "usage_tokens": sum(u.total_tokens for u in usage),
             "usage_cost": sum(u.cost_usd for u in usage),
         },
+    )
+
+
+@router.get("/{repo_id}/runs/{run_id}/events")
+def run_events(repo_id: int, run_id: int, _user: User = Depends(get_current_user)):
+    """SSE stream of the worker log while a scan run is running."""
+    _repo_or_404(repo_id)
+    run = lifecycle.get_run(run_id)
+    if run is None or run.repo_id != repo_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown run.")
+
+    def fetch() -> LiveState | None:
+        current = lifecycle.get_run(run_id)
+        if current is None:
+            return None
+        return LiveState(status=current.status, notes=current.notes or "")
+
+    return StreamingResponse(
+        stream_states(fetch),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

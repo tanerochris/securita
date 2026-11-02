@@ -167,6 +167,13 @@ def test_check_builds_table_and_combined_report(tmp_path):
     assert "UNDETERMINED" in section["changelog"]  # named unknown, never invented
     notifs = _notifs(repo.id)
     assert len(notifs) == 1 and notifs[0].kind == "deps-report"  # majors notify (D14)
+    with session_scope() as db:
+        notes = db.get(DependencyCheck, check.id).notes or ""
+        assert "deps: found " in notes and " manifest(s)" in notes
+        assert "report: assessing 2 update(s)..." in notes
+        assert "report: left-pad: 1 usage site(s)" in notes
+        assert "report: writing summary..." in notes
+        assert "combined report #" in notes
 
 
 def test_unchanged_set_reuses_report_without_model_call(tmp_path):

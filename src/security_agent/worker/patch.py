@@ -23,7 +23,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from security_agent.control.lifecycle import transition_finding
+from security_agent.control.lifecycle import append_run_note, reopen_run, transition_finding
 from security_agent.db.models import (
     Finding,
     FindingStatus,
@@ -35,16 +35,22 @@ from security_agent.db.models import (
 from security_agent.db.session import session_scope
 from security_agent.sandbox import assert_host_execution_allowed, make_workdir
 from security_agent.sandbox.tools import run_allowlisted
+from security_agent.worker.deps_manifests import DepManifest, resolve_npm_lock
 from security_agent.worker.scan import (
     LOCKFILE_TIMEOUT_SECONDS,
+    MAX_PYTHON_MANIFESTS,
+    NODE_LOCK_KINDS,
+    NODE_LOCK_NAMES,
     PYTHON_LOCK_NAMES,
     ScanError,
     clone_repo,
     discover_python_manifests,
     ensure_lockfile,
+    ensure_python_lockfiles,
     normalize,
     normalize_dist_name,
     python_context,
+    python_generation_pending,
     read_json_capped,
     read_text_capped,
     requirement_name,
@@ -120,8 +126,55 @@ def _read_manifest(workdir: Path) -> dict:
     return manifest
 
 
-def apply_bump(workdir: Path, package: str, target: str) -> None:
-    """Rewrite the package range (^/~ preserved); transitive deps via overrides."""
+def root_npm_kind(workdir: Path) -> str:
+    """Lock kind at the repo root: package-lock | yarn | pnpm.
+
+    Same preference order as scan discovery; no lock at all keeps the
+    legacy npm path (package-lock.json is generated on demand).
+    """
+    for name in NODE_LOCK_NAMES:
+        kind = NODE_LOCK_KINDS.get(name)
+        if kind is None:
+            continue
+        try:
+            if (workdir / name).is_file():
+                return kind
+        except OSError:
+            continue
+    return "package-lock"
+
+
+_KIND_TO_LOCK = {
+    "package-lock": "package-lock.json",
+    "yarn": "yarn.lock",
+    "pnpm": "pnpm-lock.yaml",
+}
+
+_YARN_BERRY_LITTER = (".yarn", ".pnp.cjs", ".pnp.loader.mjs", ".pnp.data.json")
+
+
+def _yarn_major(workdir: Path) -> int:
+    """Yarn major version (1 classic, else berry); PatchError when unknown."""
+    out = run_allowlisted(
+        "yarn",
+        ["--version"],
+        cwd=str(workdir),
+        timeout=LOCKFILE_TIMEOUT_SECONDS,
+        allow_network=True,
+    )
+    try:
+        return int(out.strip().splitlines()[0].split(".")[0])
+    except (IndexError, ValueError):
+        raise PatchError(f"could not determine yarn version (output: {out[:50]!r})") from None
+
+
+def apply_bump(workdir: Path, package: str, target: str, kind: str = "package-lock") -> None:
+    """Rewrite the package range (^/~ preserved); transitive deps via overrides.
+
+    Transitive bumps on yarn/pnpm refuse: npm-style `overrides` do not
+    take effect there (yarn `resolutions` / pnpm `pnpm.overrides` need a
+    manual entry), so attempting one would only validate a no-op patch.
+    """
     manifest = _read_manifest(workdir)
     found = False
     for section in _DEP_SECTIONS:
@@ -133,6 +186,16 @@ def apply_bump(workdir: Path, package: str, target: str) -> None:
         deps[package] = f"{prefix}{target}"
         found = True
     if not found:
+        if kind == "yarn":
+            raise PatchError(
+                f"{package} is transitive (or nested); yarn needs a manual "
+                f"`resolutions` entry for {package}@{target}, then re-lock"
+            )
+        if kind == "pnpm":
+            raise PatchError(
+                f"{package} is transitive (or nested); pnpm needs a manual "
+                f"`pnpm.overrides` entry for {package}@{target}, then re-lock"
+            )
         overrides = manifest.setdefault("overrides", {})
         if not isinstance(overrides, dict):
             raise PatchError("package.json overrides is not an object")
@@ -140,7 +203,47 @@ def apply_bump(workdir: Path, package: str, target: str) -> None:
     (workdir / "package.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
 
-def refresh_lockfile(workdir: Path) -> None:
+def refresh_lockfile(workdir: Path, kind: str = "package-lock") -> None:
+    """Re-resolve the root lockfile with its native manager, scripts disabled."""
+    if kind == "pnpm":
+        run_allowlisted(
+            "pnpm",
+            ["install", "--lockfile-only", "--ignore-scripts"],
+            cwd=str(workdir),
+            timeout=LOCKFILE_TIMEOUT_SECONDS,
+            allow_network=True,
+        )
+        return
+    if kind == "yarn":
+        if _yarn_major(workdir) == 1:
+            run_allowlisted(
+                "yarn",
+                ["install", "--ignore-scripts"],
+                cwd=str(workdir),
+                timeout=LOCKFILE_TIMEOUT_SECONDS,
+                allow_network=True,
+            )
+            return
+        had = {name for name in _YARN_BERRY_LITTER if (workdir / name).exists()}
+        run_allowlisted(
+            "yarn",
+            ["install", "--mode", "skip-build", "--no-immutable"],
+            cwd=str(workdir),
+            timeout=LOCKFILE_TIMEOUT_SECONDS,
+            allow_network=True,
+        )
+        for name in _YARN_BERRY_LITTER:
+            if name in had:
+                continue  # pre-existing berry state (e.g. zero-installs) stays
+            candidate = workdir / name
+            try:
+                if candidate.is_dir() and not candidate.is_symlink():
+                    shutil.rmtree(candidate)
+                else:
+                    candidate.unlink(missing_ok=True)
+            except OSError:
+                continue
+        return
     run_allowlisted(
         "npm",
         ["install", "--package-lock-only", "--ignore-scripts"],
@@ -148,6 +251,23 @@ def refresh_lockfile(workdir: Path) -> None:
         timeout=LOCKFILE_TIMEOUT_SECONDS,
         allow_network=True,
     )
+
+
+def npm_lock_resolves(lockfile: Path, kind: str, package: str, target: str) -> bool:
+    """True when the lockfile resolves package at target (native parsers)."""
+    if kind == "package-lock":
+        return target in lock_versions(lockfile, package)
+    resolved = resolve_npm_lock(
+        DepManifest(
+            path=lockfile,
+            rel=lockfile.name,
+            ecosystem="npm",
+            kind="package.json",
+            lockfile=lockfile,
+            lock_kind=kind,
+        )
+    )
+    return resolved.get(package) == target
 
 
 def ensure_test_deps(workdir: Path) -> None:
@@ -275,15 +395,18 @@ def validate_patch(
     allowed_extra: list[str],
     pre_keys: set[tuple[str, str]],
     fixed_keys: set[tuple[str, str]],
+    *,
+    lock_name: str = "package-lock.json",
+    kind: str = "package-lock",
 ) -> list[str]:
     """Full D3 rule set. Returns violations (empty = clean)."""
     violations: list[str] = []
-    lockfile = workdir / "package-lock.json"
+    lockfile = workdir / lock_name
     changed, untracked = diff_files(workdir)
-    extras = (changed | untracked) - {"package.json", "package-lock.json"} - set(allowed_extra)
+    extras = (changed | untracked) - {"package.json", lock_name} - set(allowed_extra)
     if extras:
         violations.append(f"diff touches non-dependency files: {sorted(extras)}")
-    if target not in lock_versions(lockfile, package):
+    if not npm_lock_resolves(lockfile, kind, package, target):
         violations.append(f"lockfile does not resolve {package}@{target}")
     try:
         post = {
@@ -677,8 +800,14 @@ def run_python_tests(workdir: Path) -> tuple[bool, str, str] | None:
 
 
 def python_scan_keys(workdir: Path) -> set[tuple[str, str]]:
-    """(package, advisory) over current Python manifests (rescan helper)."""
+    """(package, advisory) over current Python manifests (rescan helper).
+
+    Generates missing locks exactly like the scan, so verification sees
+    the same inputs the scan did (generated locks are workdir-local).
+    """
     files, _truncated = discover_python_manifests(workdir)
+    generated, _gen_notes = ensure_python_lockfiles(workdir, files)
+    files = [*files, *generated]
     ctx = python_context(files)
     keys: set[tuple[str, str]] = set()
     for manifest in files:
@@ -743,6 +872,15 @@ def patch_python_group(
     try:
         with _fresh_workdir(repo, source_template) as clean:
             baseline = run_python_tests(clean)
+            refusal = _managed_python_refusal(clean, package, targets[0])
+            if refusal is not None:
+                for finding in findings:
+                    _mark_unpatchable(finding.id, refusal)
+                return {
+                    "finding_ids": [f.id for f in findings],
+                    "outcome": "unpatchable",
+                    "reason": refusal,
+                }
             pre = python_scan_keys(clean)
     except (PatchError, ScanError, RuntimeError, TimeoutError) as exc:
         guidance = f"Pre-check failed for {package}: {exc}"
@@ -858,6 +996,31 @@ def _route_python(eco: str, source_template: Path | None, package: str) -> bool:
     return False
 
 
+def _managed_python_refusal(workdir: Path, package: str, target: str) -> str | None:
+    """Guidance when a generated input owns the fix instead of requirements.
+
+    Refuses only when the scan would actually generate here (candidacy):
+    a stray requirements.txt pin cannot fix a managed/compiled project,
+    and would additionally hide its vulnerabilities from future scans by
+    covering the directory. Covered dirs generate nothing, so their
+    findings can only come from requirements and stay patchable.
+    """
+    if _requirements_own(workdir, package):
+        return None
+    files, truncated = discover_python_manifests(workdir)
+    if truncated or len(files) >= MAX_PYTHON_MANIFESTS:
+        return None  # scan generates nothing here either; verification is exact
+    if not python_generation_pending(workdir):
+        return None
+    return (
+        f"{package} is not pinned in requirements files and this repo has "
+        f"managed Python manifests (pyproject.toml/Pipfile) or compilable inputs "
+        f"(requirements.in/setup.py) covering it; upgrade {package} "
+        f"to =={target} in the owning file and re-lock/recompile "
+        "(poetry lock, pipenv lock, pdm lock, uv lock, or uv pip compile)."
+    )
+
+
 def patch_candidates(repo_id: int) -> list[Finding]:
     """OPEN findings whose latest verdict says reachable (FR-4: reachable only)."""
     with session_scope() as db:
@@ -949,9 +1112,7 @@ def _persist_proposal(
     from security_agent.worker.deps_patch import live_dep_proposal_for_package
 
     if findings and live_dep_proposal_for_package(repo_id, findings[0].package):
-        raise PatchError(
-            "queued behind a live dependency PR for this package (D20)"
-        )
+        raise PatchError("queued behind a live dependency PR for this package (D20)")
     with session_scope() as db:
         proposal = Proposal(
             repo_id=repo_id,
@@ -994,7 +1155,12 @@ def patch_group(
         }
     try:
         with _fresh_workdir(repo, source_template) as clean:
-            lock, _ = ensure_lockfile(clean)
+            kind = root_npm_kind(clean)
+            lock_name = _KIND_TO_LOCK[kind]
+            if kind == "package-lock":
+                lock, _ = ensure_lockfile(clean)
+            else:
+                lock = clean / lock_name  # native lock exists; never npm-generate here
             baseline = run_repo_tests(clean)
             pre = {
                 (d["package"], d["advisory_id"])
@@ -1013,12 +1179,13 @@ def patch_group(
     for target in targets:
         try:
             with _fresh_workdir(repo, source_template) as workdir:
-                ensure_lockfile(workdir)
-                apply_bump(workdir, package, target)
-                refresh_lockfile(workdir)
+                if kind == "package-lock":
+                    ensure_lockfile(workdir)
+                apply_bump(workdir, package, target, kind=kind)
+                refresh_lockfile(workdir, kind)
                 adapted = adapt(workdir, findings[0], target, list(failures))
                 if baseline is None:
-                    if target not in lock_versions(workdir / "package-lock.json", package):
+                    if not npm_lock_resolves(workdir / lock_name, kind, package, target):
                         failures.append(f"static: lockfile lacks {target}")
                         continue
                     verification = f"static analysis clean: lockfile resolves {target}"
@@ -1036,7 +1203,14 @@ def patch_group(
                     if ignored:
                         verification += f" ({ignored[0]})"
                 violations = validate_patch(
-                    workdir, package, target, adapted.changed_files, pre, fixed_keys
+                    workdir,
+                    package,
+                    target,
+                    adapted.changed_files,
+                    pre,
+                    fixed_keys,
+                    lock_name=lock_name,
+                    kind=kind,
                 )
                 if violations:
                     failures.append(f"validate {target}: {'; '.join(violations)}")
@@ -1080,15 +1254,6 @@ def patch_one(
     return result
 
 
-def _note_run(run_id: int, line: str) -> None:
-    with session_scope() as db:
-        run = db.get(ScanRun, run_id)
-        if run is None:
-            return
-        prior = f"{run.notes}\n" if run.notes else ""
-        run.notes = prior + line
-
-
 def run_patch(
     repo_id: int,
     run_id: int,
@@ -1109,7 +1274,9 @@ def run_patch(
         if run.parked:
             return {"status": "parked", "results": [], "proposal_ids": []}
         db.expunge(repo)
+    reopen_run(run_id)
     candidates = patch_candidates(repo_id)
+    append_run_note(run_id, f"patch: {len(candidates)} candidate(s)")
     try:
         gate = pre_patch_check(repo_id, run_id, candidates)
     except PolicyStoreError as exc:
@@ -1149,12 +1316,22 @@ def run_patch(
         eco = (finding.ecosystem or "").lower() or "unknown"
         groups.setdefault((eco, finding.package), []).append(finding)
     for (eco, package), members in groups.items():
+        append_run_note(run_id, f"patch: {package} ({eco}, {len(members)} finding(s))...")
         if _route_python(eco, source_dir, package):
-            results.append(patch_python_group(repo, members, source_dir, adapt))
+            result = patch_python_group(repo, members, source_dir, adapt)
         else:
-            results.append(patch_group(repo, members, source_dir, adapt))
+            result = patch_group(repo, members, source_dir, adapt)
+        results.append(result)
+        outcome = result.get("outcome")
+        if outcome == "proposed" and result.get("proposal_id") is not None:
+            append_run_note(run_id, f"patch: {package}: proposed (#{result['proposal_id']})")
+        elif outcome == "unpatchable":
+            reason = str(result.get("reason", ""))[:160]
+            append_run_note(run_id, f"patch: {package}: unpatchable ({reason})")
+        else:
+            append_run_note(run_id, f"patch: {package}: {outcome}")
     proposed = sum(1 for r in results if r.get("outcome") == "proposed")
-    _note_run(run_id, f"patch: {proposed} proposed, {len(results) - proposed} report-only")
+    append_run_note(run_id, f"patch: {proposed} proposed, {len(results) - proposed} report-only")
     return {
         "status": "done",
         "results": results,

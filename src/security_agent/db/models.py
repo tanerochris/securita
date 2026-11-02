@@ -924,17 +924,18 @@ class DependencyReport(Base):
 class DashboardNotification(Base):
     """Stored dashboard notification record (D17).
 
-    The header icon + listing read from this pool, fed in v1 only by
-    dependency events (new combined report, patch result, check failure).
-    Built for extension: other event types reuse the same record later.
-    Rows are visible to every signed-in user; read state is per user in
+    The header icon + listing read from this pool. Dependency events
+    (new combined report, patch result, check failure) originate here;
+    every other channel event mirrors in from `notify_event` once it is
+    actually sent, so the pool matches the channel stream. Rows are
+    visible to every signed-in user; read state is per user in
     NotificationRead.
     """
 
     __tablename__ = "dashboard_notifications"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    kind: Mapped[str] = mapped_column(String(50), index=True)  # deps-report|deps-patch|deps-failure
+    kind: Mapped[str] = mapped_column(String(50), index=True)  # deps-* + mirrored channel kinds
     repo_id: Mapped[int | None] = mapped_column(ForeignKey("repos.id"), nullable=True, index=True)
     report_id: Mapped[int | None] = mapped_column(
         ForeignKey("dependency_reports.id"), nullable=True
@@ -944,6 +945,7 @@ class DashboardNotification(Base):
     )
     title: Mapped[str] = mapped_column(String(300))
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    link: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, index=True
     )

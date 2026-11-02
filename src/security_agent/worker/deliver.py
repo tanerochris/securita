@@ -18,7 +18,12 @@ import httpx
 from packaging.version import InvalidVersion, Version
 from sqlalchemy import select
 
-from security_agent.control.lifecycle import transition_finding, transition_secret_finding
+from security_agent.control.lifecycle import (
+    append_run_note,
+    reopen_run,
+    transition_finding,
+    transition_secret_finding,
+)
 from security_agent.control.repos import get_repo_token
 from security_agent.db.models import (
     Finding,
@@ -812,15 +817,6 @@ def _fresh_workdir(repo: Repo, source_template: Path | None, *, depth: int | Non
         shutil.rmtree(workdir, ignore_errors=True)
 
 
-def _note_run(run_id: int, lines: list[str]) -> None:
-    with session_scope() as db:
-        run = db.get(ScanRun, run_id)
-        if run is None:
-            return
-        prior = f"{run.notes}\n" if run.notes else ""
-        run.notes = prior + "\n".join(n for n in lines if n)
-
-
 def run_deliver(
     repo_id: int,
     run_id: int,
@@ -875,34 +871,57 @@ def run_deliver(
         return {"status": "parked", "proposal_ids": [], "issues": [], "errors": []}
     shippable = set(gate["deliver"])
     pending = [p for p in pending if p.id in shippable]
+    reopen_run(run_id)
     delivered: list[int] = []
     issues: list[int] = []
     errors: list[str] = []
-    notes: list[str] = []
     if gate["held"]:
-        notes.append(f"policy held {len(gate['held'])} proposals for review")
+        append_run_note(run_id, f"policy held {len(gate['held'])} proposals for review")
+    append_run_note(
+        run_id,
+        f"deliver: {len(pending)} proposal(s) to ship, {len(unpatched)} issue(s) to file",
+    )
     for group in group_by_package(pending):
+        group_findings = _proposal_findings(
+            [fid for p in group for fid in (p.finding_ids or [])]
+        )
+        package = group_findings[0].package if group_findings else "unknown"
+        ids = [p.id for p in group]
+        append_run_note(run_id, f"deliver: shipping {package} (proposal {ids})...")
         try:
             with _fresh_workdir(repo, source_dir) as workdir:
                 outcome = _deliver_group(
                     repo, token or "", group, workdir, root / f"run-{run_id}", dashboard
                 )
             delivered.extend(outcome["proposal_ids"])
+            append_run_note(
+                run_id, f"deliver: {package}: shipped ({outcome.get('branch')})"
+            )
             if not outcome["signed"]:
-                notes.append(f"proposals {outcome['proposal_ids']} committed unsigned (no key)")
+                append_run_note(
+                    run_id,
+                    f"proposals {outcome['proposal_ids']} committed unsigned (no key)",
+                )
         except (DeliverError, RuntimeError, TimeoutError) as exc:
-            errors.append(f"group {[p.id for p in group]}: {exc}")
+            errors.append(f"group {ids}: {exc}")
+            append_run_note(run_id, f"deliver: {package}: failed ({exc})")
     for finding in unpatched:
+        append_run_note(
+            run_id, f"deliver: filing issue for {finding.package} ({finding.advisory_id})..."
+        )
         try:
-            _deliver_issue(repo, token or "", finding, root / f"run-{run_id}", dashboard)
+            url = _deliver_issue(
+                repo, token or "", finding, root / f"run-{run_id}", dashboard
+            )
             issues.append(finding.id)
+            append_run_note(run_id, f"deliver: {finding.package}: issue {url}")
         except (DeliverError, RuntimeError, TimeoutError) as exc:
             errors.append(f"issue {finding.id}: {exc}")
-    notes.append(
-        f"delivered {len(delivered)} proposals, {len(issues)} issues, {len(errors)} errors"
+            append_run_note(run_id, f"deliver: {finding.package}: issue failed ({exc})")
+    append_run_note(
+        run_id,
+        f"delivered {len(delivered)} proposals, {len(issues)} issues, {len(errors)} errors",
     )
-    notes.extend(errors)
-    _note_run(run_id, notes)
     return {
         "status": "done",
         "proposal_ids": delivered,

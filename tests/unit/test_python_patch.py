@@ -568,6 +568,78 @@ def test_patch_python_group_no_fixed_version(tmp_path):
     assert _finding(fid).status == FindingStatus.UNPATCHABLE
 
 
+def test_patch_python_group_refuses_managed_unmatched(tmp_path):
+    repo, fid = _repo_and_finding("pymanaged-r", ["1.0.1"])
+    template = tmp_path / "tpl"
+    template.mkdir()
+    (template / "pyproject.toml").write_text(
+        '[project]\nname="a"\ndependencies=["insecure-pkg>=1.0"]\n'
+    )
+    tools.run_allowlisted("git", ["init", str(template)])
+    tools.run_allowlisted("git", ["-C", str(template), "add", "."])
+    tools.run_allowlisted("git", ["-C", str(template), *_GIT_IDENTITY, "commit", "-m", "x"])
+    real = patch_mod.run_allowlisted
+    gen_calls = []
+
+    def fake(name, args, **kwargs):
+        if name in ("uv", "poetry", "pdm", "pipenv"):
+            gen_calls.append(name)
+        return real(name, args, **kwargs)
+
+    with mock.patch.object(patch_mod, "run_allowlisted", side_effect=fake), _py_scan_fake():
+        with session_scope() as db:
+            expunged = db.get(Repo, repo.id)
+        outcome = patch_python_group(expunged, [_finding(fid)], template, patch_mod.null_adapt)
+    assert outcome["outcome"] == "unpatchable"
+    assert "managed Python manifests" in outcome["reason"]
+    assert "1.0.1" in outcome["reason"]
+    assert gen_calls == []  # refusal precedes any lock generation
+    assert _finding(fid).status == FindingStatus.UNPATCHABLE
+
+
+def test_patch_python_group_refuses_compilable_unmatched(tmp_path):
+    repo, fid = _repo_and_finding("pyinref-r", ["1.0.1"])
+    template = tmp_path / "tpl"
+    template.mkdir()
+    (template / "requirements.in").write_text("insecure-pkg==1.0.0\n")
+    tools.run_allowlisted("git", ["init", str(template)])
+    tools.run_allowlisted("git", ["-C", str(template), "add", "."])
+    tools.run_allowlisted("git", ["-C", str(template), *_GIT_IDENTITY, "commit", "-m", "x"])
+    real = patch_mod.run_allowlisted
+    gen_calls = []
+
+    def fake(name, args, **kwargs):
+        if name in ("uv", "poetry", "pdm", "pipenv"):
+            gen_calls.append(name)
+        return real(name, args, **kwargs)
+
+    with mock.patch.object(patch_mod, "run_allowlisted", side_effect=fake), _py_scan_fake():
+        with session_scope() as db:
+            expunged = db.get(Repo, repo.id)
+        outcome = patch_python_group(expunged, [_finding(fid)], template, patch_mod.null_adapt)
+    assert outcome["outcome"] == "unpatchable"
+    assert "requirements.in" in outcome["reason"]
+    assert gen_calls == []
+    assert _finding(fid).status == FindingStatus.UNPATCHABLE
+
+
+def test_patch_python_group_covered_mixed_keeps_transitive_append(tmp_path):
+    repo, fid = _repo_and_finding("pymixed-r", ["1.0.1"])
+    template = _git_repo_py(
+        tmp_path,
+        "other==1\n",
+        extra={"pyproject.toml": '[project]\nname="a"\ndependencies=["other>=1"]\n'},
+    )
+    with _py_scan_fake():
+        with session_scope() as db:
+            expunged = db.get(Repo, repo.id)
+        outcome = patch_python_group(expunged, [_finding(fid)], template, patch_mod.null_adapt)
+    # Covered dirs generate nothing, so the finding can only come from
+    # requirements: the transitive pin is a complete fix for it.
+    assert outcome["outcome"] == "proposed"
+    assert _finding(fid).status == FindingStatus.PROPOSED
+
+
 def test_run_patch_separates_ecosystems(tmp_path):
     repo = _seed_repo("ecosep-r")
     with session_scope() as db:

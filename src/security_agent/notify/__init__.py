@@ -3,6 +3,7 @@ Telegram/PagerDuty/webhook.
 
 Events declare their severity at the call site; routes map severities
 to channels. Approval requests fan out to ALL channels (FR-9 D5).
+Events that reach a channel also mirror into the dashboard pool (D17).
 Delivery failures audit-warn and never raise past `notify_event`, and
 callers emit after commit (H5 G8 precedent). Channel secrets live
 encrypted under `notify-channel:{id}` and are never re-viewed.
@@ -402,6 +403,22 @@ def _deliver(
         raise NotifyError(f"Unknown channel kind {channel.kind!r}")
 
 
+def _record_dashboard(kind: str, subject: str, body: str, link: str) -> None:
+    """Mirror a sent channel event into the dashboard pool (best-effort).
+
+    Dependency kinds originate in the pool already (push_notification
+    fans OUT to channels), so they are skipped here to avoid doubles.
+    """
+    from security_agent.control.notifications import KINDS, push_notification
+
+    if kind in KINDS:
+        return
+    try:
+        push_notification(kind or "notice", subject, body=body, link=link or None)
+    except Exception as exc:  # noqa: BLE001 - dashboard never breaks delivery
+        log.warning("notify: dashboard mirror failed: %s", exc)
+
+
 def notify_event(
     severity: str,
     subject: str,
@@ -417,6 +434,9 @@ def notify_event(
     Returns {"sent": [ids], "failed": {id: reason}}. Callers emit after
     their transaction commits so a rollback never sends a phantom alert.
     Attachments ride email channels only (digests); others ignore them.
+    Events that reach at least one channel also mirror into the
+    dashboard notification pool (dependency kinds excepted: they live
+    there already).
     """
     _check_severity(severity)
     sent: list[int] = []
@@ -429,6 +449,8 @@ def notify_event(
             reason = str(exc)[:300]
             failed[channel.id] = reason
             log.warning("notify: channel %d failed: %s", channel.id, reason)
+    if sent:
+        _record_dashboard(kind, subject, body, link)
     audit.append(
         action_class="notify",
         decision="event",

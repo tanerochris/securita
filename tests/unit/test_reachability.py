@@ -217,6 +217,12 @@ def test_run_reachability_skips_terminal_findings(tmp_path):
     _write(tmp_path, "src/main.js", "import p from 'closed-pkg';\n")
     result = run_reachability(repo.id, run_id, source_dir=tmp_path)
     assert result["verdict_ids"] == []
+    with session_scope() as db:
+        notes = db.get(ScanRun, run_id).notes or ""
+        assert "reachability: building call graphs..." in notes
+        assert "reachability: graphs built (" in notes
+        assert "reachability: scoring 0 finding(s)..." in notes
+        assert "reachability: 0 reachable, 0 silent" in notes
 
 
 def test_run_reachability_prod_refuses():

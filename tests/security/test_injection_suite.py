@@ -465,6 +465,9 @@ def test_href_guards():
                 unguarded.append(f"{page.name}: {expr}")
     # pr_url comes from provider APIs and is scheme-validated at open time.
     unguarded = [u for u in unguarded if "pr_url" not in u]
+    # n.link is constrained to internal dashboard paths (leading /, no //)
+    # at write time in push_notification; anything else is dropped.
+    unguarded = [u for u in unguarded if "n.link" not in u]
     assert unguarded == []
 
 

@@ -5,7 +5,7 @@ and silent-with-reason. Rescan verdict flips drive reopen (silent/resolved
 → open) and park (open/proposed → silent).
 """
 
-from sqlalchemy import case, delete, nulls_last, select
+from sqlalchemy import case, delete, literal, nulls_last, or_, select, update
 
 from security_agent.db.models import (
     Finding,
@@ -16,6 +16,7 @@ from security_agent.db.models import (
     NewsPoll,
     Proposal,
     Role,
+    RunStatus,
     ScanRun,
     SecretFinding,
     SecretStatus,
@@ -274,6 +275,52 @@ def get_run(run_id: int) -> ScanRun | None:
         if row is not None:
             db.expunge(row)
         return row
+
+
+def append_run_note(run_id: int, line: str) -> None:
+    """Append one progress line to a run's worker log, committed at once.
+
+    Stages call this as they work (not just at the end) so the detail
+    page streams progress live. Atomic UPDATE-concat: concurrent writers
+    (policy holds, cost parks) never lose each other's lines.
+    """
+    if not line:
+        return
+    with session_scope() as db:
+        db.execute(
+            update(ScanRun)
+            .where(ScanRun.id == run_id)
+            .values(
+                notes=case(
+                    (
+                        or_(ScanRun.notes.is_(None), ScanRun.notes == ""),
+                        literal(line),
+                    ),
+                    else_=ScanRun.notes + "\n" + line,
+                )
+            )
+        )
+
+
+def reopen_run(run_id: int) -> bool:
+    """Back to RUNNING when a later pipeline stage starts appending.
+
+    The scan node finishes the run mid-pipeline (its tested contract),
+    so reachability/patch/deliver/merge reopen it while they work; the
+    worker marks it DONE for real at graph end. FAILED stays sticky: a
+    failed scan never flips back to RUNNING.
+    """
+    from typing import Any, cast
+
+    from sqlalchemy.engine import CursorResult
+
+    with session_scope() as db:
+        result = db.execute(
+            update(ScanRun)
+            .where(ScanRun.id == run_id, ScanRun.status == RunStatus.DONE)
+            .values(status=RunStatus.RUNNING, finished_at=None)
+        )
+        return cast("CursorResult[Any]", result).rowcount == 1
 
 
 def list_run_findings(run_id: int) -> list[Finding]:

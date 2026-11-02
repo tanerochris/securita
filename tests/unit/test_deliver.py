@@ -458,6 +458,11 @@ def test_delivered_pr_requests_merge_gate(tmp_path):
         result = run_deliver(repo.id, run_id, source_dir=template, delivery_root=tmp_path / "out")
     assert result["proposal_ids"] == [pid]
     with session_scope() as db:
+        notes = db.get(ScanRun, run_id).notes or ""
+        assert "deliver: 1 proposal(s) to ship, 0 issue(s) to file" in notes
+        assert f"deliver: shipping left-pad (proposal [{pid}])..." in notes
+        assert "deliver: left-pad: shipped (security/" in notes
+    with session_scope() as db:
         from security_agent.db.models import Approval, GateAction, GateStatus
 
         gate = db.scalar(

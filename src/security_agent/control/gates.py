@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from security_agent.audit import get_shared_log
+from security_agent.control.lifecycle import append_run_note, reopen_run
 from security_agent.db.models import (
     Approval,
     Delegation,
@@ -382,6 +383,7 @@ def run_merge(repo_id: int, run_id: int, proposal_ids: list[int]) -> dict:
     with session_scope() as db:
         if db.get(Repo, repo_id) is None or db.get(ScanRun, run_id) is None:
             raise ValueError(f"Unknown repo {repo_id} or run {run_id}.")
+    reopen_run(run_id)
     merged: list[int] = []
     skipped: list[int] = []
     for pid in proposal_ids:
@@ -398,17 +400,20 @@ def run_merge(repo_id: int, run_id: int, proposal_ids: list[int]) -> dict:
             )
             gate_id = gate.id if gate else None
             status = gate.status if gate else None
-        if gate_id is None or status != GateStatus.APPROVED:
+        if gate_id is None:
             skipped.append(pid)
+            append_run_note(run_id, f"merge: proposal #{pid} skipped (no approval gate)")
+            continue
+        if status != GateStatus.APPROVED:
+            skipped.append(pid)
+            append_run_note(run_id, f"merge: proposal #{pid} skipped (awaiting approval)")
             continue
         try:
             execute_merge(gate_id, None)
             merged.append(pid)
-        except (ValueError, PermissionError, RuntimeError):
+            append_run_note(run_id, f"merge: proposal #{pid} merged")
+        except (ValueError, PermissionError, RuntimeError) as exc:
             skipped.append(pid)
-    with session_scope() as db:
-        run = db.get(ScanRun, run_id)
-        if run is not None:
-            prior = f"{run.notes}\n" if run.notes else ""
-            run.notes = prior + f"merge: {len(merged)} merged, {len(skipped)} skipped"
+            append_run_note(run_id, f"merge: proposal #{pid} skipped (merge failed: {exc})")
+    append_run_note(run_id, f"merge: {len(merged)} merged, {len(skipped)} skipped")
     return {"status": "done", "merged": merged, "skipped": skipped}

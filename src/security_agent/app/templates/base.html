@@ -300,6 +300,65 @@
     });
   })();
 </script>
+<script type="text/javascript">
+  (function () {
+    /* Live worker log: while a run/check is running, stream its notes
+       over SSE and append them; on the explicit `complete` event reload
+       once so the result sections (findings, cost, manifests, report)
+       render. `status` only repaints the badge — a mid-pipeline DONE must
+       never strand the page. Log lines go through textContent only. */
+    var wrap = document.getElementById("liveLog");
+    if (!wrap || wrap.getAttribute("data-status") !== "running") { return; }
+    if (typeof EventSource === "undefined") { return; }
+    var log = document.getElementById("workerLog");
+    var empty = document.getElementById("logEmpty");
+    var copyBtn = document.getElementById("copyLog");
+    var badge = document.getElementById("runStatus");
+    var badgeStatus = wrap.getAttribute("data-status");
+    var BADGE_CLASS = {
+      running: "inline-flex items-center gap-1.5 rounded-full bg-brand-primary px-2.5 py-1 text-white",
+      done: "inline-flex rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep",
+      failed: "inline-flex rounded-full bg-brand-navy px-2.5 py-1 text-white"
+    };
+    function setBadge(status) {
+      if (!badge || status === badgeStatus) { return; }
+      badgeStatus = status;
+      badge.textContent = status;
+      badge.className = BADGE_CLASS[status] || BADGE_CLASS.failed;
+    }
+    function reveal() {
+      if (empty) { empty.style.display = "none"; }
+      if (log) { log.style.display = ""; }
+      if (copyBtn) { copyBtn.style.display = ""; }
+    }
+    function setText(text) { reveal(); if (log) { log.textContent = text; } }
+    function appendText(text) {
+      if (!text) { return; }
+      reveal();
+      if (log) { log.textContent += text; }
+    }
+    var src = new EventSource(wrap.getAttribute("data-events-url"));
+    src.addEventListener("init", function (e) {
+      var m = JSON.parse(e.data);
+      setText(m.notes || "");
+      setBadge(m.status);
+    });
+    src.addEventListener("log", function (e) {
+      appendText(JSON.parse(e.data).append || "");
+    });
+    src.addEventListener("reset", function (e) {
+      setText(JSON.parse(e.data).notes || "");
+    });
+    src.addEventListener("status", function (e) {
+      setBadge(JSON.parse(e.data).status);
+    });
+    src.addEventListener("complete", function () {
+      src.close();
+      window.location.reload();
+    });
+    src.addEventListener("gone", function () { src.close(); });
+  })();
+</script>
 <script src="/static/vendor/simple-datatables/simple-datatables.js" integrity="sha384-OMR/OfeQC/fStE5yr0SBMKPPfMHctC+Ebr+QVzjdXw1FqbB0iBKgFkrAzvjhYByo" crossorigin="anonymous"></script>
 <script type="text/javascript">
   (function () {

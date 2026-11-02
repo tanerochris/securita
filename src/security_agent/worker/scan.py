@@ -4,14 +4,18 @@ Runs in a per-run temp dir in dev/test. Prod refuses host execution until
 the Docker sandbox lands (NFR-1 fail-closed).
 """
 
+import ast
+import configparser
 import csv
 import json
 import logging
 import re
 import shutil
 import threading
+import time
 import tomllib
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
@@ -21,6 +25,7 @@ from packaging.version import InvalidVersion, Version
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from security_agent.control.lifecycle import append_run_note
 from security_agent.control.repos import get_repo_token
 from security_agent.db.models import (
     Finding,
@@ -327,6 +332,149 @@ def lockfile_context(packages: dict, package: str, version: str) -> tuple[list[s
     return indexed_lockfile_context(lockfile_package_index(packages), package, version)
 
 
+# --- Node inputs (tracker D12/D18 parity) ---
+
+NODE_LOCK_NAMES = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml")
+NODE_LOCK_KINDS = {
+    "package-lock.json": "package-lock",
+    "yarn.lock": "yarn",
+    "pnpm-lock.yaml": "pnpm",
+}
+MAX_NODE_MANIFESTS = 20
+
+_SCAN_WALK_SKIP = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        "node_modules",
+        "__pycache__",
+        ".tox",
+        "dist",
+        "build",
+        ".eggs",
+    }
+)
+
+
+def _walk_collect(
+    workdir: Path, match: Callable[[Path], bool], *, limit: int
+) -> tuple[list[Path], bool]:
+    """Sorted files under workdir matching match(); (files, hit_limit).
+
+    Skips VCS/venv/build/node_modules dirs and symlinks; never raises on
+    unreadable entries.
+    """
+    found: list[Path] = []
+    hit_limit = False
+    try:
+        workdir.resolve()
+    except OSError:
+        return [], False
+    stack: list[Path] = [workdir]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = sorted(current.iterdir(), key=lambda p: p.name)
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.is_dir() and not entry.is_symlink():
+                if entry.name in _SCAN_WALK_SKIP:
+                    continue
+                if _inside(workdir, entry):
+                    stack.append(entry)
+                continue
+            if not entry.is_file() or entry.is_symlink():
+                continue
+            if not match(entry):
+                continue
+            if len(found) >= limit:
+                hit_limit = True
+                break
+            found.append(entry)
+        if hit_limit:
+            break
+    found.sort()
+    return found, hit_limit
+
+
+@dataclass
+class NodeScanTarget:
+    """One Node scan input: a package.json dir and/or a stray lockfile."""
+
+    manifest: Path | None  # package.json (None for stray lockfiles)
+    lockfile: Path | None  # scannable lock (None: generate at root, skip nested)
+    lock_kind: str | None  # package-lock | yarn | pnpm
+
+
+def discover_node_manifests(workdir: Path) -> tuple[list[NodeScanTarget], bool]:
+    """Node scan inputs: every package.json dir plus stray locks (D12/D18).
+
+    Each package.json dir resolves its lock in tracker preference order
+    (package-lock > yarn > pnpm); dirs without any lock come back with
+    lockfile None so run_scan generates at the root and names nested
+    skips. A lockfile in a dir without package.json is still scanned
+    (legacy root package-lock behavior, generalized). Bounded at
+    MAX_NODE_MANIFESTS targets; truncation is never silent.
+    """
+    files, hit_limit = _walk_collect(
+        workdir,
+        lambda p: p.name == "package.json" or p.name in NODE_LOCK_NAMES,
+        limit=MAX_NODE_MANIFESTS * 4,
+    )
+    by_dir: dict[Path, list[Path]] = {}
+    for lock in files:
+        if lock.name != "package.json":
+            by_dir.setdefault(lock.parent, []).append(lock)
+    order = {name: index for index, name in enumerate(NODE_LOCK_NAMES)}
+
+    def _preferred(dir_locks: list[Path]) -> Path:
+        return sorted(dir_locks, key=lambda p: order[p.name])[0]
+
+    manifest_dirs: set[Path] = set()
+    targets: list[NodeScanTarget] = []
+    for manifest in [p for p in files if p.name == "package.json"]:
+        manifest_dirs.add(manifest.parent)
+        dir_locks = by_dir.get(manifest.parent, [])
+        if dir_locks:
+            lock = _preferred(dir_locks)
+            targets.append(NodeScanTarget(manifest, lock, NODE_LOCK_KINDS[lock.name]))
+        else:
+            targets.append(NodeScanTarget(manifest, None, None))
+    for parent in sorted(by_dir):
+        if parent in manifest_dirs:
+            continue
+        lock = _preferred(by_dir[parent])
+        targets.append(NodeScanTarget(None, lock, NODE_LOCK_KINDS[lock.name]))
+    targets.sort(key=lambda t: str(t.manifest or t.lockfile))
+    truncated = hit_limit or len(targets) > MAX_NODE_MANIFESTS
+    return targets[:MAX_NODE_MANIFESTS], truncated
+
+
+def npm_dev_packages(manifest: Path | None) -> set[str]:
+    """devDependencies names from one package.json (yarn/pnpm scope labels)."""
+    if manifest is None:
+        return set()
+    data = read_json_capped(manifest)
+    dev = data.get("devDependencies") if data else None
+    if not isinstance(dev, dict):
+        return set()
+    return {name for name in dev if isinstance(name, str) and name}
+
+
+def npm_context(manifest: Path | None) -> Callable[[str, str], tuple[list[str], bool]]:
+    """Flat ([package], is_dev) context for non-package-lock inputs."""
+    dev = npm_dev_packages(manifest)
+
+    def _ctx(package: str, _version: str) -> tuple[list[str], bool]:
+        return [package], package in dev
+
+    return _ctx
+
+
 # --- Python inputs (FR-7 D1) ---
 
 PYTHON_LOCK_NAMES = ("poetry.lock", "Pipfile.lock", "pdm.lock", "uv.lock")
@@ -413,12 +561,358 @@ def _expand_requirement_includes(workdir: Path, files: list[Path]) -> list[Path]
     return extra
 
 
-def discover_python_manifests(workdir: Path) -> tuple[list[Path], bool]:
-    """Scannable Python inputs, top-level only (never descending into venvs).
+def _is_python_scannable(path: Path) -> bool:
+    name = path.name
+    if name in PYTHON_LOCK_NAMES:
+        return True
+    if name.startswith("requirements") and name.endswith(".txt"):
+        return True
+    return name.endswith(".txt") and path.parent.name == "requirements"
 
-    -r/-c includes resolve to in-repo .txt files so included pins are scanned,
-    bumped, and rescanned with the rest. Returns (files, truncated).
-    Symlinks escaping the repo are excluded.
+
+@dataclass
+class _PythonGenPlan:
+    """One executable generation: optional write_first, then tool argv."""
+
+    tool: str
+    argv: list[str]
+    output: str  # expected lock/output filename
+    write_first: tuple[str, str] | None = None  # (filename, content)
+
+
+_PYTHON_GENERATABLE = ("pyproject.toml", "Pipfile", "requirements.in", "setup.py", "setup.cfg")
+
+
+def _string_list(node: ast.AST) -> list[str] | None:
+    """Literal string elements, else None (no BinOp/Call/f-string)."""
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        return None
+    out = []
+    for elt in node.elts:
+        if not isinstance(elt, ast.Constant) or not isinstance(elt.value, str):
+            return None
+        out.append(elt.value)
+    return out
+
+
+def _clean_requirement_lines(raw: str) -> str | None:
+    """Joined usable requirement lines, else None when empty/unsafe."""
+    lines = []
+    for line in raw.splitlines():
+        code = line.split("#", 1)[0].strip()
+        if not code:
+            continue
+        if code.startswith("-"):
+            return None  # options/includes: not a plain requirement set
+        lines.append(code)
+    return "\n".join(lines) + "\n" if lines else None
+
+
+def _setup_py_requires(text: str) -> str | None:
+    """requirements.in content from setup.py's install_requires, else None.
+
+    Static only (never executes setup.py): literal lists, plus module-level
+    NAME = [...] aliases. Dynamic requirements refuse to guess.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return None
+    literals: dict[str, list[str]] = {}
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            items = _string_list(node.value)
+            if items is not None:
+                literals[node.targets[0].id] = items
+    for child in ast.walk(tree):
+        if not isinstance(child, ast.Call):
+            continue
+        func = child.func
+        is_setup = (isinstance(func, ast.Name) and func.id == "setup") or (
+            isinstance(func, ast.Attribute) and func.attr == "setup"
+        )
+        if not is_setup:
+            continue
+        for kw in child.keywords:
+            if kw.arg == "install_requires":
+                reqs = _string_list(kw.value)
+                if reqs is None and isinstance(kw.value, ast.Name):
+                    reqs = literals.get(kw.value.id)
+                if reqs is None:
+                    return None  # dynamic requirements: refuse to guess
+                return _clean_requirement_lines("\n".join(reqs))
+    return None
+
+
+def _setup_cfg_requires(text: str) -> str | None:
+    """requirements.in content from setup.cfg's install_requires, else None."""
+    try:
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.read_string(text)
+        raw = parser.get("options", "install_requires", fallback="")
+    except (configparser.Error, ValueError):
+        return None
+    return _clean_requirement_lines(raw)
+
+
+def _setup_requires_text(manifest: Path) -> str | None:
+    text = _lock_text(manifest)
+    if text is None:
+        return None
+    if manifest.name == "setup.cfg":
+        return _setup_cfg_requires(text)
+    return _setup_py_requires(text)
+
+
+def _has_content_lines(text: str) -> bool:
+    return any(line.split("#", 1)[0].strip() for line in text.splitlines())
+
+
+def _python_generation_plan(manifest: Path) -> _PythonGenPlan | None:
+    """Executable generation plan for one manifest; None when nothing to do.
+
+    Pipfile → pipenv; [tool.poetry] → poetry; [tool.pdm] → pdm; other
+    [project] → uv; requirements.in → uv pip compile; setup.py/setup.cfg
+    → extract to requirements.in, then compile. Tool-only configs, empty
+    inputs, dynamic setup.py, and setup beside an existing requirements.in
+    (declared input wins; never clobbered) yield None.
+    """
+    name = manifest.name
+    if name == "Pipfile":
+        return _PythonGenPlan("pipenv", ["lock"], "Pipfile.lock")
+    if name == "requirements.in":
+        text = _lock_text(manifest)
+        if text is None or not _has_content_lines(text):
+            return None
+        return _PythonGenPlan(
+            "uv",
+            ["pip", "compile", "requirements.in", "-o", "requirements.txt"],
+            "requirements.txt",
+        )
+    if name in ("setup.py", "setup.cfg"):
+        if (manifest.parent / "requirements.in").is_file():
+            return None
+        text = _setup_requires_text(manifest)
+        if text is None:
+            return None
+        return _PythonGenPlan(
+            "uv",
+            ["pip", "compile", "requirements.in", "-o", "requirements.txt"],
+            "requirements.txt",
+            write_first=("requirements.in", text),
+        )
+    if name != "pyproject.toml":
+        return None
+    text = _lock_text(manifest)
+    if text is None:
+        return None
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    tool = data.get("tool")
+    if isinstance(tool, dict) and isinstance(tool.get("poetry"), dict):
+        return _PythonGenPlan("poetry", ["lock", "--no-interaction"], "poetry.lock")
+    if not isinstance(data.get("project"), dict):
+        return None
+    if isinstance(tool, dict) and isinstance(tool.get("pdm"), dict):
+        return _PythonGenPlan("pdm", ["lock"], "pdm.lock")
+    return _PythonGenPlan("uv", ["lock"], "uv.lock")
+
+
+def _dir_has_scannable_python(directory: Path) -> bool:
+    """True when the dir already holds a scannable Python input."""
+    for name in ("requirements.txt", *PYTHON_LOCK_NAMES):
+        try:
+            if (directory / name).is_file():
+                return True
+        except OSError:
+            continue
+    try:
+        return any(directory.glob("requirements-*.txt"))
+    except OSError:
+        return False
+
+
+def _python_ancestor_owns(workdir: Path, manifest: Path) -> bool:
+    """True when a strict ancestor dir holds a lockable Python manifest.
+
+    Nested manifests under another Python project are members of it (uv
+    workspaces, poetry monorepos): the ancestor's lock covers them, so
+    generating a second lock would manufacture conflicting inputs.
+    """
+    if manifest.parent == workdir:
+        return False
+    try:
+        rel = manifest.parent.relative_to(workdir)
+    except ValueError:
+        return False
+    ancestor = workdir
+    dirs = [workdir]
+    for part in rel.parts[:-1]:
+        ancestor = ancestor / part
+        dirs.append(ancestor)
+    for directory in dirs:
+        for name in ("pyproject.toml", "Pipfile"):
+            candidate = directory / name
+            try:
+                if not candidate.is_file():
+                    continue
+            except OSError:
+                continue
+            if _python_generation_plan(candidate) is not None:
+                return True
+    return False
+
+
+def python_generation_pending(workdir: Path) -> bool:
+    """True when the scan would generate/compile a Python input here.
+
+    Dry-run (no tools): same walk, plans, and skip rules as ensure. The
+    manifest cap is the caller's check (scan skips generation when
+    discovery truncated).
+    """
+    manifests, _ = _walk_collect(
+        workdir, lambda p: p.name in _PYTHON_GENERATABLE, limit=MAX_PYTHON_MANIFESTS
+    )
+    for manifest in manifests:
+        if _python_generation_plan(manifest) is None:
+            continue
+        if _python_ancestor_owns(workdir, manifest):
+            continue
+        if _dir_has_scannable_python(manifest.parent):
+            continue
+        return True
+    return False
+
+
+def ensure_python_lockfiles(workdir: Path, scanned: list[Path]) -> tuple[list[Path], list[str]]:
+    """Generate missing Python locks in-sandbox; (generated locks, notes).
+
+    For every generatable manifest without a scannable input beside it,
+    resolve with the native tool (poetry/pdm/uv/pipenv lock, or uv pip
+    compile for requirements.in / setup.py / setup.cfg) so osv-scanner has
+    pinned versions. Skips dirs that already have one and nested manifests
+    owned by an ancestor project (workspace members). Bounded so the
+    scanned total stays within MAX_PYTHON_MANIFESTS. Failures are named
+    notes, never silent and never fatal to the run.
+    """
+    notes: list[str] = []
+    generated: list[Path] = []
+    compiled = 0
+    budget = MAX_PYTHON_MANIFESTS - len(scanned)
+    if budget <= 0:
+        return generated, notes
+    manifests, hit_limit = _walk_collect(
+        workdir, lambda p: p.name in _PYTHON_GENERATABLE, limit=MAX_PYTHON_MANIFESTS
+    )
+    failures: list[str] = []
+    compile_failures: list[str] = []
+    first_error = ""
+    first_compile_error = ""
+    members = 0
+    for manifest in manifests:
+        if budget <= 0:
+            break
+        plan = _python_generation_plan(manifest)
+        if plan is None:
+            continue
+        if _python_ancestor_owns(workdir, manifest):
+            members += 1
+            continue
+        if _dir_has_scannable_python(manifest.parent):
+            continue
+        is_compile = plan.output not in PYTHON_LOCK_NAMES
+        rel = manifest.relative_to(workdir).as_posix()
+        budget -= 1
+        if plan.write_first is not None:
+            try:
+                (manifest.parent / plan.write_first[0]).write_text(plan.write_first[1])
+            except OSError as exc:
+                compile_failures.append(rel)
+                if not first_compile_error:
+                    first_compile_error = f"cannot write {plan.write_first[0]}: {exc}"[:300]
+                continue
+        try:
+            run_allowlisted(
+                plan.tool,
+                plan.argv,
+                cwd=str(manifest.parent),
+                timeout=LOCKFILE_TIMEOUT_SECONDS,
+                allow_network=True,
+            )
+        except (RuntimeError, TimeoutError) as exc:
+            if is_compile:
+                compile_failures.append(rel)
+                if not first_compile_error:
+                    first_compile_error = str(exc)[:300]
+            else:
+                failures.append(rel)
+                if not first_error:
+                    first_error = str(exc)[:300]
+            continue
+        lock = manifest.parent / plan.output
+        try:
+            exists = lock.is_file()
+        except OSError:
+            exists = False
+        if not exists:
+            if is_compile:
+                compile_failures.append(rel)
+                if not first_compile_error:
+                    first_compile_error = f"{plan.tool} produced no {plan.output}"
+            else:
+                failures.append(rel)
+                if not first_error:
+                    first_error = f"{plan.tool} produced no {plan.output}"
+            continue
+        generated.append(lock)
+        if is_compile:
+            compiled += 1
+    locks = len(generated) - compiled
+    if locks:
+        notes.append(f"python: generated {locks} lockfile(s) in-sandbox")
+    if compiled:
+        notes.append(f"python: compiled {compiled} requirements file(s) in-sandbox")
+    if failures:
+        shown = ", ".join(sorted(failures)[:5])
+        line = f"python: lockfile generation failed for {len(failures)} manifest(s) ({shown})"
+        if first_error:
+            line += f": {first_error}"
+        notes.append(line)
+    if compile_failures:
+        shown = ", ".join(sorted(compile_failures)[:5])
+        line = (
+            f"python: requirements compile failed for {len(compile_failures)} manifest(s) ({shown})"
+        )
+        if first_compile_error:
+            line += f": {first_compile_error}"
+        notes.append(line)
+    if members:
+        notes.append(
+            f"python: {members} nested manifest(s) under another project skipped "
+            "(member of parent lock)"
+        )
+    if hit_limit and budget > 0:
+        notes.append(f"python: lockfile generation candidates capped at {MAX_PYTHON_MANIFESTS}")
+    return generated, notes
+
+
+def discover_python_manifests(workdir: Path) -> tuple[list[Path], bool]:
+    """Scannable Python inputs: top-level first, then a bounded nested walk.
+
+    Legacy top-level order is preserved (requirements.txt,
+    requirements-*.txt, requirements/*.txt, locks); nested matches sort
+    after. The walk never descends into venvs (tracker D18 parity).
+    -r/-c includes resolve to in-repo .txt files so included pins are
+    scanned, bumped, and rescanned with the rest. Returns (files,
+    truncated). Symlinks escaping the repo are excluded.
     """
     found: list[Path] = []
     seen: set[Path] = set()
@@ -441,9 +935,12 @@ def discover_python_manifests(workdir: Path) -> tuple[list[Path], bool]:
             consider(path)
     for name in PYTHON_LOCK_NAMES:
         consider(workdir / name)
+    nested, nested_hit = _walk_collect(workdir, _is_python_scannable, limit=MAX_PYTHON_MANIFESTS)
+    for path in nested:
+        consider(path)
     for path in sorted(_expand_requirement_includes(workdir, found)):
         consider(path)
-    if len(found) > MAX_PYTHON_MANIFESTS:
+    if nested_hit or len(found) > MAX_PYTHON_MANIFESTS:
         return found[:MAX_PYTHON_MANIFESTS], True
     return found, False
 
@@ -452,12 +949,13 @@ def python_unpinned_note(workdir: Path, scanned: list[Path]) -> str:
     """Hint when Python exists but nothing scannable was found (FR-7 D1)."""
     if scanned:
         return ""
-    markers = [n for n in PYTHON_UNPINNED_MARKERS if (workdir / n).is_file()]
+    markers, _ = _walk_collect(workdir, lambda p: p.name in PYTHON_UNPINNED_MARKERS, limit=10)
     if not markers:
         return ""
+    rels = sorted(m.relative_to(workdir).as_posix() for m in markers)
     return (
         "python manifests without pinned lockfiles present "
-        f"({', '.join(sorted(markers))}); add requirements.txt or a lockfile"
+        f"({', '.join(rels)}); add requirements.txt or a lockfile"
     )
 
 
@@ -649,8 +1147,9 @@ def normalize(
 ) -> list[dict]:
     """Collapse osv-scanner JSON to D6 finding drafts. Loud on severity conflict.
 
-    context overrides lockfile_context for non-npm inputs (FR-7): it maps
-    (package, version) to (dependency path, is_dev).
+    context overrides lockfile_context for non-package-lock inputs (FR-7
+    python, yarn/pnpm): it maps (package, version) to (dependency path,
+    is_dev).
     """
     drafts: dict[tuple[str, str], dict] = {}
     index = None
@@ -766,8 +1265,10 @@ def _finish_run(run_id: int, status: RunStatus, notes: list[str]) -> None:
             return
         run.status = status
         run.finished_at = datetime.now(UTC)
-        prior = f"{run.notes}\n" if run.notes else ""
-        run.notes = prior + "\n".join(n for n in notes if n)
+        joined = "\n".join(n for n in notes if n)
+        if joined:
+            prior = f"{run.notes}\n" if run.notes else ""
+            run.notes = prior + joined
 
 
 def run_scan(repo_id: int, run_id: int, *, source_dir: Path | None = None) -> dict:
@@ -779,43 +1280,92 @@ def run_scan(repo_id: int, run_id: int, *, source_dir: Path | None = None) -> di
         if repo is None or run is None:
             raise ValueError(f"Unknown repo {repo_id} or run {run_id}.")
         db.expunge(repo)
-    notes: list[str] = []
     workdir = source_dir
     owned = workdir is None
     try:
         if workdir is None:
+            append_run_note(run_id, f"scan: cloning {repo.name}...")
+            clone_started = time.monotonic()
             workdir = make_workdir(f"scan-{run_id}-")
             clone_repo(repo, workdir)
+            append_run_note(run_id, f"scan: cloned in {time.monotonic() - clone_started:.1f}s")
         from security_agent.policy.readme import sync_repo_readme
 
         readme_note = sync_repo_readme(repo_id, workdir)
         if readme_note:
-            notes.append(readme_note)
+            append_run_note(run_id, readme_note)
         kev = kev_exploited_ids()
+        append_run_note(run_id, f"scan: KEV catalog ready ({len(kev)} exploited ids)")
         per_file: list[list[dict]] = []
-        if (workdir / "package.json").exists() or (workdir / "package-lock.json").exists():
-            lockfile, generated = ensure_lockfile(workdir)
-            if generated:
-                notes.append("lockfile generated in-sandbox (scripts disabled)")
-            per_file.append(normalize(scan_lockfile(lockfile), lockfile, kev))
+        node_targets, node_truncated = discover_node_manifests(workdir)
+        if node_truncated:
+            append_run_note(run_id, f"node: manifest list capped at {MAX_NODE_MANIFESTS}")
+        if not node_targets:
+            append_run_note(run_id, "node: no package.json or lockfiles found; skipped")
         else:
-            notes.append("node: no package.json/package-lock.json; skipped")
+            scanned_count = 0
+            skipped_manifests: list[str] = []
+            for target in node_targets:
+                lock = target.lockfile
+                if lock is None:
+                    anchor = target.manifest
+                    if anchor is not None and anchor.parent == workdir:
+                        lock, generated = ensure_lockfile(workdir)
+                        if generated:
+                            append_run_note(
+                                run_id, "lockfile generated in-sandbox (scripts disabled)"
+                            )
+                    else:
+                        skipped_manifests.append(
+                            anchor.relative_to(workdir).as_posix() if anchor else "?"
+                        )
+                        continue
+                if lock.name == "package-lock.json":
+                    vulns = normalize(scan_lockfile(lock), lock, kev)
+                else:
+                    ctx = npm_context(target.manifest)
+                    vulns = normalize(scan_lockfile(lock), lock, kev, context=ctx)
+                per_file.append(vulns)
+                rel = lock.relative_to(workdir).as_posix() if workdir in lock.parents else lock.name
+                append_run_note(run_id, f"node: {rel}: {len(vulns)} finding(s)")
+                scanned_count += 1
+            if scanned_count:
+                append_run_note(run_id, f"node: scanned {scanned_count} lockfile(s)")
+            if skipped_manifests:
+                append_run_note(
+                    run_id,
+                    f"node: {len(skipped_manifests)} manifest(s) without lockfile skipped "
+                    f"({', '.join(sorted(skipped_manifests)[:5])})",
+                )
         py_files, truncated = discover_python_manifests(workdir)
         if truncated:
-            notes.append(f"python: manifest list capped at {MAX_PYTHON_MANIFESTS}")
+            append_run_note(run_id, f"python: manifest list capped at {MAX_PYTHON_MANIFESTS}")
+        if not truncated:
+            gen_locks, gen_notes = ensure_python_lockfiles(workdir, py_files)
+            for gen_note in gen_notes:
+                append_run_note(run_id, gen_note)
+            py_files = [*py_files, *gen_locks]
         unpinned = python_unpinned_note(workdir, py_files)
         if unpinned:
-            notes.append(f"python: {unpinned}")
+            append_run_note(run_id, f"python: {unpinned}")
         if py_files:
             ctx = python_context(py_files)
             for manifest in py_files:
-                per_file.append(normalize(scan_lockfile(manifest), manifest, kev, context=ctx))
-            notes.append(f"python: scanned {len(py_files)} manifest(s)")
+                vulns = normalize(scan_lockfile(manifest), manifest, kev, context=ctx)
+                per_file.append(vulns)
+                rel = (
+                    manifest.relative_to(workdir).as_posix()
+                    if workdir in manifest.parents
+                    else manifest.name
+                )
+                append_run_note(run_id, f"python: {rel}: {len(vulns)} finding(s)")
+            append_run_note(run_id, f"python: scanned {len(py_files)} manifest(s)")
         # Secrets piggyback the run with or without vuln manifests — a
         # manifest-less repo can still leak secrets. Never fails the run
         # (H3 fetch_signals isolation precedent).
         from security_agent.worker.secrets import SecretError, run_secrets_stage
 
+        append_run_note(run_id, "secrets: scanning workdir...")
         try:
             secret_notes = run_secrets_stage(repo_id, run_id, workdir)
         except (SecretError, RuntimeError, TimeoutError, OSError) as exc:
@@ -831,22 +1381,28 @@ def run_scan(repo_id: int, run_id: int, *, source_dir: Path | None = None) -> di
                 line=f"repo={repo_id} run={run_id} stage-failed",
             )
         if not per_file:
-            notes.append("no supported manifests; nothing to scan")
-            notes.extend(secret_notes)
-            _finish_run(run_id, RunStatus.DONE, notes)
+            if not node_targets and not py_files:
+                append_run_note(run_id, "no supported manifests; nothing to scan")
+            else:
+                append_run_note(run_id, "no scannable lockfiles; nothing to scan")
+            for secret_note in secret_notes:
+                append_run_note(run_id, secret_note)
+            _finish_run(run_id, RunStatus.DONE, [])
             return {"status": RunStatus.DONE.value, "created": 0, "updated": 0, "finding_ids": []}
         drafts, skipped = merge_drafts(per_file)
         if skipped:
-            notes.append(f"cross-ecosystem duplicates skipped: {skipped}")
+            append_run_note(run_id, f"cross-ecosystem duplicates skipped: {skipped}")
+        append_run_note(run_id, f"scan: saving {len(drafts)} finding(s)...")
         created, updated, ids = persist_findings(repo_id, run_id, drafts)
-        notes.append(f"findings: {created} new, {updated} updated")
+        append_run_note(run_id, f"findings: {created} new, {updated} updated")
         from security_agent.policy.enforce import apply_ingest_silence
 
         silenced = apply_ingest_silence(repo_id, ids)
         if silenced:
-            notes.append(f"policy: {silenced} findings silenced by guardrail")
-        notes.extend(secret_notes)
-        _finish_run(run_id, RunStatus.DONE, notes)
+            append_run_note(run_id, f"policy: {silenced} findings silenced by guardrail")
+        for secret_note in secret_notes:
+            append_run_note(run_id, secret_note)
+        _finish_run(run_id, RunStatus.DONE, [])
         from security_agent.worker.deliver import sync_proposal_states
 
         try:
@@ -861,8 +1417,7 @@ def run_scan(repo_id: int, run_id: int, *, source_dir: Path | None = None) -> di
             "finding_ids": ids,
         }
     except (ScanError, RuntimeError, TimeoutError) as exc:
-        notes.append(f"failed: {exc}")
-        _finish_run(run_id, RunStatus.FAILED, notes)
+        _finish_run(run_id, RunStatus.FAILED, [f"failed: {exc}"])
         return {"status": RunStatus.FAILED.value, "error": str(exc)}
     finally:
         if owned and workdir is not None:

@@ -318,6 +318,9 @@ def test_run_scan_end_to_end_with_fixture(tmp_path):
         assert {r.advisory_id for r in rows} == {"CVE-2026-0001", "OSV-2026-1"}
         run = db.get(ScanRun, run_id)
         assert run.status == RunStatus.DONE and "2 new" in (run.notes or "")
+        assert "scan: KEV catalog ready (1 exploited ids)" in (run.notes or "")
+        assert "node: package-lock.json: 2 finding(s)" in (run.notes or "")
+        assert "scan: saving 2 finding(s)..." in (run.notes or "")
     # Second run updates rather than duplicating.
     with session_scope() as db:
         run2 = ScanRun(repo_id=repo.id, trigger="manual")
@@ -385,6 +388,163 @@ def test_run_scan_prod_refuses():
     ):
         with pytest.raises(PermissionError, match="Docker sandbox"):
             run_scan(1, 1)
+
+
+def test_discover_node_manifests_lock_preference(tmp_path):
+    (tmp_path / "package.json").write_text('{"dependencies": {"a": "1"}}')
+    (tmp_path / "yarn.lock").write_text('a@^1:\n  version "1.0.0"\n')
+    (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    targets, truncated = scan_mod.discover_node_manifests(tmp_path)
+    assert truncated is False
+    assert len(targets) == 1
+    assert targets[0].lockfile.name == "yarn.lock"
+    assert targets[0].lock_kind == "yarn"
+    (tmp_path / "package-lock.json").write_text('{"packages": {}}')
+    targets, _ = scan_mod.discover_node_manifests(tmp_path)
+    assert targets[0].lockfile.name == "package-lock.json"
+    assert targets[0].lock_kind == "package-lock"
+
+
+def test_discover_node_manifests_nested_and_stray(tmp_path):
+    (tmp_path / "package.json").write_text('{"dependencies": {"a": "1"}}')
+    (tmp_path / "yarn.lock").write_text("# yarn lockfile v1\n")
+    svc = tmp_path / "svc-a"
+    svc.mkdir()
+    (svc / "package.json").write_text('{"dependencies": {"a": "1"}}')
+    (svc / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    bare = tmp_path / "svc-b"
+    bare.mkdir()
+    (bare / "package.json").write_text('{"dependencies": {"b": "1"}}')
+    ignored = tmp_path / "node_modules" / "evil"
+    ignored.mkdir(parents=True)
+    (ignored / "package.json").write_text('{"dependencies": {"evil": "1"}}')
+    targets, truncated = scan_mod.discover_node_manifests(tmp_path)
+    assert truncated is False
+    by_rel = {t.manifest.relative_to(tmp_path).as_posix(): t for t in targets}
+    assert sorted(by_rel) == ["package.json", "svc-a/package.json", "svc-b/package.json"]
+    assert by_rel["package.json"].lock_kind == "yarn"
+    assert by_rel["svc-a/package.json"].lock_kind == "pnpm"
+    assert by_rel["svc-b/package.json"].lockfile is None
+
+
+def test_discover_node_manifests_stray_lock_scanned(tmp_path):
+    (tmp_path / "yarn.lock").write_text("# yarn lockfile v1\n")
+    targets, truncated = scan_mod.discover_node_manifests(tmp_path)
+    assert truncated is False
+    assert len(targets) == 1
+    assert targets[0].manifest is None
+    assert targets[0].lockfile.name == "yarn.lock"
+
+
+def test_discover_node_manifests_caps(tmp_path, monkeypatch):
+    monkeypatch.setattr(scan_mod, "MAX_NODE_MANIFESTS", 2)
+    for i in range(4):
+        sub = tmp_path / f"svc-{i}"
+        sub.mkdir()
+        (sub / "package.json").write_text("{}")
+        (sub / "yarn.lock").write_text("# yarn lockfile v1\n")
+    targets, truncated = scan_mod.discover_node_manifests(tmp_path)
+    assert truncated is True and len(targets) == 2
+
+
+def test_npm_context_marks_dev_from_package_json(tmp_path):
+    (tmp_path / "package.json").write_text(
+        json.dumps({"dependencies": {"prod-a": "1"}, "devDependencies": {"jest": "29"}})
+    )
+    lock = tmp_path / "yarn.lock"
+    lock.write_text("# yarn lockfile v1\n")
+    osv = {
+        "results": [
+            {
+                "packages": [
+                    {
+                        "package": {"name": "prod-a", "version": "1", "ecosystem": "npm"},
+                        "vulnerabilities": [{"id": "CVE-P"}],
+                    },
+                    {
+                        "package": {"name": "jest", "version": "29", "ecosystem": "npm"},
+                        "vulnerabilities": [{"id": "CVE-D"}],
+                    },
+                ]
+            }
+        ]
+    }
+    ctx = scan_mod.npm_context(tmp_path / "package.json")
+    by_pkg = {d["package"]: d for d in normalize(osv, lock, set(), context=ctx)}
+    assert by_pkg["prod-a"]["scope"].value == "prod"
+    assert by_pkg["jest"]["scope"].value == "dev"
+    assert by_pkg["jest"]["dep_path"] == ["jest"]
+    assert scan_mod.npm_dev_packages(None) == set()
+    assert scan_mod.npm_dev_packages(tmp_path / "missing.json") == set()
+
+
+def test_run_scan_node_yarn_and_nested_pnpm(tmp_path):
+    repo = repos.connect_repo("yarn-r", RepoKind.GIT, url="https://example.com/y.git")
+    with session_scope() as db:
+        run_id = db.scalar(select(ScanRun.id).where(ScanRun.repo_id == repo.id))
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": {"root-pkg": "1"}}))
+    (tmp_path / "yarn.lock").write_text("# yarn lockfile v1\n")
+    svc = tmp_path / "svc"
+    svc.mkdir()
+    (svc / "package.json").write_text(json.dumps({"dependencies": {"svc-pkg": "1"}}))
+    (svc / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+
+    def fake(lockfile):
+        pkg = "root-pkg" if Path(lockfile).name == "yarn.lock" else "svc-pkg"
+        return {
+            "results": [
+                {
+                    "packages": [
+                        {
+                            "package": {"name": pkg, "version": "1", "ecosystem": "npm"},
+                            "vulnerabilities": [{"id": f"CVE-{pkg}"}],
+                        }
+                    ]
+                }
+            ]
+        }
+
+    with (
+        mock.patch.object(scan_mod, "scan_lockfile", side_effect=fake),
+        mock.patch.object(scan_mod, "kev_exploited_ids", return_value=set()),
+    ):
+        result = run_scan(repo.id, run_id, source_dir=tmp_path)
+    assert result["status"] == "done" and result["created"] == 2
+    with session_scope() as db:
+        rows = list(db.scalars(select(Finding).where(Finding.repo_id == repo.id)))
+        assert {(r.package, r.ecosystem) for r in rows} == {
+            ("root-pkg", "npm"),
+            ("svc-pkg", "npm"),
+        }
+        notes = db.get(ScanRun, run_id).notes or ""
+        assert "node: scanned 2 lockfile(s)" in notes
+
+
+def test_run_scan_nested_no_lock_skipped_without_npm(tmp_path):
+    repo = repos.connect_repo("nolock-r", RepoKind.GIT, url="https://example.com/n.git")
+    with session_scope() as db:
+        run_id = db.scalar(select(ScanRun.id).where(ScanRun.repo_id == repo.id))
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": {"a": "1"}}))
+    (tmp_path / "package-lock.json").write_text(json.dumps({"packages": {}}))
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    (bare / "package.json").write_text(json.dumps({"dependencies": {"b": "1"}}))
+    real = scan_mod.run_allowlisted
+
+    def fake_tools(name, args, **kwargs):
+        assert name != "npm", "nested no-lock manifests must not trigger generation"
+        return real(name, args, **kwargs)
+
+    with (
+        mock.patch.object(scan_mod, "scan_lockfile", return_value={"results": []}),
+        mock.patch.object(scan_mod, "kev_exploited_ids", return_value=set()),
+        mock.patch.object(scan_mod, "run_allowlisted", side_effect=fake_tools),
+    ):
+        result = run_scan(repo.id, run_id, source_dir=tmp_path)
+    assert result["status"] == "done"
+    with session_scope() as db:
+        notes = db.get(ScanRun, run_id).notes or ""
+        assert "without lockfile skipped (bare/package.json)" in notes
 
 
 def test_graph_scan_node_runs_real_scan():

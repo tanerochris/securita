@@ -23,12 +23,14 @@ import hashlib
 import json
 import logging
 import shutil
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from security_agent.control.deps import append_check_note
 from security_agent.db.models import (
     Dependency,
     DependencyCheck,
@@ -716,16 +718,26 @@ def run_dependency_check(
     owned = workdir is None
     try:
         if workdir is None:
+            append_check_note(check_id, f"deps: cloning {repo.name}...")
+            clone_started = time.monotonic()
             workdir = make_workdir(f"depcheck-{check_id}-")
             clone_repo(repo, workdir)
+            append_check_note(
+                check_id, f"deps: cloned in {time.monotonic() - clone_started:.1f}s"
+            )
         manifests, truncated = discover_dep_manifests(workdir)
         if truncated:
-            notes.append("manifest walk capped; some manifests unchecked (see tab)")
+            line = "manifest walk capped; some manifests unchecked (see tab)"
+            notes.append(line)
+            append_check_note(check_id, line)
         if not manifests:
-            notes.append("no supported manifests; nothing to track")
+            line = "no supported manifests; nothing to track"
+            notes.append(line)
+            append_check_note(check_id, line)
             prune_absent_packages(repo_id, [], truncated=False)
-            _finish_check(check_id, RunStatus.DONE, notes, worker_id=worker_id)
+            _finish_check(check_id, RunStatus.DONE, [], worker_id=worker_id)
             return {"status": RunStatus.DONE.value, "manifests": 0}
+        append_check_note(check_id, f"deps: found {len(manifests)} manifest(s)")
         peer_ranges: dict[str, dict[str, str]] = {}
         failures = 0
         for manifest in manifests:
@@ -759,20 +771,28 @@ def run_dependency_check(
                         "error": str(exc),
                     },
                 )
-                notes.append(f"{manifest.rel}: check failed ({exc})")
+                line = f"{manifest.rel}: check failed ({exc})"
+                notes.append(line)
+                append_check_note(check_id, line)
             else:
                 _record_manifest_outcome(
                     check_id,
                     {"manifest": manifest.rel, "status": "ok", "packages": len(records)},
                 )
+                append_check_note(
+                    check_id, f"deps: {manifest.rel}: {len(records)} package(s) tracked"
+                )
             peer_ranges[manifest.rel] = dict(manifest.peer_ranges)
             persist_dependencies(repo_id, records)
         if failures and failures == len(manifests):
-            notes.append("all manifests failed")
-            _finish_check(check_id, RunStatus.FAILED, notes, worker_id=worker_id)
+            line = "all manifests failed"
+            notes.append(line)
+            append_check_note(check_id, line)
+            _finish_check(check_id, RunStatus.FAILED, [], worker_id=worker_id)
             _notify_failure(repo_id, check_id, notes)
             return {"status": RunStatus.FAILED.value, "error": "; ".join(notes)}
         prune_absent_packages(repo_id, manifests, truncated=truncated)
+        append_check_note(check_id, "report: assessing updates...")
         outcome = _maybe_report(
             repo_id,
             check_id,
@@ -782,8 +802,7 @@ def run_dependency_check(
             usage_fetch=usage_fetch,
             summary_model=summary_model,
         )
-        notes.extend(outcome.get("notes", []))
-        _finish_check(check_id, RunStatus.DONE, notes, worker_id=worker_id)
+        _finish_check(check_id, RunStatus.DONE, outcome.get("notes", []), worker_id=worker_id)
         with session_scope() as db:
             check_row = db.get(DependencyCheck, check_id)
             if check_row is not None:
@@ -796,8 +815,9 @@ def run_dependency_check(
             "reused_report_id": outcome.get("reused_report_id"),
         }
     except (DependencyCheckError, RuntimeError, TimeoutError) as exc:
-        notes.append(f"failed: {exc}")
-        _finish_check(check_id, RunStatus.FAILED, notes, worker_id=worker_id)
+        line = f"failed: {exc}"
+        notes.append(line)
+        _finish_check(check_id, RunStatus.FAILED, [line], worker_id=worker_id)
         _notify_failure(repo_id, check_id, notes)
         return {"status": RunStatus.FAILED.value, "error": str(exc)}
     finally:
@@ -947,12 +967,16 @@ def _maybe_report(
         _supersede_pending(repo_id)
         return {"hash": current_hash, "report_id": None, "reused_report_id": None}
     sections = []
+    append_check_note(check_id, f"report: assessing {len(reportable)} update(s)...")
     for row in sorted(reportable, key=lambda r: (r.manifest_path, r.package)):
         try:
             if usage_fetch is not None:
                 sites = usage_fetch(str(workdir), row.ecosystem, row.package)
             else:
                 sites = gather_usage(str(workdir), row.ecosystem, row.package)
+            append_check_note(
+                check_id, f"report: {row.package}: {len(sites)} usage site(s)"
+            )
         except (RuntimeError, TimeoutError) as exc:
             sites = []
             notes.append(f"{row.package}: usage search failed ({exc})")
@@ -964,6 +988,7 @@ def _maybe_report(
                 advisories=advisories_for_finding(row.finding_id),
             )
         )
+    append_check_note(check_id, "report: writing summary...")
     try:
         summary, model_backed = generate_summary(sections, model=summary_model)
     except ReportError as exc:

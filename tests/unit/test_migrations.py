@@ -88,6 +88,7 @@ def test_migration_chain_upgrades_and_0007_roundtrips(tmp_path):
     assert "update_set_hash" in _columns(engine, "dependency_checks")
     assert "sections" in _columns(engine, "dependency_reports")
     assert "kind" in _columns(engine, "dashboard_notifications")
+    assert "link" in _columns(engine, "dashboard_notifications")
     assert "notification_id" in _columns(engine, "notification_reads")
     eco = _load("0007_ecosystem")
     _run(engine, eco, direction="downgrade")
@@ -247,6 +248,19 @@ def test_migration_0016_roundtrips(tmp_path):
     assert "policy_block" not in _columns(engine, "findings")
     _run(engine, mod16)
     assert "policy_documents" in sa_inspect(engine).get_table_names()
+
+
+def test_migration_0020_roundtrips(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path}/mig20.db")
+    modules = [_load(name) for name in CHAIN]
+    _run(engine, *modules)
+    assert "link" in _columns(engine, "dashboard_notifications")
+    mod20 = _load("0020_notification_link")
+    _run(engine, mod20, direction="downgrade")
+    assert "link" not in _columns(engine, "dashboard_notifications")
+    assert "kind" in _columns(engine, "dashboard_notifications")
+    _run(engine, mod20)
+    assert "link" in _columns(engine, "dashboard_notifications")
 
 
 def test_migration_0014_roundtrips(tmp_path):

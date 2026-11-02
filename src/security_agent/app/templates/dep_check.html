@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Check #{{ check.id }} · {{ repo.name }} — Securita{% endblock %}
+{% block page_title %}Dependency check{% endblock %}
+{% block content %}
+<h1 class="text-[26px] leading-tight md:text-[30px]">Check #{{ check.id }} <span class="font-medium text-slate-500">· {{ repo.name }}</span></h1>
+<p class="mt-2 text-sm"><a class="font-bold" href="/repos/{{ repo.id }}/dependencies">&larr; Back to dependencies</a></p>
+
+<div class="mt-4 flex flex-wrap gap-2 text-xs font-semibold">
+  {% if check.status.value == "running" %}<span id="runStatus" class="inline-flex items-center gap-1.5 rounded-full bg-brand-primary px-2.5 py-1 text-white"><span class="h-1.5 w-1.5 rounded-full bg-white" aria-hidden="true"></span>running</span>
+  {% elif check.status.value == "done" %}<span id="runStatus" class="inline-flex rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep">done</span>
+  {% else %}<span id="runStatus" class="inline-flex rounded-full bg-brand-navy px-2.5 py-1 text-white">{{ check.status.value }}</span>{% endif %}
+  <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">trigger: {{ check.trigger.value }}</span>
+  <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">started: {{ check.started_at|user_time }}</span>
+  <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">finished: {{ check.finished_at|user_time }}</span>
+  {% if duration_seconds is not none %}<span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">duration: {{ "%.1f"|format(duration_seconds) }}s</span>{% endif %}
+  {% if check.claimed_by %}<span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]" title="Worker that executed this check">worker: {{ check.claimed_by }}</span>{% endif %}
+  {% if check.report_id %}<a class="inline-flex rounded-full bg-white px-2.5 py-1 text-brand-primary shadow-[inset_0_0_0_1px_#E0F2FE]" href="/repos/{{ repo.id }}/dependencies/report/{{ check.report_id }}">report #{{ check.report_id }}</a>{% endif %}
+</div>
+
+<section class="mt-7" aria-labelledby="log-heading" id="liveLog" data-status="{{ check.status.value }}" data-events-url="/repos/{{ repo.id }}/dependencies/checks/{{ check.id }}/events">
+  <div class="flex flex-wrap items-center gap-3">
+    <h2 id="log-heading" class="text-lg">Worker log</h2>
+    {% if check.status.value == "running" %}
+    <span class="inline-flex items-center gap-1.5 rounded-full bg-brand-mist px-2.5 py-1 text-xs font-bold text-brand-deep"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-primary" aria-hidden="true"></span>Live</span>
+    {% endif %}
+    <button class="btn-secondary ml-auto" id="copyLog" type="button"{% if not check.notes %} style="display:none"{% endif %}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+      <span id="copyLogLabel">Copy log</span>
+    </button>
+  </div>
+  <p class="mt-1 text-[13px] text-slate-600">Stage notes the worker recorded for this check, oldest first. Failures land here with their reason.</p>
+  <pre id="workerLog" class="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-brand-navy px-5 py-4 text-[13px] leading-relaxed text-white shadow-card"{% if not check.notes %} style="display:none"{% endif %}>{{ check.notes or "" }}</pre>
+  {% if not check.notes %}
+  <div id="logEmpty" class="mt-3 rounded-xl bg-white px-5 py-6 text-center shadow-card">
+    <p class="text-sm font-bold text-brand-navy">No log lines yet</p>
+    <p class="mt-1 text-[13px] text-slate-600">The check has not recorded anything — it may still be queued on a worker.</p>
+  </div>
+  {% endif %}
+  <script type="text/javascript">
+    (function () {
+      var btn = document.getElementById("copyLog");
+      var label = document.getElementById("copyLogLabel");
+      var log = document.getElementById("workerLog");
+      if (!btn || !log) { return; }
+      btn.addEventListener("click", function () {
+        var text = log.textContent || "";
+        function done(ok) { label.textContent = ok ? "Copied" : "Copy failed"; }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+        } else {
+          var area = document.createElement("textarea");
+          area.value = text;
+          document.body.appendChild(area);
+          area.select();
+          try { done(document.execCommand("copy")); } catch (e) { done(false); }
+          document.body.removeChild(area);
+        }
+      });
+    })();
+  </script>
+</section>
+
+<section class="mt-7" aria-labelledby="manifests-heading">
+  <h2 id="manifests-heading" class="text-lg">Manifests ({{ (check.manifests or [])|length }})</h2>
+  {% if check.manifests %}
+  <div class="brand-table mt-3 overflow-x-auto rounded-xl">
+    <table data-grid data-per-page="10">
+      <thead><tr><th>Manifest</th><th>Status</th><th>Detail</th></tr></thead>
+      <tbody>
+      {% for m in check.manifests %}
+        <tr>
+          <td class="font-mono font-semibold text-brand-navy">{{ m.manifest }}</td>
+          <td>{% if m.status == "ok" %}<span class="inline-flex rounded-full bg-brand-mist px-2.5 py-0.5 text-xs font-bold text-brand-deep">ok</span>{% else %}<span class="inline-flex rounded-full bg-brand-navy px-2.5 py-0.5 text-xs font-bold text-white">{{ m.status }}</span>{% endif %}</td>
+          <td class="text-slate-600">{% if m.error %}{{ m.error }}{% elif m.packages is not none %}{{ m.packages }} packages{% else %}—{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="mt-3 rounded-xl bg-white px-5 py-4 text-[13px] text-slate-600 shadow-card">This check recorded no per-manifest outcomes.</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -20,11 +20,12 @@ only and rejoin when a newer version appears.
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, literal, or_, select, update
 
 from security_agent.audit import get_shared_log
 from security_agent.db.models import (
     Dependency,
+    DependencyCheck,
     DependencyReport,
     DependencyStatus,
     Finding,
@@ -323,6 +324,39 @@ def get_report(report_id: int) -> DependencyReport | None:
         if row is not None:
             db.expunge(row)
         return row
+
+
+def get_check(check_id: int) -> DependencyCheck | None:
+    with session_scope() as db:
+        row = db.get(DependencyCheck, check_id)
+        if row is not None:
+            db.expunge(row)
+        return row
+
+
+def append_check_note(check_id: int, line: str) -> None:
+    """Append one progress line to a check's worker log, committed at once.
+
+    Mirrors lifecycle.append_run_note: stages emit as they work so the
+    detail page streams progress live. Atomic UPDATE-concat, so a
+    concurrent manifest-outcome write never loses a line.
+    """
+    if not line:
+        return
+    with session_scope() as db:
+        db.execute(
+            update(DependencyCheck)
+            .where(DependencyCheck.id == check_id)
+            .values(
+                notes=case(
+                    (
+                        or_(DependencyCheck.notes.is_(None), DependencyCheck.notes == ""),
+                        literal(line),
+                    ),
+                    else_=DependencyCheck.notes + "\n" + line,
+                )
+            )
+        )
 
 
 # --- Silences (D21): decline-this-version + ignore-package ---

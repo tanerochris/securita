@@ -28,3 +28,10 @@ def test_worker_image_avoids_stale_debian_docker():
         if stripped.startswith("#"):
             continue
         assert "docker.io" not in stripped, line
+
+
+def test_worker_image_ships_git_for_host_backend_clones():
+    """Host-backend clones exec git in this image (dev); it must be installed."""
+    body = _dockerfile()
+    assert " git " in " ".join(body.split())
+    assert "git --version" in body  # build-time smoke check

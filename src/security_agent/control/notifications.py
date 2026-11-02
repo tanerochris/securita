@@ -1,11 +1,10 @@
 """Dashboard notification centre pool (D16/D17).
 
 Stored (unread/read, per user, linked to repo and report) with a header
-icon + listing. In v1 the pool is fed only by dependency events: new
-combined report, patch result after an approved update, and check
-failure. Built for extension — existing email/Slack/webhook
-notifications are NOT retrofitted here; that migration is a follow-up
-reusing the same record.
+icon + listing. Dependency events (new combined report, patch result
+after an approved update, check failure) originate here; every other
+channel event mirrors in from `notify_event` once it is actually sent,
+so the pool matches the channel stream.
 
 Dependency rows are dashboard-only by default; whether they also fan
 out by email is a per-install opt-in on the Settings page (D16).
@@ -24,6 +23,18 @@ log = logging.getLogger(__name__)
 KINDS = ("deps-report", "deps-patch", "deps-failure")
 
 
+def _safe_link(link: str | None) -> str | None:
+    """Internal dashboard paths only; anything else renders unlinkable.
+
+    The listing interpolates this into an href, so non-path values
+    (javascript:, data:, absolute http(s), protocol-relative //) are
+    dropped rather than stored.
+    """
+    if not link or not link.startswith("/") or link.startswith("//"):
+        return None
+    return link[:500]
+
+
 def push_notification(
     kind: str,
     title: str,
@@ -32,8 +43,13 @@ def push_notification(
     repo_id: int | None = None,
     report_id: int | None = None,
     check_id: int | None = None,
+    link: str | None = None,
 ) -> DashboardNotification:
-    """Append one pool record; dependency email fan-out stays opt-in (D16)."""
+    """Append one pool record; dependency email fan-out stays opt-in (D16).
+
+    `link` is a dashboard path for mirrored channel events; dependency
+    rows leave it empty and link via repo/report instead.
+    """
     with session_scope() as db:
         row = DashboardNotification(
             kind=kind[:50],
@@ -42,6 +58,7 @@ def push_notification(
             repo_id=repo_id,
             report_id=report_id,
             check_id=check_id,
+            link=_safe_link(link),
         )
         db.add(row)
         db.flush()
@@ -95,6 +112,7 @@ def list_notifications(user_id: int, *, limit: int = 50) -> list[dict]:
                 "check_id": r.check_id,
                 "title": r.title,
                 "body": r.body,
+                "link": r.link,
                 "created_at": r.created_at,
                 "read": r.id in read_ids,
             }

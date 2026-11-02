@@ -5,6 +5,27 @@ import pytest
 from security_agent.sandbox import tools
 
 
+@pytest.fixture(autouse=True)
+def _pin_host_backend(monkeypatch):
+    """Tool-mechanic tests run below backend resolution: pin host.
+
+    Real settings use SANDBOX_BACKEND=auto, which would probe `docker
+    image inspect` through the mocked subprocess and pollute the
+    per-process auto cache across tests.
+    """
+    import security_agent.sandbox as sandbox_mod
+
+    settings = mock.Mock(
+        is_prod=False,
+        sandbox_backend="host",
+        sandbox_image="img:test",
+        sandbox_work_root="",
+        sandbox_network="none",
+    )
+    monkeypatch.setattr("security_agent.config.get_settings", lambda: settings)
+    monkeypatch.setattr(sandbox_mod, "_AUTO_BACKEND_CACHE", {})
+
+
 def test_unknown_tool_fails_closed():
     with pytest.raises(PermissionError, match="outside the manifest"):
         tools.run_allowlisted("rm", ["-rf", "/"])
@@ -69,3 +90,11 @@ def test_child_env_allowlist_drops_secrets(monkeypatch):
 def test_child_env_rejects_secret_pattern_keys():
     with pytest.raises(ValueError, match="secret-pattern"):
         tools.run_allowlisted("git", ["--version"], env={"API_TOKEN": "x"})
+
+
+def test_missing_tool_binary_fails_actionable():
+    with (
+        mock.patch.object(tools.subprocess, "run", side_effect=FileNotFoundError("git")),
+        pytest.raises(RuntimeError, match="binary not found.*SANDBOX_BACKEND=docker"),
+    ):
+        tools.run_allowlisted("git", ["clone", "x"])

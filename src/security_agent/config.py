@@ -41,7 +41,8 @@ class Settings(BaseSettings):
     news_relevance_enabled: bool = Field(default=True, alias="NEWS_RELEVANCE_ENABLED")
     news_relevance_max_pairs: int = Field(default=50, alias="NEWS_RELEVANCE_MAX_PAIRS")
     secrets_config_path: str = Field(default="", alias="SECRETS_CONFIG_PATH")
-    # Sandbox execution (follow-up #1): auto = docker in prod, host otherwise.
+    # Sandbox execution (follow-up #1): auto = docker in prod, else
+    # docker when the CLI and image are usable, host otherwise.
     sandbox_backend: str = Field(default="auto", alias="SANDBOX_BACKEND")
     sandbox_image: str = Field(default="security-agent-sandbox:latest", alias="SANDBOX_IMAGE")
     sandbox_work_root: str = Field(default="", alias="SANDBOX_WORK_ROOT")

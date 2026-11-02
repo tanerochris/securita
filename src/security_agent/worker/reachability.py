@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import sys
+import time
 import tokenize
 import warnings
 from collections import deque
@@ -20,7 +21,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from security_agent.control.lifecycle import apply_verdict
+from security_agent.control.lifecycle import append_run_note, apply_verdict, reopen_run
 from security_agent.db.models import Finding, FindingStatus, Repo, RunStatus, ScanRun
 from security_agent.db.session import session_scope
 from security_agent.sandbox import assert_host_execution_allowed, make_workdir
@@ -809,15 +810,6 @@ def _fail_run(run_id: int, error: str) -> None:
         run.notes = prior + f"reachability failed: {error}"
 
 
-def _note_run(run_id: int, line: str) -> None:
-    with session_scope() as db:
-        run = db.get(ScanRun, run_id)
-        if run is None:
-            return
-        prior = f"{run.notes}\n" if run.notes else ""
-        run.notes = prior + line
-
-
 def run_reachability(repo_id: int, run_id: int, *, source_dir: Path | None = None) -> dict:
     """Verdict every non-terminal finding; flips drive the lifecycle (FR-3 D4)."""
     assert_host_execution_allowed()
@@ -827,17 +819,31 @@ def run_reachability(repo_id: int, run_id: int, *, source_dir: Path | None = Non
         if repo is None or run is None:
             raise ValueError(f"Unknown repo {repo_id} or run {run_id}.")
         db.expunge(repo)
+    reopen_run(run_id)
     workdir = source_dir
     owned = workdir is None
     try:
         if workdir is None:
+            append_run_note(run_id, "reachability: cloning...")
+            clone_started = time.monotonic()
             workdir = make_workdir(f"reach-{run_id}-")
             clone_repo(repo, workdir)
+            append_run_note(
+                run_id, f"reachability: cloned in {time.monotonic() - clone_started:.1f}s"
+            )
+        append_run_note(run_id, "reachability: building call graphs...")
         node_graph = analyze(workdir)
         py_graph = analyze_python(workdir)
+        append_run_note(
+            run_id,
+            f"reachability: graphs built "
+            f"({len(node_graph['roots'])} node files, {len(py_graph['roots'])} python files)",
+        )
+        findings = _repo_findings(repo_id)
+        append_run_note(run_id, f"reachability: scoring {len(findings)} finding(s)...")
         reachable = unreachable = 0
         verdict_ids: list[int] = []
-        for finding in _repo_findings(repo_id):
+        for index, finding in enumerate(findings, start=1):
             eco = (finding.ecosystem or "").lower()
             if eco == "pypi":
                 outcome = verdict_for_package_python(py_graph, finding.package)
@@ -852,13 +858,21 @@ def run_reachability(repo_id: int, run_id: int, *, source_dir: Path | None = Non
             verdict_ids.append(verdict.id)
             reachable += is_reach
             unreachable += not is_reach
-        _note_run(run_id, f"reachability: {reachable} reachable, {unreachable} silent")
+            if index % 50 == 0:
+                append_run_note(run_id, f"reachability: scored {index}/{len(findings)}...")
+        append_run_note(run_id, f"reachability: {reachable} reachable, {unreachable} silent")
         if node_graph.get("truncated") or py_graph.get("truncated"):
-            _note_run(run_id, "reachability: file count exceeded cap; verdicts fail open")
+            append_run_note(
+                run_id, "reachability: file count exceeded cap; verdicts fail open"
+            )
         if node_graph.get("fail_open_files"):
-            _note_run(run_id, f"reachability unparsed files: {node_graph['fail_open_files']}")
+            append_run_note(
+                run_id, f"reachability unparsed files: {node_graph['fail_open_files']}"
+            )
         if py_graph.get("fail_open_files"):
-            _note_run(run_id, f"python reachability unparsed files: {py_graph['fail_open_files']}")
+            append_run_note(
+                run_id, f"python reachability unparsed files: {py_graph['fail_open_files']}"
+            )
         return {
             "status": "done",
             "reachable": reachable,

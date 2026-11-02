@@ -273,3 +273,16 @@ def test_notifications_pool_and_badge():
     assert resp.status_code == 303
     badge = client.get("/notifications/count")
     assert "unread" not in badge.text
+
+
+def test_notifications_page_links_mirrored_channel_events():
+    from security_agent.control import notifications as notif
+
+    _login_as(Role.OWNER)
+    notif.push_notification(
+        "secret-alert", "live secret: test-rule", body="rotate it", link="/repos/1"
+    )
+    resp = client.get("/notifications")
+    assert resp.status_code == 200
+    assert "live secret: test-rule" in resp.text
+    assert 'href="/repos/1"' in resp.text

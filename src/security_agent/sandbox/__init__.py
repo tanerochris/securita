@@ -1,10 +1,13 @@
 """Sandbox execution policy (FR-14, NFR-1/NFR-2). Host execution banned in prod."""
 
 import enum
+import logging
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 class ExecutionPolicy(enum.StrEnum):
@@ -17,12 +20,34 @@ def resolve_policy() -> ExecutionPolicy:
     return ExecutionPolicy.DOCKER
 
 
+# Auto-resolution probes once per process: resolve_backend() runs on every
+# tool call, and `docker image inspect` is far too slow to repeat there.
+# Keyed on the inputs so explicit backend flips never read stale results.
+_AUTO_BACKEND_CACHE: dict[tuple[str, bool, str], str] = {}
+
+
+def _docker_usable(docker: str, image: str) -> bool:
+    """True when the daemon answers and the sandbox image is present."""
+    try:
+        subprocess.run(  # noqa: S603 - fixed argv, image is one arg
+            [docker, "image", "inspect", image],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return False
+    return True
+
+
 def resolve_backend() -> str:
     """Execution backend: 'docker' (fresh container per tool call) or 'host'.
 
-    SANDBOX_BACKEND=auto (default) resolves to docker in prod and host
-    elsewhere. Prod never falls back to host: a missing Docker CLI or
-    sandbox image fails the run loud instead of executing on the host.
+    SANDBOX_BACKEND=auto (default) resolves to docker in prod and, outside
+    prod, to docker whenever the CLI and sandbox image are usable, else
+    host. Prod never falls back to host: a missing Docker CLI or sandbox
+    image fails the run loud instead of executing on the host.
     """
     from security_agent.config import get_settings as live_settings
 
@@ -31,7 +56,19 @@ def resolve_backend() -> str:
     raw = raw.strip().lower() if isinstance(raw, str) else "auto"
     if raw in ("docker", "host"):
         return raw
-    return "docker" if s.is_prod else "host"
+    if s.is_prod:
+        return "docker"
+    image = getattr(s, "sandbox_image", "") or "security-agent-sandbox:latest"
+    key = (raw, False, image)
+    cached = _AUTO_BACKEND_CACHE.get(key)
+    if cached is not None:
+        return cached
+    docker = shutil.which("docker")
+    backend = "docker" if docker and _docker_usable(docker, image) else "host"
+    if backend == "host":
+        log.debug("sandbox auto resolved to host (docker CLI/image unusable)")
+    _AUTO_BACKEND_CACHE[key] = backend
+    return backend
 
 
 def assert_allowed(policy: ExecutionPolicy) -> None:

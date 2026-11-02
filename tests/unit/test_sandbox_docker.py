@@ -202,6 +202,85 @@ def test_assert_sandbox_image_skipped_on_host_backend(monkeypatch):
     run.assert_not_called()
 
 
+def _auto_settings(*, prod: bool):
+    return mock.Mock(
+        is_prod=prod,
+        sandbox_backend="auto",
+        sandbox_image="security-agent-sandbox:test",
+        sandbox_work_root="",
+        sandbox_network="none",
+    )
+
+
+def test_auto_in_prod_is_docker_without_probing(monkeypatch):
+    import security_agent.sandbox as sandbox_mod
+
+    run = mock.Mock(side_effect=AssertionError("must not shell out"))
+    monkeypatch.setattr(sandbox_mod.subprocess, "run", run)
+    monkeypatch.setattr(sandbox_mod, "_AUTO_BACKEND_CACHE", {})
+    with mock.patch("security_agent.config.get_settings", return_value=_auto_settings(prod=True)):
+        assert sandbox_mod.resolve_backend() == "docker"
+    run.assert_not_called()
+
+
+def test_auto_prefers_docker_when_usable(monkeypatch):
+    import security_agent.sandbox as sandbox_mod
+
+    monkeypatch.setattr(sandbox_mod.subprocess, "run", lambda *a, **k: _fake_proc(0))
+    monkeypatch.setattr(sandbox_mod, "_AUTO_BACKEND_CACHE", {})
+    with (
+        mock.patch("security_agent.config.get_settings", return_value=_auto_settings(prod=False)),
+        mock.patch("shutil.which", return_value="/usr/bin/docker"),
+    ):
+        assert sandbox_mod.resolve_backend() == "docker"
+
+
+def test_auto_falls_back_to_host_without_docker_cli(monkeypatch):
+    import security_agent.sandbox as sandbox_mod
+
+    run = mock.Mock(side_effect=AssertionError("must not shell out"))
+    monkeypatch.setattr(sandbox_mod.subprocess, "run", run)
+    monkeypatch.setattr(sandbox_mod, "_AUTO_BACKEND_CACHE", {})
+    with (
+        mock.patch("security_agent.config.get_settings", return_value=_auto_settings(prod=False)),
+        mock.patch("shutil.which", return_value=None),
+    ):
+        assert sandbox_mod.resolve_backend() == "host"
+    run.assert_not_called()
+
+
+def test_auto_falls_back_to_host_without_sandbox_image(monkeypatch):
+    import subprocess as stdlib_subprocess
+
+    import security_agent.sandbox as sandbox_mod
+
+    def missing(*args, **kwargs):
+        raise stdlib_subprocess.CalledProcessError(1, args[0])
+
+    monkeypatch.setattr(sandbox_mod.subprocess, "run", missing)
+    monkeypatch.setattr(sandbox_mod, "_AUTO_BACKEND_CACHE", {})
+    with (
+        mock.patch("security_agent.config.get_settings", return_value=_auto_settings(prod=False)),
+        mock.patch("shutil.which", return_value="/usr/bin/docker"),
+    ):
+        assert sandbox_mod.resolve_backend() == "host"
+
+
+def test_auto_probes_once_per_process(monkeypatch):
+    import security_agent.sandbox as sandbox_mod
+
+    run = mock.Mock(return_value=_fake_proc(0))
+    monkeypatch.setattr(sandbox_mod.subprocess, "run", run)
+    monkeypatch.setattr(sandbox_mod, "_AUTO_BACKEND_CACHE", {})
+    with (
+        mock.patch("security_agent.config.get_settings", return_value=_auto_settings(prod=False)),
+        mock.patch("shutil.which", return_value="/usr/bin/docker"),
+    ):
+        assert sandbox_mod.resolve_backend() == "docker"
+        assert sandbox_mod.resolve_backend() == "docker"
+    assert run.call_count == 1
+
+
 def _volume_settings():
     return mock.Mock(
         is_prod=True,

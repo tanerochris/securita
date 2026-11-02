@@ -6,9 +6,9 @@
 <p class="mt-2 text-sm"><a class="font-bold" href="/repos/{{ repo.id }}">&larr; Back to {{ repo.name }}</a></p>
 
 <div class="mt-4 flex flex-wrap gap-2 text-xs font-semibold">
-  {% if run.status.value == "running" %}<span class="inline-flex items-center gap-1.5 rounded-full bg-brand-primary px-2.5 py-1 text-white"><span class="h-1.5 w-1.5 rounded-full bg-white" aria-hidden="true"></span>running</span>
-  {% elif run.status.value == "done" %}<span class="inline-flex rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep">done</span>
-  {% else %}<span class="inline-flex rounded-full bg-brand-navy px-2.5 py-1 text-white">{{ run.status.value }}</span>{% endif %}
+  {% if run.status.value == "running" %}<span id="runStatus" class="inline-flex items-center gap-1.5 rounded-full bg-brand-primary px-2.5 py-1 text-white"><span class="h-1.5 w-1.5 rounded-full bg-white" aria-hidden="true"></span>running</span>
+  {% elif run.status.value == "done" %}<span id="runStatus" class="inline-flex rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep">done</span>
+  {% else %}<span id="runStatus" class="inline-flex rounded-full bg-brand-navy px-2.5 py-1 text-white">{{ run.status.value }}</span>{% endif %}
   <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">trigger: {{ run.trigger.value }}</span>
   <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">started: {{ run.started_at|user_time }}</span>
   <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">finished: {{ run.finished_at|user_time }}</span>
@@ -17,19 +17,25 @@
   {% if run.parked %}<span class="inline-flex rounded-full bg-brand-navy px-2.5 py-1 text-white">parked: {{ run.park_reason or "cost cap" }}</span>{% endif %}
 </div>
 
-<section class="mt-7" aria-labelledby="log-heading">
+<section class="mt-7" aria-labelledby="log-heading" id="liveLog" data-status="{{ run.status.value }}" data-events-url="/repos/{{ repo.id }}/runs/{{ run.id }}/events">
   <div class="flex flex-wrap items-center gap-3">
     <h2 id="log-heading" class="text-lg">Worker log</h2>
-    {% if run.notes %}
-    <button class="btn-secondary ml-auto" id="copyLog" type="button">
+    {% if run.status.value == "running" %}
+    <span class="inline-flex items-center gap-1.5 rounded-full bg-brand-mist px-2.5 py-1 text-xs font-bold text-brand-deep"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-primary" aria-hidden="true"></span>Live</span>
+    {% endif %}
+    <button class="btn-secondary ml-auto" id="copyLog" type="button"{% if not run.notes %} style="display:none"{% endif %}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
       <span id="copyLogLabel">Copy log</span>
     </button>
-    {% endif %}
   </div>
   <p class="mt-1 text-[13px] text-slate-600">Stage notes the worker recorded for this run, oldest first. Failures land here with their reason.</p>
-  {% if run.notes %}
-  <pre id="workerLog" class="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-brand-navy px-5 py-4 text-[13px] leading-relaxed text-white shadow-card">{{ run.notes }}</pre>
+  <pre id="workerLog" class="mt-3 overflow-x-auto whitespace-pre-wrap rounded-xl bg-brand-navy px-5 py-4 text-[13px] leading-relaxed text-white shadow-card"{% if not run.notes %} style="display:none"{% endif %}>{{ run.notes or "" }}</pre>
+  {% if not run.notes %}
+  <div id="logEmpty" class="mt-3 rounded-xl bg-white px-5 py-6 text-center shadow-card">
+    <p class="text-sm font-bold text-brand-navy">No log lines yet</p>
+    <p class="mt-1 text-[13px] text-slate-600">The run has not recorded anything — it may still be queued on a worker.</p>
+  </div>
+  {% endif %}
   <script type="text/javascript">
     (function () {
       var btn = document.getElementById("copyLog");
@@ -52,12 +58,6 @@
       });
     })();
   </script>
-  {% else %}
-  <div class="mt-3 rounded-xl bg-white px-5 py-6 text-center shadow-card">
-    <p class="text-sm font-bold text-brand-navy">No log lines yet</p>
-    <p class="mt-1 text-[13px] text-slate-600">The run has not recorded anything — it may still be queued on a worker.</p>
-  </div>
-  {% endif %}
 </section>
 
 <div class="mt-7 grid grid-cols-1 gap-6 lg:grid-cols-2">

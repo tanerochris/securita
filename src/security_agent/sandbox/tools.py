@@ -294,6 +294,14 @@ def run_allowlisted(
                     timeout=timeout,
                     env=child_env if exec_cwd is not None or exec_argv is argv else None,
                 )
+            except FileNotFoundError as exc:
+                missing = exec_argv[0] if exec_argv else name
+                hint = (
+                    "Install it, or run the worker with SANDBOX_BACKEND=docker."
+                    if exec_argv is argv
+                    else "The docker CLI disappeared mid-run; reinstall the worker image."
+                )
+                raise RuntimeError(f"tool {name!r} binary not found ({missing!r}). {hint}") from exc
             except subprocess.TimeoutExpired as exc:
                 raise TimeoutError(f"{name} timed out after {timeout}s") from exc
             stdout = _read_head(out_file, max_output)

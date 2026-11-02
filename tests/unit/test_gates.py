@@ -290,7 +290,10 @@ def test_run_merge_executes_approved_skips_pending():
         result = gates.run_merge(repo.id, run_id, [approved_pid, pending_pid])
     assert result == {"status": "done", "merged": [approved_pid], "skipped": [pending_pid]}
     with session_scope() as db:
-        assert "merge: 1 merged, 1 skipped" in (db.get(ScanRun, run_id).notes or "")
+        notes = db.get(ScanRun, run_id).notes or ""
+        assert "merge: 1 merged, 1 skipped" in notes
+        assert f"merge: proposal #{approved_pid} merged" in notes
+        assert f"merge: proposal #{pending_pid} skipped (no approval gate)" in notes
     with pytest.raises(ValueError, match="Unknown repo"):
         gates.run_merge(999999, run_id, [])
 

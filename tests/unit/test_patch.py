@@ -105,6 +105,107 @@ def _scan_fake(*, stuck_versions=frozenset()):
     return mock.patch.object(patch_mod, "scan_lockfile", side_effect=fake)
 
 
+def _git_repo_yarn(path: Path, manifest: dict, lock_version: str = "1.0.0") -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "package.json").write_text(json.dumps(manifest, indent=2))
+    (path / "yarn.lock").write_text(
+        f'# yarn lockfile v1\nleft-pad@^{lock_version}:\n  version "{lock_version}"\n'
+    )
+    tools.run_allowlisted("git", ["init", str(path)])
+    tools.run_allowlisted("git", ["-C", str(path), "add", "."])
+    tools.run_allowlisted("git", ["-C", str(path), *_GIT_IDENTITY, "commit", "-m", "x"])
+    return path
+
+
+def _git_repo_pnpm(path: Path, manifest: dict, lock_version: str = "1.0.0") -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "package.json").write_text(json.dumps(manifest, indent=2))
+    (path / "pnpm-lock.yaml").write_text(
+        f"lockfileVersion: '9.0'\npackages:\n  /left-pad@{lock_version}:\n"
+    )
+    tools.run_allowlisted("git", ["init", str(path)])
+    tools.run_allowlisted("git", ["-C", str(path), "add", "."])
+    tools.run_allowlisted("git", ["-C", str(path), *_GIT_IDENTITY, "commit", "-m", "x"])
+    return path
+
+
+def _yarn_install_fake(*, version="1.22.19"):
+    """Fakes yarn install by syncing yarn.lock to package.json; bans npm."""
+    real = tools.run_allowlisted
+
+    def fake(name, args, **kwargs):
+        if name == "yarn" and args[:1] == ["--version"]:
+            return version + "\n"
+        if name == "yarn" and args[:1] == ["install"]:
+            workdir = Path(kwargs["cwd"])
+            manifest = json.loads((workdir / "package.json").read_text())
+            pinned = manifest["dependencies"]["left-pad"].lstrip("^~")
+            (workdir / "yarn.lock").write_text(
+                f'# yarn lockfile v1\nleft-pad@^{pinned}:\n  version "{pinned}"\n'
+            )
+            return ""
+        if name == "npm":
+            raise AssertionError(f"yarn repos must not invoke npm: {args}")
+        return real(name, args, **kwargs)
+
+    return mock.patch.object(patch_mod, "run_allowlisted", side_effect=fake)
+
+
+def _pnpm_install_fake():
+    """Fakes pnpm install by syncing pnpm-lock.yaml to package.json; bans npm."""
+    real = tools.run_allowlisted
+
+    def fake(name, args, **kwargs):
+        if name == "pnpm" and args[:1] == ["install"]:
+            workdir = Path(kwargs["cwd"])
+            manifest = json.loads((workdir / "package.json").read_text())
+            pinned = manifest["dependencies"]["left-pad"].lstrip("^~")
+            (workdir / "pnpm-lock.yaml").write_text(
+                f"lockfileVersion: '9.0'\npackages:\n  /left-pad@{pinned}:\n"
+            )
+            return ""
+        if name == "npm":
+            raise AssertionError(f"pnpm repos must not invoke npm: {args}")
+        return real(name, args, **kwargs)
+
+    return mock.patch.object(patch_mod, "run_allowlisted", side_effect=fake)
+
+
+def _native_scan_fake():
+    """osv responses that follow yarn.lock/pnpm-lock.yaml state."""
+
+    def fake(lockfile):
+        lockfile = Path(lockfile)
+        text = lockfile.read_text()
+        version = ""
+        if lockfile.name == "yarn.lock":
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("version") and '"' in stripped:
+                    version = stripped.split('"')[1]
+        elif lockfile.name == "pnpm-lock.yaml":
+            for line in text.splitlines():
+                stripped = line.strip().rstrip(":")
+                if stripped.startswith("/left-pad@"):
+                    version = stripped.split("@")[-1]
+        if version == "1.0.0":
+            return {
+                "results": [
+                    {
+                        "packages": [
+                            {
+                                "package": {"name": "left-pad", "version": version},
+                                "vulnerabilities": [{"id": "CVE-2026-0001"}],
+                            }
+                        ]
+                    }
+                ]
+            }
+        return {"results": []}
+
+    return mock.patch.object(patch_mod, "scan_lockfile", side_effect=fake)
+
+
 def _seed_repo(tag: str = "patch-r"):
     return repos.connect_repo(tag, RepoKind.GIT, url=f"https://example.com/{tag}.git")
 
@@ -173,6 +274,50 @@ def test_refresh_lockfile_uses_long_timeout(tmp_path):
     assert fake.call_args[1]["timeout"] == patch_mod.LOCKFILE_TIMEOUT_SECONDS
 
 
+def test_refresh_lockfile_native_argv(tmp_path):
+    calls = []
+
+    def fake(name, args, **kwargs):
+        calls.append((name, list(args)))
+        if args[:1] == ["--version"]:
+            return "1.22.19\n"
+        return ""
+
+    with mock.patch.object(patch_mod, "run_allowlisted", side_effect=fake):
+        refresh_lockfile(tmp_path, "pnpm")
+    assert calls == [("pnpm", ["install", "--lockfile-only", "--ignore-scripts"])]
+    calls.clear()
+    with mock.patch.object(patch_mod, "run_allowlisted", side_effect=fake):
+        refresh_lockfile(tmp_path, "yarn")
+    assert calls == [
+        ("yarn", ["--version"]),
+        ("yarn", ["install", "--ignore-scripts"]),
+    ]
+
+
+def test_refresh_lockfile_yarn_berry_skips_build_and_cleans_litter(tmp_path):
+    calls = []
+
+    def fake(name, args, **kwargs):
+        calls.append((name, list(args)))
+        if args[:1] == ["--version"]:
+            return "4.4.0\n"
+        (tmp_path / ".yarn").mkdir(exist_ok=True)
+        (tmp_path / ".yarn" / "cache.zip").write_text("x")
+        (tmp_path / ".pnp.cjs").write_text("x")
+        return ""
+
+    with mock.patch.object(patch_mod, "run_allowlisted", side_effect=fake):
+        refresh_lockfile(tmp_path, "yarn")
+    assert ("yarn", ["install", "--mode", "skip-build", "--no-immutable"]) in calls
+    assert not (tmp_path / ".yarn").exists()
+    assert not (tmp_path / ".pnp.cjs").exists()
+    (tmp_path / ".yarn").mkdir()  # pre-existing berry state is left alone
+    with mock.patch.object(patch_mod, "run_allowlisted", side_effect=fake):
+        refresh_lockfile(tmp_path, "yarn")
+    assert (tmp_path / ".yarn").is_dir()
+
+
 def test_diff_files_ignores_node_modules(tmp_path):
     workdir = _git_repo(tmp_path, {"dependencies": {"left-pad": "^1.0.0"}})
     (workdir / "node_modules" / "x").mkdir(parents=True)
@@ -191,6 +336,109 @@ def test_patch_one_transitive_uses_overrides(tmp_path):
             expunged = db.get(Repo, repo.id)
         outcome = patch_one(expunged, _finding(fid), template, patch_mod.null_adapt)
     assert outcome["outcome"] == "proposed" and outcome["target"] == "1.0.1"
+
+
+def test_root_npm_kind_detection(tmp_path):
+    kind = patch_mod.root_npm_kind
+    assert kind(tmp_path) == "package-lock"  # nothing: legacy npm path
+    (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    assert kind(tmp_path) == "pnpm"
+    (tmp_path / "yarn.lock").write_text("# yarn lockfile v1\n")
+    assert kind(tmp_path) == "yarn"
+    (tmp_path / "package-lock.json").write_text("{}")
+    assert kind(tmp_path) == "package-lock"
+
+
+def test_apply_bump_transitive_refuses_yarn_pnpm(tmp_path):
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": {"top": "^2.0.0"}}))
+    with pytest.raises(PatchError, match="resolutions"):
+        apply_bump(tmp_path, "left-pad", "1.0.1", kind="yarn")
+    with pytest.raises(PatchError, match="pnpm"):
+        apply_bump(tmp_path, "left-pad", "1.0.1", kind="pnpm")
+    apply_bump(tmp_path, "top", "2.0.1", kind="yarn")  # direct: manager-agnostic
+    assert json.loads((tmp_path / "package.json").read_text())["dependencies"]["top"] == "^2.0.1"
+
+
+def test_patch_one_yarn_direct_success_no_stray_lock(tmp_path):
+    repo = _seed_repo("yarnpatch-r")
+    fid = _seed_reachable(repo.id, "left-pad", ["1.0.1"])
+    template = _git_repo_yarn(tmp_path, {"dependencies": {"left-pad": "^1.0.0"}})
+    with _yarn_install_fake(), _native_scan_fake():
+        with session_scope() as db:
+            expunged = db.get(Repo, repo.id)
+        outcome = patch_one(expunged, _finding(fid), template, patch_mod.null_adapt)
+    assert outcome["outcome"] == "proposed" and outcome["target"] == "1.0.1"
+    with session_scope() as db:
+        proposal = db.get(Proposal, outcome["proposal_id"])
+        assert proposal is not None
+        assert "package-lock.json" not in (proposal.patch or "")
+        assert "yarn.lock" in (proposal.patch or "")
+    assert _finding(fid).status == FindingStatus.PROPOSED
+
+
+def test_patch_one_pnpm_direct_success_no_stray_lock(tmp_path):
+    repo = _seed_repo("pnpmpatch-r")
+    fid = _seed_reachable(repo.id, "left-pad", ["1.0.1"])
+    template = _git_repo_pnpm(tmp_path, {"dependencies": {"left-pad": "^1.0.0"}})
+    with _pnpm_install_fake(), _native_scan_fake():
+        with session_scope() as db:
+            expunged = db.get(Repo, repo.id)
+        outcome = patch_one(expunged, _finding(fid), template, patch_mod.null_adapt)
+    assert outcome["outcome"] == "proposed" and outcome["target"] == "1.0.1"
+    with session_scope() as db:
+        proposal = db.get(Proposal, outcome["proposal_id"])
+        assert proposal is not None
+        assert "package-lock.json" not in (proposal.patch or "")
+        assert "pnpm-lock.yaml" in (proposal.patch or "")
+
+
+def test_patch_one_yarn_transitive_refuses(tmp_path):
+    repo = _seed_repo("yarntrans-r")
+    fid = _seed_reachable(repo.id, "left-pad", ["1.0.1"])
+    template = _git_repo_yarn(tmp_path, {"dependencies": {"top": "^2.0.0"}})
+    with _yarn_install_fake(), _native_scan_fake():
+        with session_scope() as db:
+            expunged = db.get(Repo, repo.id)
+        outcome = patch_one(expunged, _finding(fid), template, patch_mod.null_adapt)
+    assert outcome["outcome"] == "unpatchable"
+    assert "resolutions" in outcome["reason"]
+    assert _finding(fid).status == FindingStatus.UNPATCHABLE
+
+
+def test_validate_patch_yarn_kind(tmp_path):
+    workdir = _git_repo_yarn(tmp_path, {"dependencies": {"left-pad": "^1.0.0"}})
+    pre = {("left-pad", "CVE-2026-0001")}
+    fixed_key = ("left-pad", "CVE-2026-0001")
+    with _native_scan_fake():
+        apply_bump(workdir, "left-pad", "1.0.1", kind="yarn")
+        (workdir / "yarn.lock").write_text(
+            '# yarn lockfile v1\nleft-pad@^1.0.1:\n  version "1.0.1"\n'
+        )
+        assert (
+            validate_patch(
+                workdir,
+                "left-pad",
+                "1.0.1",
+                [],
+                pre,
+                {fixed_key},
+                lock_name="yarn.lock",
+                kind="yarn",
+            )
+            == []
+        )
+        (workdir / "stray.js").write_text("x\n")
+        violations = validate_patch(
+            workdir,
+            "left-pad",
+            "1.0.1",
+            [],
+            pre,
+            {fixed_key},
+            lock_name="yarn.lock",
+            kind="yarn",
+        )
+        assert any("non-dependency" in v for v in violations)
 
 
 def test_compare_test_runs():
@@ -375,7 +623,11 @@ def test_run_patch_groups_same_package_into_one_proposal(tmp_path):
         result = run_patch(repo.id, run_id, source_dir=template)
     assert len(result["proposal_ids"]) == 1
     with session_scope() as db:
-        assert "patch: 1 proposed" in (db.get(ScanRun, run_id).notes or "")
+        notes = db.get(ScanRun, run_id).notes or ""
+        assert "patch: 1 proposed" in notes
+        assert "patch: 2 candidate(s)" in notes
+        assert "patch: left-pad (unknown, 2 finding(s))..." in notes
+        assert "proposed (#" in notes
     with session_scope() as db:
         proposal = db.get(Proposal, result["proposal_ids"][0])
         assert proposal is not None and len(proposal.finding_ids) == 2
