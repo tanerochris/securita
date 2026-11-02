@@ -22,7 +22,7 @@
       <div class="flex flex-wrap items-center gap-2.5">
         <span class="inline-flex rounded-full bg-brand-navy px-2.5 py-1 text-xs font-bold text-white">#{{ g.id }} {{ g.action.value }}</span>
         <span class="text-sm font-bold text-brand-navy">{{ ctx.repo_name }}</span>
-        <span class="ml-auto inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Expires {{ g.expires_at }} UTC</span>
+        <span class="ml-auto inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Expires {{ g.expires_at|user_time }}</span>
       </div>
       <p class="mt-2.5 max-w-3xl break-all text-sm text-slate-600">{{ g.target }}</p>
       {% if ctx.advisories %}
@@ -126,8 +126,8 @@
           <td class="text-slate-600">{{ d.owner_id }}</td>
           <td class="text-slate-600">{{ d.delegate_id }}</td>
           <td>{% for c in (d.classes or ["all"]) %}<span class="mr-1 inline-flex rounded-md bg-brand-mist px-2 py-0.5 text-xs font-bold text-brand-deep">{{ c }}</span>{% endfor %}</td>
-          <td class="text-slate-600">{{ d.expires_at }}</td>
-          <td class="text-slate-600">{{ d.revoked_at or "active" }}</td>
+          <td class="text-slate-600">{{ d.expires_at|user_time }}</td>
+          <td class="text-slate-600">{{ d.revoked_at|user_time("active") }}</td>
           <td>{% if not d.revoked_at %}<form method="post" action="/approvals/delegations/{{ d.id }}/revoke" data-confirm data-confirm-title="Revoke this delegation?" data-confirm-message="The delegate will immediately lose approval rights granted by this delegation. Past decisions stay recorded." data-confirm-action="Revoke"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-danger" type="submit">Revoke</button></form>{% endif %}</td>
         </tr>
       {% endfor %}

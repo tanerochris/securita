@@ -125,8 +125,8 @@ def scan_now(repo_id: int, _user: User = Depends(require_developer)):
     from security_agent.worker.scheduler import trigger_manual_scan
 
     _repo_or_404(repo_id)
-    trigger_manual_scan(repo_id)
-    return RedirectResponse(f"/repos/{repo_id}", status_code=303)
+    run = trigger_manual_scan(repo_id)
+    return RedirectResponse(f"/repos/{repo_id}/runs/{run.id}", status_code=303)
 
 
 @router.post("/{repo_id}/merge-token", dependencies=[Depends(require_csrf)])

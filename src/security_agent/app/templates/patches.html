@@ -33,7 +33,7 @@
     <tbody>
     {% for p in proposals %}
       <tr>
-        <td class="font-bold text-brand-navy">#{{ p.id }}<span class="mt-0.5 block text-xs font-medium text-slate-500">{{ p.created_at }}</span></td>
+        <td class="font-bold text-brand-navy">#{{ p.id }}<span class="mt-0.5 block text-xs font-medium text-slate-500">{{ p.created_at|user_time }}</span></td>
         <td>
           <span class="font-semibold text-brand-navy">{{ p.package_from }} → {{ p.package_to }}</span>
           {% if p.branch %}<span class="mt-0.5 block max-w-[260px] truncate text-xs text-slate-500" title="{{ p.branch }} → {{ p.base_branch or 'main' }}">{{ p.branch }} → {{ p.base_branch or "main" }}</span>{% endif %}

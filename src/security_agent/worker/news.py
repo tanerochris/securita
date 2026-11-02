@@ -245,6 +245,8 @@ def fetch_hn_stories(query: str) -> list[dict]:
         try:
             raw = str(hit.get("created_at", "")).replace("Z", "+00:00")
             published = datetime.fromisoformat(raw)
+            if published.tzinfo is None:
+                published = published.replace(tzinfo=UTC)
         except ValueError:
             pass
         summary = (hit.get("story_text") or "").strip()[:_SUMMARY_CHARS] or None

@@ -21,7 +21,7 @@
       <p class="mt-1 truncate text-sm text-slate-600" title="{{ repo.url or repo.local_path }}">{{ repo.url or repo.local_path }}</p>
       <p class="mt-2 flex flex-wrap gap-2 text-xs font-semibold">
         <span class="inline-flex items-center gap-1.5 rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Every {{ repo.schedule_hours }}h</span>
-        <span class="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">Last scan: {{ repo.last_scan_at or "never" }}</span>
+        <span class="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">Last scan: {{ repo.last_scan_at|user_time("never") }}</span>
         <span class="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">{{ active|length }} needs action · {{ open_secrets|length }} open secrets</span>
       </p>
     </div>
@@ -45,6 +45,33 @@
     </a>
   </div>
 </div>
+
+{% if can_scan %}
+{% set ns = namespace(running=None) %}
+{% for r in runs %}{% if r.status.value == "running" and ns.running is none %}{% set ns.running = r %}{% endif %}{% endfor %}
+<section class="mt-7 rounded-xl bg-brand-navy p-5 text-white shadow-card" aria-labelledby="scan-heading">
+  <h2 id="scan-heading" class="text-lg !text-white">Scan now</h2>
+  {% if ns.running %}
+  <p class="mt-1.5 text-sm leading-relaxed text-brand-mist">A scan is already running. Results land in Findings when it finishes.</p>
+  <div class="mt-4 flex flex-wrap items-center gap-2.5">
+    <button type="button" disabled aria-busy="true">
+      <span class="btn-spinner" aria-hidden="true"></span>
+      Scanning…
+    </button>
+    <a class="btn-secondary" href="/repos/{{ repo.id }}/runs/{{ ns.running.id }}">View run #{{ ns.running.id }}</a>
+  </div>
+  {% else %}
+  <p class="mt-1.5 text-sm leading-relaxed text-brand-mist">Run a full vulnerability and secrets scan right away, outside the {{ repo.schedule_hours }}h schedule. Results land in Findings when it finishes.</p>
+  <form class="mt-4" method="post" action="/repos/{{ repo.id }}/scan">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21"/></svg>
+      Trigger manual scan
+    </button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
 
 <section class="mt-7" aria-labelledby="action-heading">
   <div class="flex flex-wrap items-baseline gap-3">
@@ -126,7 +153,7 @@
         {% for cve in (item.cve_ids or [])[:4] %}
         <span class="inline-flex rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep">{{ cve }}</span>
         {% endfor %}
-        <span class="ml-auto font-semibold text-slate-500">{{ item.published_at.strftime("%Y-%m-%d") if item.published_at else "undated" }}</span>
+        <span class="ml-auto font-semibold text-slate-500">{{ item.published_at|user_time("undated", "date") }}</span>
       </div>
       <p class="mt-2 text-[15px] font-bold leading-snug text-brand-deep">
         {% if item.url and (item.url.startswith('http://') or item.url.startswith('https://')) %}<a class="hover:text-brand-primary" href="{{ item.url }}">{{ item.title }}</a>{% else %}{{ item.title }}{% endif %}
@@ -194,7 +221,7 @@
               {% elif r.status.value == "done" %}<span class="inline-flex rounded-full bg-brand-mist px-2.5 py-0.5 text-xs font-bold text-brand-deep">done</span>
               {% else %}<span class="inline-flex rounded-full bg-brand-navy px-2.5 py-0.5 text-xs font-bold text-white">{{ r.status.value }}</span>{% endif %}
             </td>
-            <td class="text-slate-600">{{ r.started_at }}</td>
+            <td class="text-slate-600">{{ r.started_at|user_time }}</td>
           </tr>
         {% endfor %}
         </tbody>
@@ -203,29 +230,14 @@
     {% else %}
     <div class="mt-3 rounded-xl bg-white px-5 py-6 text-center shadow-card">
       <p class="text-sm font-bold text-brand-navy">No runs yet</p>
-      <p class="mt-1 text-[13px] text-slate-600">Trigger a scan below to run the first check.</p>
+      <p class="mt-1 text-[13px] text-slate-600">Trigger a scan above to run the first check.</p>
     </div>
     {% endif %}
   </section>
 </div>
 
-<div class="mt-7 grid grid-cols-1 gap-6 lg:grid-cols-2">
-  {% if can_scan %}
-  <section class="rounded-xl bg-brand-navy p-5 text-white shadow-card" aria-labelledby="scan-heading">
-    <h2 id="scan-heading" class="text-lg !text-white">Scan now</h2>
-    <p class="mt-1.5 text-sm leading-relaxed text-brand-mist">Run a full vulnerability and secrets scan right away, outside the {{ repo.schedule_hours }}h schedule. Results land in Findings when it finishes.</p>
-    <form class="mt-4" method="post" action="/repos/{{ repo.id }}/scan">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button type="submit">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21"/></svg>
-        Trigger manual scan
-      </button>
-    </form>
-  </section>
-  {% endif %}
-
-  {% if is_owner %}
-  <section class="rounded-xl bg-white p-5 shadow-card" aria-labelledby="cred-heading">
+{% if is_owner %}
+<section class="mt-7 rounded-xl bg-white p-5 shadow-card" aria-labelledby="cred-heading">
     <h2 id="cred-heading" class="text-lg">Credentials</h2>
     <p class="mt-1.5 text-sm leading-relaxed text-slate-600">Tokens are stored encrypted and never shown again. Saving replaces the previous value.</p>
     <form class="mt-4" method="post" action="/repos/{{ repo.id }}/merge-token">
@@ -250,9 +262,8 @@
         </button>
       </form>
     </div>
-  </section>
-  {% endif %}
-</div>
+</section>
+{% endif %}
 
 {% if can_manage %}
 <section class="mt-6 rounded-xl bg-white p-5 shadow-[inset_0_0_0_1px_#FECDD3,0_1px_3px_rgba(8,47,73,0.08)]" aria-labelledby="danger-heading">

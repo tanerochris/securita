@@ -2,7 +2,7 @@
 
 import secrets
 
-from fastapi import Cookie, Depends, Form, HTTPException, status
+from fastapi import Cookie, Depends, Form, HTTPException, Request, status
 from itsdangerous import BadSignature, TimestampSigner
 
 from security_agent.app import accounts as svc
@@ -28,12 +28,16 @@ def require_csrf(csrf: str = Form("")) -> None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bad CSRF token.") from exc
 
 
-def get_current_user(session: str | None = Cookie(default=None, alias=SESSION_COOKIE)) -> User:
+def get_current_user(
+    request: Request,
+    session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> User:
     if not session:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Login required.")
     user = svc.validate_session(session)
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired.")
+    request.state.user = user
     return user
 
 

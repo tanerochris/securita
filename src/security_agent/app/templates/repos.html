@@ -28,7 +28,7 @@
         </td>
         <td class="max-w-[420px] truncate text-slate-600" title="{{ r.url or r.local_path }}">{{ r.url or r.local_path }}</td>
         <td>{{ r.schedule_hours }}h</td>
-        <td class="text-slate-600">{{ r.last_scan_at or "never" }}</td>
+        <td class="text-slate-600">{{ r.last_scan_at|user_time("never") }}</td>
         {% if can_manage %}
         <td>
           <form method="post" action="/repos/{{ r.id }}/disconnect" data-confirm data-confirm-title="Disconnect this repository?" data-confirm-message="Findings, patch proposals, approvals, scan history, and stored tokens will be permanently deleted from the agent. The repository on the provider (or the local folder) stays untouched. This cannot be undone." data-confirm-action="Disconnect">

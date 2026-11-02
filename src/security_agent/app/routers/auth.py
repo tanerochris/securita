@@ -115,6 +115,35 @@ def logout(session: str | None = Cookie(default=None, alias=SESSION_COOKIE)):
     return resp
 
 
+@router.get("/profile", response_class=HTMLResponse)
+def profile(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+):
+    from security_agent.app.main import templates
+
+    sessions = [
+        {
+            "created_at": s.created_at,
+            "last_seen_at": s.last_seen_at,
+            "current": s.session_id == session,
+        }
+        for s in svc.list_user_sessions(user.id)
+    ]
+    return templates.TemplateResponse(
+        request,
+        "profile.html",
+        {
+            "user": user,
+            "csrf": make_csrf(),
+            "sessions": sessions,
+            "has_password": bool(user.password_hash),
+            "totp_on": bool(user.totp_secret),
+        },
+    )
+
+
 @router.get("/reset", response_class=HTMLResponse)
 def reset_request_form(request: Request):
     from security_agent.app.main import templates
@@ -162,21 +191,35 @@ def _dashboard_context() -> dict:
     """Live control-plane counts + previews for the dashboard (FR-12)."""
     from datetime import UTC, datetime, timedelta
 
-    from sqlalchemy import func, nulls_last, select
+    from sqlalchemy import func, nulls_last, or_, select
 
     from security_agent.db.models import (
         Approval,
+        Dependency,
+        DependencyStatus,
         Finding,
         FindingStatus,
         GateStatus,
         Repo,
+        RunStatus,
+        ScanRun,
         SecretFinding,
         SecretStatus,
+        Verdict,
     )
     from security_agent.db.session import session_scope
 
     active = [FindingStatus.OPEN, FindingStatus.PROPOSED]
+    open_secret_states = [
+        SecretStatus.OPEN,
+        SecretStatus.PROPOSED,
+        SecretStatus.AWAITING_ROTATION,
+    ]
     with session_scope() as db:
+        bind = db.get_bind()
+        is_sqlite = bind is not None and bind.dialect.name == "sqlite"
+        day_ago = datetime.now(UTC) - timedelta(hours=24)
+        sql_day_ago = day_ago.replace(tzinfo=None) if is_sqlite else day_ago
         repo_count = db.scalar(select(func.count()).select_from(Repo)) or 0
         open_findings = (
             db.scalar(
@@ -220,15 +263,7 @@ def _dashboard_context() -> dict:
             db.scalar(
                 select(func.count())
                 .select_from(SecretFinding)
-                .where(
-                    SecretFinding.status.in_(
-                        [
-                            SecretStatus.OPEN,
-                            SecretStatus.PROPOSED,
-                            SecretStatus.AWAITING_ROTATION,
-                        ]
-                    )
-                )
+                .where(SecretFinding.status.in_(open_secret_states))
             )
             or 0
         )
@@ -269,13 +304,129 @@ def _dashboard_context() -> dict:
         recent_repos = list(db.scalars(select(Repo).order_by(Repo.id.desc()).limit(5)))
         for repo_row in recent_repos:
             db.expunge(repo_row)
+        # Scan health: in-flight runs (parked ones surface via the cost
+        # queue instead) and runs that failed in the last 24h.
+        running_runs = []
+        for run_row in db.scalars(
+            select(ScanRun)
+            .where(ScanRun.status == RunStatus.RUNNING, ScanRun.parked.is_(False))
+            .order_by(ScanRun.started_at.desc())
+            .limit(10)
+        ):
+            repo = db.get(Repo, run_row.repo_id)
+            running_runs.append(
+                {
+                    "id": run_row.id,
+                    "repo_id": run_row.repo_id,
+                    "repo_name": repo.name if repo else f"repo#{run_row.repo_id}",
+                    "trigger": run_row.trigger,
+                    "started_at": run_row.started_at,
+                }
+            )
+        failed_runs = []
+        for run_row in db.scalars(
+            select(ScanRun)
+            .where(
+                ScanRun.status == RunStatus.FAILED,
+                or_(
+                    ScanRun.started_at >= sql_day_ago,
+                    ScanRun.finished_at >= sql_day_ago,
+                ),
+            )
+            .order_by(ScanRun.id.desc())
+            .limit(10)
+        ):
+            repo = db.get(Repo, run_row.repo_id)
+            failed_runs.append(
+                {
+                    "id": run_row.id,
+                    "repo_id": run_row.repo_id,
+                    "repo_name": repo.name if repo else f"repo#{run_row.repo_id}",
+                    "trigger": run_row.trigger,
+                    "finished_at": run_row.finished_at or run_row.started_at,
+                }
+            )
+        # Secrets preview: live/unknown first (fail-open alerting), dead last.
+        top_secrets = []
+        for secret_row in db.scalars(
+            select(SecretFinding)
+            .where(SecretFinding.status.in_(open_secret_states))
+            .order_by((SecretFinding.liveness == "dead"), SecretFinding.id.desc())
+            .limit(5)
+        ):
+            repo = db.get(Repo, secret_row.repo_id)
+            top_secrets.append(
+                {
+                    "repo_id": secret_row.repo_id,
+                    "repo_name": repo.name if repo else f"repo#{secret_row.repo_id}",
+                    "rule_id": secret_row.rule_id,
+                    "path": secret_row.path,
+                    "liveness": secret_row.liveness,
+                    "status": secret_row.status,
+                }
+            )
+        # Dependencies with security fixes awaiting a human decision.
+        dep_actionable = [
+            DependencyStatus.UPDATE_AVAILABLE,
+            DependencyStatus.AWAITING_DECISION,
+        ]
+        deps_security_count = (
+            db.scalar(
+                select(func.count())
+                .select_from(Dependency)
+                .where(
+                    Dependency.security.is_(True),
+                    Dependency.status.in_(dep_actionable),
+                )
+            )
+            or 0
+        )
+        deps_security_top = []
+        for dep_row in db.scalars(
+            select(Dependency)
+            .where(
+                Dependency.security.is_(True),
+                Dependency.status.in_(dep_actionable),
+            )
+            .order_by(Dependency.id.desc())
+            .limit(5)
+        ):
+            repo = db.get(Repo, dep_row.repo_id)
+            deps_security_top.append(
+                {
+                    "repo_id": dep_row.repo_id,
+                    "repo_name": repo.name if repo else f"repo#{dep_row.repo_id}",
+                    "package": dep_row.package,
+                    "installed_version": dep_row.installed_version,
+                    "latest_version": dep_row.latest_version,
+                    "update_class": dep_row.update_class,
+                    "status": dep_row.status,
+                }
+            )
+        # Repo names + latest reachability verdict for the top findings.
+        finding_repos = {}
+        for finding_row in top_findings:
+            repo = db.get(Repo, finding_row.repo_id)
+            finding_repos[finding_row.id] = {
+                "id": finding_row.repo_id,
+                "name": repo.name if repo else f"repo#{finding_row.repo_id}",
+            }
+        finding_reachable: dict = {f.id: None for f in top_findings}
+        if top_findings:
+            seen: set = set()
+            for finding_id, reachable in db.execute(
+                select(Verdict.finding_id, Verdict.reachable)
+                .where(Verdict.finding_id.in_([f.id for f in top_findings]))
+                .order_by(Verdict.id.desc())
+            ).all():
+                if finding_id not in seen:
+                    seen.add(finding_id)
+                    finding_reachable[finding_id] = reachable
         # Findings opened per day, last 7 days (area-chart series).
         today = datetime.now(UTC).date()
         days = [today - timedelta(days=6 - i) for i in range(7)]
         start = datetime.combine(days[0], datetime.min.time(), tzinfo=UTC)
         per_day = dict.fromkeys(days, 0)
-        bind = db.get_bind()
-        is_sqlite = bind is not None and bind.dialect.name == "sqlite"
         sql_start = start.replace(tzinfo=None) if is_sqlite else start
         for (created,) in db.execute(
             select(Finding.created_at).where(Finding.created_at >= sql_start)
@@ -310,6 +461,16 @@ def _dashboard_context() -> dict:
     def _pct(part: int) -> int:
         return round(100 * part / open_findings) if open_findings else 0
 
+    from security_agent.control.cost import (
+        effective_run_cap,
+        list_parked_runs,
+        spend_cap_state,
+        spend_today,
+        usage_summary,
+    )
+    from security_agent.policy.rules import list_rules
+    from security_agent.worker.news_intel import list_feed
+
     return {
         "repo_count": repo_count,
         "open_findings": open_findings,
@@ -317,8 +478,22 @@ def _dashboard_context() -> dict:
         "pending_approvals": pending_approvals,
         "open_secrets": open_secrets,
         "top_findings": top_findings,
+        "finding_repos": finding_repos,
+        "finding_reachable": finding_reachable,
         "pending_preview": pending_preview,
         "recent_repos": recent_repos,
+        "running_runs": running_runs,
+        "failed_runs": failed_runs,
+        "spend_today": spend_today(),
+        "run_spend_cap": effective_run_cap(),
+        "ai_usage": usage_summary(),
+        "spend_cap": spend_cap_state(),
+        "parked_runs": list_parked_runs(),
+        "top_secrets": top_secrets,
+        "deps_security_count": deps_security_count,
+        "deps_security_top": deps_security_top,
+        "latest_news": list_feed(limit=5),
+        "pending_rules": len(list_rules(status="pending")),
         "trend_total": trend_total,
         "trend_points": trend_points,
         "trend_area": trend_area,

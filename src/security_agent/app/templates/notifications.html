@@ -21,7 +21,7 @@
   <li class="rounded-xl bg-white px-5 py-4 shadow-card {% if not n.read %}shadow-[inset_3px_0_0_0_#0284C7,0_1px_3px_rgba(8,47,73,0.08)]{% endif %}">
     <div class="flex flex-wrap items-center gap-2 text-xs font-bold">
       <span class="inline-flex rounded-full {% if n.read %}bg-brand-mist text-brand-deep{% else %}bg-brand-navy text-white{% endif %} px-2.5 py-1">{{ n.kind }}</span>
-      <span class="ml-auto font-semibold text-slate-500">{{ n.created_at }}</span>
+      <span class="ml-auto font-semibold text-slate-500">{{ n.created_at|user_time }}</span>
     </div>
     <p class="mt-2 text-[15px] font-bold leading-snug text-brand-deep">
       {% if n.report_id and n.repo_id %}<a class="hover:text-brand-primary" href="/repos/{{ n.repo_id }}/dependencies/report/{{ n.report_id }}">{{ n.title }}</a>

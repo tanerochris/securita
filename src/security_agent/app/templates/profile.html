@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Profile — Securita{% endblock %}
+{% block page_title %}Profile{% endblock %}
+{% block content %}
+<div class="flex min-w-0 items-start gap-3.5">
+  <span class="grid h-12 w-12 flex-none place-items-center rounded-full bg-brand-navy text-lg font-extrabold text-white" aria-hidden="true">{{ user.email[0]|upper }}</span>
+  <div class="min-w-0">
+    <h1 class="truncate text-[26px] leading-tight md:text-[30px]">{{ user.email }}</h1>
+    <p class="mt-2 flex flex-wrap gap-2 text-xs font-semibold">
+      <span class="inline-flex items-center gap-1.5 rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep">{{ user.role }}</span>
+      <span class="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">Member since {{ user.created_at|user_time("—", "date") }}</span>
+    </p>
+  </div>
+</div>
+
+<div class="mt-7 grid grid-cols-1 gap-6 lg:grid-cols-2">
+  <section class="rounded-xl bg-white p-5 shadow-card" aria-labelledby="account-heading">
+    <h2 id="account-heading" class="text-lg">Account</h2>
+    <dl class="mt-3 space-y-3 text-sm">
+      <div class="flex flex-wrap items-baseline justify-between gap-3">
+        <dt class="font-semibold text-brand-deep">Email</dt>
+        <dd class="font-bold text-brand-navy">{{ user.email }}</dd>
+      </div>
+      <div class="flex flex-wrap items-baseline justify-between gap-3">
+        <dt class="font-semibold text-brand-deep">Role</dt>
+        <dd class="font-bold text-brand-navy">{{ user.role }}</dd>
+      </div>
+      <div class="flex flex-wrap items-baseline justify-between gap-3">
+        <dt class="font-semibold text-brand-deep">Sign-in method</dt>
+        <dd class="font-bold text-brand-navy">{% if user.sso_provider %}SSO ({{ user.sso_provider }}){% elif has_password %}Password{% else %}Invited — no password set{% endif %}</dd>
+      </div>
+      <div class="flex flex-wrap items-baseline justify-between gap-3">
+        <dt class="font-semibold text-brand-deep">Two-factor</dt>
+        <dd>{% if totp_on %}<span class="inline-flex rounded-full bg-brand-navy px-2.5 py-0.5 text-xs font-bold text-white">on</span>{% else %}<span class="inline-flex rounded-full bg-brand-mist px-2.5 py-0.5 text-xs font-bold text-brand-deep">off</span>{% endif %}</dd>
+      </div>
+    </dl>
+    <form class="mt-5" method="post" action="/logout">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="btn-secondary" type="submit">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
+        Log out
+      </button>
+    </form>
+  </section>
+
+  <section aria-labelledby="sessions-heading">
+    <h2 id="sessions-heading" class="text-lg">Active sessions ({{ sessions|length }})</h2>
+    <p class="mt-1 text-[13px] text-slate-600">Sessions expire after 24 hours, or 30 minutes idle.</p>
+    {% if sessions %}
+    <div class="brand-table mt-3 overflow-x-auto rounded-xl">
+      <table data-grid data-per-page="10">
+        <thead><tr><th>Started</th><th>Last seen</th><th></th></tr></thead>
+        <tbody>
+        {% for s in sessions %}
+          <tr>
+            <td class="text-slate-600">{{ s.created_at|user_time }}</td>
+            <td class="text-slate-600">{{ s.last_seen_at|user_time }}</td>
+            <td>{% if s.current %}<span class="inline-flex rounded-full bg-brand-primary px-2.5 py-0.5 text-xs font-bold text-white">this session</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="mt-3 rounded-xl bg-white px-5 py-6 text-center shadow-card">
+      <p class="text-sm font-bold text-brand-navy">No active sessions</p>
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

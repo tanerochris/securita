@@ -5,7 +5,6 @@
 <div class="flex flex-wrap items-start gap-4">
   <div class="min-w-0">
     <h1 class="text-[28px] leading-tight md:text-[32px]">Security overview</h1>
-    <p class="mt-2 text-sm text-slate-600">Signed in as <span class="font-semibold text-brand-navy">{{ user.email }}</span> <span class="text-slate-500">({{ user.role }})</span></p>
   </div>
   <div class="ml-auto flex flex-wrap gap-2.5">
     <a class="btn-secondary" href="/repos">
@@ -27,6 +26,48 @@
 </div>
 {% endif %}
 
+{% if pending_rules %}
+<div class="mt-5 flex flex-wrap items-center gap-3 rounded-xl bg-brand-mist px-4 py-3" role="status">
+  <svg class="text-brand-primary" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h7"/></svg>
+  <p class="text-sm text-brand-deep"><strong class="font-bold text-brand-navy">{{ pending_rules }} policy rule{{ "s" if pending_rules != 1 }} awaiting confirmation.</strong> Drafted rules block nothing until confirmed.</p>
+  <a class="ml-auto text-sm font-bold text-brand-primary hover:text-brand-deep" href="/policies">Review rules &rarr;</a>
+</div>
+{% endif %}
+
+{% if running_runs or failed_runs or parked_runs %}
+<section class="mt-5 rounded-xl bg-brand-navy p-5 text-white shadow-card" aria-labelledby="ops-heading" id="ops-status">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 id="ops-heading" class="text-base !text-white">Scan operations</h2>
+    <span class="ml-auto text-[13px] text-brand-mist">Spend today {{ spend_today|usd }} · {% if run_spend_cap > 0 %}per-run cap {{ run_spend_cap|usd }}{% else %}no per-run cap{% endif %}</span>
+  </div>
+  {% if running_runs %}
+  <div class="mt-3 flex flex-wrap items-center gap-2 text-[13px]">
+    <span class="inline-flex items-center gap-1.5 rounded-full bg-brand-primary px-2.5 py-1 text-xs font-bold text-white"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-white" aria-hidden="true"></span>Scanning now ({{ running_runs|length }})</span>
+    {% for r in running_runs %}
+    <a class="rounded-full bg-white/10 px-2.5 py-1 font-semibold text-white hover:bg-white/20" href="/repos/{{ r.repo_id }}/runs/{{ r.id }}">#{{ r.id }} {{ r.repo_name }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if failed_runs %}
+  <div class="mt-3 flex flex-wrap items-center gap-2 text-[13px]">
+    <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-xs font-bold text-brand-navy">{{ failed_runs|length }} failed in 24h</span>
+    {% for r in failed_runs %}
+    <a class="rounded-full bg-white/10 px-2.5 py-1 font-semibold text-white hover:bg-white/20" href="/repos/{{ r.repo_id }}/runs/{{ r.id }}">#{{ r.id }} {{ r.repo_name }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if parked_runs %}
+  <div class="mt-3 flex flex-wrap items-center gap-2 text-[13px]">
+    <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-xs font-bold text-brand-navy">{{ parked_runs|length }} parked by cost cap</span>
+    {% for r in parked_runs %}
+    <a class="rounded-full bg-white/10 px-2.5 py-1 font-semibold text-white hover:bg-white/20" href="/repos/{{ r.repo_id }}/runs/{{ r.id }}">#{{ r.id }} {{ r.repo_name }}</a>
+    {% endfor %}
+    <a class="ml-auto text-[13px] font-bold text-brand-sky hover:text-white" href="/settings">Resume in settings &rarr;</a>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
 <!-- KPI cards: real counts from the control plane -->
 <div class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
   <a class="stat-card" href="/repos">
@@ -37,7 +78,7 @@
     <span class="mt-2 block text-[32px] font-extrabold leading-none tracking-tight text-brand-navy">{{ repo_count }}</span>
     <span class="mt-1.5 block text-[13px] text-slate-600">Connected and scheduled for scans</span>
   </a>
-  <a class="stat-card" href="/repos">
+  <a class="stat-card" href="#attention-heading">
     <span class="flex items-center justify-between gap-3">
       <span class="text-[13px] font-semibold text-slate-600">Open findings</span>
       <svg class="text-brand-primary" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
@@ -53,7 +94,7 @@
     <span class="mt-2 block text-[32px] font-extrabold leading-none tracking-tight text-brand-navy">{{ pending_approvals }}</span>
     <span class="mt-1.5 block text-[13px] text-slate-600">Merge, rotation and publish gates</span>
   </a>
-  <a class="stat-card" href="/repos">
+  <a class="stat-card" href="#secrets-heading">
     <span class="flex items-center justify-between gap-3">
       <span class="text-[13px] font-semibold text-slate-600">Open secrets</span>
       <svg class="text-brand-primary" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4.5"/><path d="m11.2 11.8 8.3-8.3M17 5l2.5 2.5M14 8l2 2"/></svg>
@@ -62,6 +103,45 @@
     <span class="mt-1.5 block text-[13px] text-slate-600">Leaked credentials still to rotate</span>
   </a>
 </div>
+
+<!-- AI usage: complete token + spend bill across every model call -->
+<section class="mt-6 rounded-xl bg-white p-5 shadow-card" aria-labelledby="ai-usage-heading">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 id="ai-usage-heading" class="text-lg">AI usage</h2>
+    <span class="text-sm text-slate-600">Every model call: pipeline, dependencies, embeddings, probe</span>
+    <a class="ml-auto text-sm font-bold text-brand-primary hover:text-brand-deep" href="/settings">Manage cap &rarr;</a>
+  </div>
+  <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+    {% for key, label in [("day", "Today"), ("week", "Last 7 days"), ("month", "This month")] %}
+    <div class="rounded-xl bg-brand-mist/60 px-4 py-3.5">
+      <p class="text-xs font-semibold text-slate-600">{{ label }}</p>
+      <p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">{{ ai_usage[key].total_tokens }} <span class="text-sm font-semibold text-slate-500">tokens</span></p>
+      <p class="mt-1 text-[13px] text-slate-600">{{ ai_usage[key].prompt_tokens }} in · {{ ai_usage[key].completion_tokens }} out</p>
+      <p class="mt-1 text-sm font-bold text-brand-deep">{{ ai_usage[key].spend_usd|usd }}</p>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="mt-3 rounded-xl bg-brand-mist/60 px-4 py-3.5">
+    <div class="flex flex-wrap items-baseline justify-between gap-2">
+      <p class="text-sm font-bold text-brand-deep">Monthly spend cap</p>
+      {% if spend_cap.cap > 0 %}
+      <p class="text-sm font-extrabold text-brand-navy">{{ spend_cap.spent|usd }} <span class="font-semibold text-slate-500">/ {{ spend_cap.cap|usd }} ({{ spend_cap.pct }}%)</span></p>
+      {% else %}
+      <p class="text-sm font-bold text-brand-navy">{{ spend_cap.spent|usd }} <span class="font-semibold text-slate-500">spent · no cap set</span></p>
+      {% endif %}
+    </div>
+    {% if spend_cap.cap > 0 %}
+    <div class="mt-2 h-2.5 overflow-hidden rounded-full bg-white" role="img" aria-label="Monthly spend {{ spend_cap.pct }} percent of cap">
+      <div class="h-full rounded-full {% if spend_cap.level == 'exceeded' %}bg-brand-deep{% elif spend_cap.level == 'warn' %}bg-brand-primary{% else %}bg-brand-sky{% endif %}" style="width: {{ [spend_cap.pct, 100]|min }}%"></div>
+    </div>
+    {% if spend_cap.level == "exceeded" %}
+    <p class="mt-2 text-[13px] font-semibold text-brand-deep">Monthly cap exceeded — an alert was sent; pipelines keep running. <a class="font-bold text-brand-primary hover:text-brand-deep" href="/settings">Raise the cap</a></p>
+    {% elif spend_cap.level == "warn" %}
+    <p class="mt-2 text-[13px] text-slate-600">Past 80% of the monthly cap — an alert was sent. <a class="font-bold text-brand-primary hover:text-brand-deep" href="/settings">Review in settings</a></p>
+    {% endif %}
+    {% endif %}
+  </div>
+</section>
 
 <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
   <!-- Findings trend: area chart (line + 20% fill per chart guidance) -->
@@ -126,14 +206,16 @@
   {% if top_findings %}
   <div class="brand-table mt-3 overflow-x-auto rounded-xl">
     <table data-grid data-per-page="10" data-grid-search="false">
-      <thead><tr><th>Package</th><th>Advisory</th><th>Severity</th><th>KEV</th><th>Status</th><th>Fixed in</th></tr></thead>
+      <thead><tr><th>Package</th><th>Advisory</th><th>Repository</th><th>Severity</th><th>KEV</th><th>Reachable</th><th>Status</th><th>Fixed in</th></tr></thead>
       <tbody>
       {% for f in top_findings %}
         <tr>
           <td class="font-semibold text-brand-navy">{{ f.package }} <span class="font-normal text-slate-500">{{ f.installed_version }}</span></td>
           <td>{{ f.advisory_id }}</td>
+          <td><a href="/repos/{{ finding_repos[f.id].id }}/findings">{{ finding_repos[f.id].name }}</a></td>
           <td>{% if f.severity_score is not none %}<span class="inline-flex rounded-md px-2 py-0.5 text-xs font-bold {% if f.severity_score >= 7 %}bg-brand-navy text-white{% elif f.severity_score >= 4 %}bg-brand-primary text-white{% else %}bg-brand-mist text-brand-deep{% endif %}">{{ f.severity_score }}</span>{% else %}<span class="text-slate-500">—</span>{% endif %}</td>
           <td>{% if f.kev_exploited %}<span class="inline-flex rounded-full bg-brand-navy px-2 py-0.5 text-[11px] font-bold text-white">KEV</span>{% else %}<span class="text-slate-400">—</span>{% endif %}</td>
+          <td>{% if finding_reachable[f.id] is true %}<span class="inline-flex rounded-full bg-brand-navy px-2 py-0.5 text-[11px] font-bold text-white">reachable</span>{% elif finding_reachable[f.id] is false %}<span class="text-slate-500">unreachable</span>{% else %}<span class="text-slate-400">—</span>{% endif %}</td>
           <td><span class="inline-flex rounded-full bg-brand-mist px-2 py-0.5 text-xs font-semibold text-brand-deep">{{ f.status.value }}</span></td>
           <td class="text-slate-600">{{ (f.fixed_versions or [])|join(", ") or "—" }}</td>
         </tr>
@@ -150,6 +232,63 @@
 </section>
 
 <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+  <section aria-labelledby="secrets-heading">
+    <div class="flex flex-wrap items-baseline gap-3">
+      <h2 id="secrets-heading" class="text-lg">Open secrets ({{ open_secrets }})</h2>
+      <a class="ml-auto text-sm font-bold text-brand-primary hover:text-brand-deep" href="/repos">All repositories &rarr;</a>
+    </div>
+    {% if top_secrets %}
+    <ul class="mt-3 divide-y divide-brand-mist rounded-xl bg-white shadow-card">
+      {% for s in top_secrets %}
+      <li class="flex flex-wrap items-center gap-3 px-4 py-3.5">
+        <span class="min-w-0">
+          <span class="block truncate text-sm font-bold text-brand-navy">{{ s.rule_id }}</span>
+          <span class="block truncate text-[13px] text-slate-600" title="{{ s.path }}">{{ s.path }} · <a href="/repos/{{ s.repo_id }}/findings">{{ s.repo_name }}</a></span>
+        </span>
+        <span class="ml-auto flex items-center gap-2">
+          {% if s.liveness == "live" %}<span class="inline-flex items-center gap-1.5 rounded-full bg-brand-navy px-2.5 py-0.5 text-xs font-bold text-white"><span class="h-1.5 w-1.5 rounded-full bg-white" aria-hidden="true"></span>live</span>
+          {% elif s.liveness == "dead" %}<span class="inline-flex rounded-full bg-brand-mist px-2.5 py-0.5 text-xs font-bold text-brand-deep">dead</span>
+          {% else %}<span class="inline-flex rounded-full bg-brand-mist px-2.5 py-0.5 text-xs font-bold text-brand-deep">unknown</span>{% endif %}
+          <span class="inline-flex rounded-full bg-brand-mist px-2 py-0.5 text-xs font-semibold text-brand-deep">{{ s.status.value }}</span>
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <div class="mt-3 rounded-xl bg-white px-5 py-8 text-center shadow-card">
+      <p class="text-sm font-semibold text-brand-deep">No open secrets</p>
+      <p class="mt-1 text-[13px] text-slate-600">No leaked credentials are waiting on rotation anywhere.</p>
+    </div>
+    {% endif %}
+  </section>
+
+  <section aria-labelledby="deps-heading">
+    <div class="flex flex-wrap items-baseline gap-3">
+      <h2 id="deps-heading" class="text-lg">Security updates ({{ deps_security_count }})</h2>
+      <a class="ml-auto text-sm font-bold text-brand-primary hover:text-brand-deep" href="/repos">All repositories &rarr;</a>
+    </div>
+    {% if deps_security_top %}
+    <ul class="mt-3 divide-y divide-brand-mist rounded-xl bg-white shadow-card">
+      {% for d in deps_security_top %}
+      <li class="flex flex-wrap items-center gap-3 px-4 py-3.5">
+        <span class="min-w-0">
+          <span class="block truncate text-sm font-bold text-brand-navy">{{ d.package }} <span class="font-normal text-slate-500">{{ d.installed_version or "?" }} &rarr; {{ d.latest_version or "?" }}</span></span>
+          <span class="block truncate text-[13px] text-slate-600"><a href="/repos/{{ d.repo_id }}/dependencies">{{ d.repo_name }}</a> · {{ d.status.value }}</span>
+        </span>
+        {% if d.update_class %}<span class="ml-auto inline-flex rounded-md px-2 py-0.5 text-xs font-bold {% if d.update_class == 'major' %}bg-brand-navy text-white{% elif d.update_class == 'minor' %}bg-brand-primary text-white{% else %}bg-brand-mist text-brand-deep{% endif %}">{{ d.update_class }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <div class="mt-3 rounded-xl bg-white px-5 py-8 text-center shadow-card">
+      <p class="text-sm font-semibold text-brand-deep">No security updates pending</p>
+      <p class="mt-1 text-[13px] text-slate-600">No dependencies with security fixes are awaiting a decision.</p>
+    </div>
+    {% endif %}
+  </section>
+</div>
+
+<div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
   <section aria-labelledby="gates-heading">
     <div class="flex flex-wrap items-baseline gap-3">
       <h2 id="gates-heading" class="text-lg">Pending approvals</h2>
@@ -164,7 +303,7 @@
         </span>
         <span class="min-w-0">
           <span class="block truncate text-sm font-bold text-brand-navy">#{{ g.id }} {{ g.action.value }} — {{ g.repo_name }}</span>
-          <span class="block truncate text-[13px] text-slate-600">{{ g.target }} · expires {{ g.expires_at }} UTC</span>
+          <span class="block truncate text-[13px] text-slate-600">{{ g.target }} · expires {{ g.expires_at|user_time }}</span>
         </span>
         <a class="btn-secondary ml-auto !px-3 !py-1.5 text-[13px]" href="/approvals">Decide</a>
       </li>
@@ -189,7 +328,7 @@
       <li class="flex flex-wrap items-center gap-3 px-4 py-3.5">
         <span class="min-w-0">
           <a class="block truncate text-sm font-bold text-brand-navy hover:text-brand-primary" href="/repos/{{ r.id }}">{{ r.name }}</a>
-          <span class="block truncate text-[13px] text-slate-600">{{ r.url or r.local_path }} · every {{ r.schedule_hours }}h · last scan {{ r.last_scan_at or "never" }}</span>
+          <span class="block truncate text-[13px] text-slate-600">{{ r.url or r.local_path }} · every {{ r.schedule_hours }}h · last scan {{ r.last_scan_at|user_time("never") }}</span>
         </span>
         <a class="ml-auto text-sm font-bold text-brand-primary hover:text-brand-deep" href="/repos/{{ r.id }}/findings">Findings &rarr;</a>
       </li>
@@ -205,11 +344,38 @@
   </section>
 </div>
 
+<section class="mt-6" aria-labelledby="news-heading">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 id="news-heading" class="text-lg">Security news</h2>
+    <span class="text-sm text-slate-600">Latest major-impact stories</span>
+    <a class="ml-auto text-sm font-bold text-brand-primary hover:text-brand-deep" href="/news">All news &rarr;</a>
+  </div>
+  {% if latest_news %}
+  <ul class="mt-3 divide-y divide-brand-mist rounded-xl bg-white shadow-card">
+    {% for item in latest_news %}
+    <li class="flex flex-wrap items-center gap-3 px-4 py-3.5">
+      <span class="inline-flex flex-none rounded-full bg-brand-navy px-2.5 py-1 text-xs font-bold text-white">{{ item.category or "other" }}</span>
+      <span class="min-w-0 flex-1 basis-64">
+        <span class="block truncate text-sm font-bold leading-snug text-brand-deep">
+          {% if item.url and (item.url.startswith('http://') or item.url.startswith('https://')) %}<a class="hover:text-brand-primary" href="{{ item.url }}">{{ item.title }}</a>{% else %}{{ item.title }}{% endif %}
+        </span>
+      </span>
+      {% for cve in (item.cve_ids or [])[:3] %}
+      <span class="inline-flex rounded-full bg-brand-mist px-2.5 py-1 text-xs font-bold text-brand-deep">{{ cve }}</span>
+      {% endfor %}
+      <span class="ml-auto text-[13px] font-semibold text-slate-500">{{ item.published_at|user_time("undated", "date") }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="mt-3 rounded-xl bg-white px-5 py-8 text-center shadow-card">
+    <p class="text-sm font-semibold text-brand-deep">No security news yet</p>
+    <p class="mt-1 text-[13px] text-slate-600">Classified major-impact stories will appear here. <a class="font-semibold" href="/news">Open the feed</a>.</p>
+  </div>
+  {% endif %}
+</section>
+
 <div class="mt-8 flex flex-wrap items-center gap-3 border-t border-brand-mist pt-5">
-  <p class="text-[13px] text-slate-600">Session ends after 24 hours, or 30 minutes idle.</p>
-  <form class="ml-auto" method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-secondary" type="submit">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
-    Log out
-  </button></form>
+  <p class="text-[13px] text-slate-600">Session ends after 24 hours, or 30 minutes idle. Use the avatar menu (top right) to open your profile or log out.</p>
 </div>
 {% endblock %}

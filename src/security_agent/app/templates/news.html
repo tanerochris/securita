@@ -20,7 +20,7 @@
         {% for cve in (item.cve_ids or [])[:4] %}
         <span class="inline-flex rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep">{{ cve }}</span>
         {% endfor %}
-        <span class="ml-auto font-semibold text-slate-500">{{ item.published_at.strftime("%Y-%m-%d") if item.published_at else "undated" }}</span>
+        <span class="ml-auto font-semibold text-slate-500">{{ item.published_at|user_time("undated", "date") }}</span>
       </div>
       <p class="mt-2.5 text-[15px] font-bold leading-snug text-brand-deep">
         {% if item.url and (item.url.startswith('http://') or item.url.startswith('https://')) %}<a class="hover:text-brand-primary" href="{{ item.url }}">{{ item.title }}</a>{% else %}{{ item.title }}{% endif %}

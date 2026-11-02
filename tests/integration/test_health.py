@@ -14,10 +14,50 @@ def _csrf(path: str) -> str:
     return match.group(1)
 
 
+def _login_as_owner() -> str:
+    from datetime import UTC, datetime
+
+    from security_agent.app import accounts as accounts_svc
+    from security_agent.db.models import Role
+
+    client.cookies.clear()
+    email = f"prof-{datetime.now(UTC).timestamp()}@example.com"
+    user = accounts_svc.create_user(email, None, Role.OWNER)
+    sid = accounts_svc.create_session(user.id)
+    client.cookies.set("app_session", sid)
+    return email
+
+
 def test_health():
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json() == {"status": "ok"}
+
+
+def test_profile_page():
+    email = _login_as_owner()
+    body = client.get("/profile").text
+    assert email in body
+    assert "owner" in body
+    assert "Member since" in body
+    assert "Active sessions" in body
+    assert "this session" in body
+    assert 'action="/logout"' in body
+    client.cookies.clear()
+    assert client.get("/profile").status_code == 401
+
+
+def test_avatar_menu_on_every_page():
+    email = _login_as_owner()
+    for path in ["/dashboard", "/repos", "/profile", "/settings", "/approvals"]:
+        body = client.get(path).text
+        assert 'id="avatarBtn"' in body, f"desktop avatar on {path}"
+        assert 'id="avatarBtnM"' in body, f"mobile avatar on {path}"
+        assert 'href="/profile"' in body, f"profile link on {path}"
+        assert 'action="/logout"' in body, f"logout form on {path}"
+        assert email[0].upper() in body
+    client.cookies.clear()
+    assert 'id="avatarBtn"' not in client.get("/login").text
 
 
 def test_dashboard_requires_login():

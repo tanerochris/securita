@@ -10,8 +10,65 @@ from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
+from security_agent.app.timefmt import user_time as _user_time
+from security_agent.control.cost import format_usd as _format_usd
+
 BASE = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE / "templates"))
+templates.env.filters["user_time"] = _user_time
+templates.env.filters["usd"] = _format_usd
+
+_base_template_response = templates.TemplateResponse
+
+
+_NAV_PREFIXES = (
+    ("/repos", "repos"),
+    ("/providers", "repos"),
+    ("/dashboard", "dashboard"),
+    ("/news", "news"),
+    ("/notifications", "notifications"),
+    ("/policies", "policies"),
+    ("/approvals", "approvals"),
+    ("/accounts", "accounts"),
+    ("/settings", "settings"),
+)
+
+
+def _active_nav(path: str) -> str | None:
+    """Sidebar section for a URL path; None for pages outside sections."""
+    for prefix, section in _NAV_PREFIXES:
+        if path == prefix or path.startswith(prefix + "/"):
+            return section
+    return None
+
+
+def _template_response_with_globals(request, name, context=None, *args, **kwargs):
+    """Every page render carries `user` + `csrf` + `active_nav`, so the
+    header identity, bell, avatar menu, and sidebar highlight render
+    identically on all pages instead of only the views that pass them."""
+    from security_agent.app.dependencies import SESSION_COOKIE, make_csrf
+
+    ctx = dict(context or {})
+    if "active_nav" not in ctx:
+        ctx["active_nav"] = _active_nav(request.url.path)
+    if "user" not in ctx:
+        user = getattr(request.state, "user", None)
+        if user is None:
+            try:
+                from security_agent.app import accounts as accounts_svc
+
+                sid = request.cookies.get(SESSION_COOKIE)
+                user = accounts_svc.validate_session(sid) if sid else None
+                request.state.user = user
+            except Exception:  # noqa: BLE001 - header identity is best-effort
+                user = None
+        ctx["user"] = user
+    if "csrf" not in ctx:
+        ctx["csrf"] = make_csrf()
+    return _base_template_response(request, name, ctx, *args, **kwargs)
+
+
+templates.TemplateResponse = _template_response_with_globals  # type: ignore[method-assign]
 
 
 def run_migrations() -> None:

@@ -128,6 +128,37 @@ def test_scan_now_roles():
     assert r.status_code == 403
 
 
+def test_scan_now_redirects_to_run_and_shows_scanning():
+    from security_agent.control import repos as repo_svc
+    from security_agent.db.models import RepoKind, RunStatus, ScanRun
+
+    repo = repo_svc.connect_repo(
+        f"scanredir-{datetime.now(UTC).timestamp()}", RepoKind.LOCAL, local_path="/tmp/scan-r"
+    )
+    with session_scope() as db:
+        run = db.scalar(select(ScanRun).where(ScanRun.repo_id == repo.id))
+        run.status = RunStatus.DONE
+        run.finished_at = datetime.now(UTC)
+    _login_as(Role.DEVELOPER)
+    r = client.post(
+        f"/repos/{repo.id}/scan",
+        data={"csrf": _csrf(f"/repos/{repo.id}")},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+    with session_scope() as db:
+        manual = db.scalar(
+            select(ScanRun).where(ScanRun.repo_id == repo.id, ScanRun.status == RunStatus.RUNNING)
+        )
+        assert manual is not None
+        run_id = manual.id
+    assert r.headers["location"] == f"/repos/{repo.id}/runs/{run_id}"
+    detail = client.get(f"/repos/{repo.id}").text
+    assert "Scanning" in detail
+    assert f"/repos/{repo.id}/runs/{run_id}" in detail
+    assert "Trigger manual scan" not in detail
+
+
 def test_token_rotation_owner_only():
     from security_agent.app.dependencies import make_csrf
     from security_agent.control import repos as repo_svc

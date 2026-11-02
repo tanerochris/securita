@@ -9,7 +9,7 @@
     <p class="mt-1 max-w-2xl text-sm leading-relaxed text-slate-600">Direct production dependencies and their freshness. Transitive packages stay with vulnerability findings.</p>
     <p class="mt-2.5 flex flex-wrap gap-2 text-xs font-semibold">
       <span class="inline-flex items-center gap-1.5 rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep">Checks {% if interval %}every {{ interval }}h{% else %}never automatically{% endif %}</span>
-      <span class="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">Last check: {{ repo.dep_last_check_at or "never" }}</span>
+      <span class="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">Last check: {{ repo.dep_last_check_at|user_time("never") }}</span>
       {% if report %}<span class="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">Latest report #{{ report.id }} · {{ report.status }}</span>{% endif %}
     </p>
   </div>
@@ -42,7 +42,7 @@
 {% endif %}
 {% if budget.exhausted %}
 <div class="mt-4 rounded-xl bg-brand-navy px-5 py-3 text-sm text-white" role="alert">
-  <strong class="font-bold">Dependency budget hit</strong> ({{ budget.spent }}/{{ budget.cap }} tokens per 24h). Impact reports are parked at <span class="font-mono">report_pending_cap</span> — <a class="font-bold text-brand-sky hover:text-white" href="/settings">raise the budget in Settings</a>, then re-run the check to resume.
+  <strong class="font-bold">Dependency budget hit</strong> ({{ budget.spent|usd }}/{{ budget.cap|usd }} per 24h). Impact reports are parked at <span class="font-mono">report_pending_cap</span> — <a class="font-bold text-brand-sky hover:text-white" href="/settings">raise the budget in Settings</a>, then re-run the check to resume.
 </div>
 {% endif %}
 {% if truncated_note %}
@@ -70,22 +70,24 @@
           <td>{% if d.update_class %}<span class="inline-flex rounded-md px-2 py-0.5 text-xs font-bold {% if d.update_class == 'major' %}bg-brand-navy text-white{% elif d.update_class == 'minor' %}bg-brand-primary text-white{% else %}bg-brand-mist text-brand-deep{% endif %}">{{ d.update_class }}</span>{% else %}<span class="text-slate-400">up to date</span>{% endif %}</td>
           <td>{% if d.security %}<a class="inline-flex rounded-full bg-brand-navy px-2 py-0.5 text-[11px] font-bold text-white hover:bg-brand-deep" href="/repos/{{ repo.id }}/findings">security</a>{% else %}<span class="text-slate-400">—</span>{% endif %}</td>
           <td><span class="inline-flex rounded-full bg-brand-mist px-2 py-0.5 text-xs font-semibold text-brand-deep">{{ d.status.value }}</span>{% if d.check_error %}<span class="mt-1 block max-w-[260px] text-[11px] text-slate-500" title="{{ d.check_error }}">{{ d.check_error[:120] }}</span>{% endif %}</td>
-          <td class="text-slate-600">{{ d.last_checked_at or "—" }}</td>
+          <td class="text-slate-600">{{ d.last_checked_at|user_time }}</td>
           <td>
-            <div class="flex flex-wrap gap-1.5">
+            <div class="flex min-w-[148px] flex-col items-start gap-1.5">
             {% set _key = d.ecosystem ~ '|' ~ d.manifest_path ~ '|' ~ d.package %}
             {% if report and anchors.get(_key) %}
-              <a class="text-[13px] font-bold" href="/repos/{{ repo.id }}/dependencies/report/{{ report.id }}#{{ anchors[_key] }}">View impact</a>
+              <a class="text-[13px] font-bold text-brand-primary hover:text-brand-deep" href="/repos/{{ repo.id }}/dependencies/report/{{ report.id }}#{{ anchors[_key] }}">View impact &rarr;</a>
             {% endif %}
             {% if can_decide %}
+              <div class="flex flex-nowrap gap-1.5">
               {% if d.status.value == 'ignored' %}
-              <form method="post" action="/repos/{{ repo.id }}/dependencies/{{ d.id }}/unignore"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Un-ignore</button></form>
+              <form method="post" action="/repos/{{ repo.id }}/dependencies/{{ d.id }}/unignore"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-secondary" type="submit">Un-ignore</button></form>
               {% elif d.status.value not in ('proposed', 'covered_by_finding') %}
               <form method="post" action="/repos/{{ repo.id }}/dependencies/{{ d.id }}/ignore"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-secondary" type="submit">Ignore</button></form>
               {% endif %}
               {% if d.status.value in ('update_available', 'awaiting_decision') %}
               <form method="post" action="/repos/{{ repo.id }}/dependencies/{{ d.id }}/decline"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-secondary" type="submit">Decline</button></form>
               {% endif %}
+              </div>
             {% endif %}
             </div>
           </td>
@@ -135,14 +137,14 @@
         <tbody>
         {% for c in checks %}
           <tr>
-            <td class="font-semibold text-brand-navy">#{{ c.id }}</td>
+            <td class="font-semibold text-brand-navy"><a href="/repos/{{ repo.id }}/dependencies/checks/{{ c.id }}">#{{ c.id }}</a></td>
             <td>{{ c.trigger.value }}</td>
             <td>
               {% if c.status.value == "running" %}<span class="inline-flex items-center gap-1.5 rounded-full bg-brand-primary px-2.5 py-0.5 text-xs font-bold text-white"><span class="h-1.5 w-1.5 rounded-full bg-white" aria-hidden="true"></span>running</span>
               {% elif c.status.value == "done" %}<span class="inline-flex rounded-full bg-brand-mist px-2.5 py-0.5 text-xs font-bold text-brand-deep">done</span>
               {% else %}<span class="inline-flex rounded-full bg-brand-navy px-2.5 py-0.5 text-xs font-bold text-white">{{ c.status.value }}</span>{% endif %}
             </td>
-            <td class="text-slate-600">{{ c.started_at }}</td>
+            <td class="text-slate-600">{{ c.started_at|user_time }}</td>
           </tr>
         {% endfor %}
         </tbody>

@@ -84,6 +84,7 @@
   .brand-table { box-shadow: 0 1px 3px rgba(8,47,73,0.08); }
   .nav-link { display: flex; align-items: center; gap: 0.65rem; padding: 0.6rem 0.8rem; border-radius: 8px; font-size: 0.875rem; font-weight: 500; color: #E0F2FE; cursor: pointer; transition: background-color 200ms ease, color 200ms ease; }
   .nav-link:hover { background: rgba(125,211,252,0.16); color: #FFFFFF; }
+  .nav-link-active { background: rgba(125,211,252,0.24); color: #FFFFFF; font-weight: 700; }
   .nav-link svg { flex: none; }
   .btn-primary { display: inline-flex; align-items: center; gap: 0.5rem; background: var(--color-primary); color: #fff; font-weight: 600; font-size: 0.875rem; padding: 0.6rem 1.1rem; border-radius: 8px; box-shadow: 0 1px 3px rgba(2,132,199,0.35); cursor: pointer; transition: background-color 200ms ease, box-shadow 200ms ease; }
   .btn-primary:hover { background: var(--color-deep); color: #fff; box-shadow: 0 4px 14px rgba(12,74,110,0.30); }
@@ -131,14 +132,14 @@
       </a>
     </div>
     <nav class="flex-1 px-3 space-y-1" aria-label="Primary">
-      <a class="nav-link" href="/dashboard"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>Dashboard</a>
-      <a class="nav-link" href="/repos"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Repos</a>
-      <a class="nav-link" href="/news"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h13v12H4z"/><path d="M17 9h3v9h-3"/><path d="M7 10h7M7 13h7"/></svg>News</a>
-      <a class="nav-link" href="/notifications"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>Notifications</a>
-      <a class="nav-link" href="/policies"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h7"/></svg>Policies</a>
-      <a class="nav-link" href="/approvals"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10z"/><path d="m9 11.5 2 2 4-4.5"/></svg>Approvals{% if pending_approvals %}<span class="ml-auto rounded-full bg-brand-primary px-2 py-0.5 text-[11px] font-bold text-white">{{ pending_approvals }}</span>{% endif %}</a>
-      <a class="nav-link" href="/accounts"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M17.5 15.4c2 .6 3.4 2.1 4 4.6"/></svg>Accounts</a>
-      <a class="nav-link" href="/settings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.51 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.24.6.86 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/></svg>Settings</a>
+      <a class="nav-link{% if active_nav == 'dashboard' %} nav-link-active{% endif %}" href="/dashboard"{% if active_nav == 'dashboard' %} aria-current="page"{% endif %}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>Dashboard</a>
+      <a class="nav-link{% if active_nav == 'repos' %} nav-link-active{% endif %}" href="/repos"{% if active_nav == 'repos' %} aria-current="page"{% endif %}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Repos</a>
+      <a class="nav-link{% if active_nav == 'news' %} nav-link-active{% endif %}" href="/news"{% if active_nav == 'news' %} aria-current="page"{% endif %}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h13v12H4z"/><path d="M17 9h3v9h-3"/><path d="M7 10h7M7 13h7"/></svg>News</a>
+      <a class="nav-link{% if active_nav == 'notifications' %} nav-link-active{% endif %}" href="/notifications"{% if active_nav == 'notifications' %} aria-current="page"{% endif %}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>Notifications</a>
+      <a class="nav-link{% if active_nav == 'policies' %} nav-link-active{% endif %}" href="/policies"{% if active_nav == 'policies' %} aria-current="page"{% endif %}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h7"/></svg>Policies</a>
+      <a class="nav-link{% if active_nav == 'approvals' %} nav-link-active{% endif %}" href="/approvals"{% if active_nav == 'approvals' %} aria-current="page"{% endif %}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10z"/><path d="m9 11.5 2 2 4-4.5"/></svg>Approvals{% if pending_approvals %}<span class="ml-auto rounded-full bg-brand-primary px-2 py-0.5 text-[11px] font-bold text-white">{{ pending_approvals }}</span>{% endif %}</a>
+      <a class="nav-link{% if active_nav == 'accounts' %} nav-link-active{% endif %}" href="/accounts"{% if active_nav == 'accounts' %} aria-current="page"{% endif %}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M17.5 15.4c2 .6 3.4 2.1 4 4.6"/></svg>Accounts</a>
+      <a class="nav-link{% if active_nav == 'settings' %} nav-link-active{% endif %}" href="/settings"{% if active_nav == 'settings' %} aria-current="page"{% endif %}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.51 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.24.6.86 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/></svg>Settings</a>
     </nav>
     <div class="px-5 py-4 border-t border-white/10">
       <p class="text-[11px] font-semibold text-brand-sky">BRAND PALETTE</p>
@@ -161,18 +162,39 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10z"/><path d="m9 11.5 2 2 4-4.5"/></svg>
         </span>
         <span class="text-sm font-extrabold tracking-tight">Securita</span>
-        <a href="/notifications" class="ml-auto grid h-8 w-8 place-items-center rounded-lg text-white hover:bg-white/10" aria-label="Notifications"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></a>
-        {% if user %}<span class="max-w-[45%] truncate text-xs text-brand-mist">{{ user.email }}</span>{% endif %}
+        {% if user %}<span class="ml-auto max-w-[45%] truncate text-xs text-brand-mist">Signed in as {{ user.email }}</span>{% endif %}
+        {% if user %}<a href="/notifications" class="grid h-8 w-8 flex-none place-items-center rounded-lg text-white hover:bg-white/10" aria-label="Notifications"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></a>{% endif %}
+        {% if user %}
+        <div class="relative flex-none" id="avatarMenuM">
+          <button id="avatarBtnM" type="button" class="grid h-8 w-8 cursor-pointer place-items-center rounded-full bg-white text-[13px] font-extrabold text-brand-navy transition-colors duration-200 hover:bg-brand-mist focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu" title="{{ user.email }}">
+            {{ user.email[0]|upper }}
+          </button>
+          <div id="avatarDropdownM" class="absolute right-0 z-30 mt-2 hidden w-64 rounded-xl bg-white py-2 shadow-[0_12px_32px_rgba(8,47,73,0.22)]" role="menu" aria-label="Account">
+            <p class="truncate px-4 pb-2 pt-1 text-xs text-slate-500">Signed in as<span class="block truncate text-sm font-bold text-brand-navy">{{ user.email }}</span></p>
+            <a href="/profile" class="flex cursor-pointer items-center gap-2.5 px-4 py-2 text-sm font-semibold text-brand-deep transition-colors duration-200 hover:bg-brand-mist" role="menuitem">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-3.5 4.5-5 8-5s6.5 1.5 8 5"/></svg>
+              Profile
+            </a>
+            <form method="post" action="/logout" class="mt-1 border-t border-brand-mist pt-1">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <button type="submit" class="flex w-full cursor-pointer items-center gap-2.5 bg-transparent px-4 py-2 text-sm font-semibold text-brand-deep transition-colors duration-200 hover:bg-brand-mist" role="menuitem">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
+                Log out
+              </button>
+            </form>
+          </div>
+        </div>
+        {% endif %}
       </div>
       <nav class="flex gap-1 overflow-x-auto px-3 pb-3" aria-label="Primary">
-        <a class="nav-link whitespace-nowrap" href="/dashboard">Dashboard</a>
-        <a class="nav-link whitespace-nowrap" href="/repos">Repos</a>
-        <a class="nav-link whitespace-nowrap" href="/news">News</a>
-        <a class="nav-link whitespace-nowrap" href="/notifications">Notifications</a>
-        <a class="nav-link whitespace-nowrap" href="/policies">Policies</a>
-        <a class="nav-link whitespace-nowrap" href="/approvals">Approvals</a>
-        <a class="nav-link whitespace-nowrap" href="/accounts">Accounts</a>
-        <a class="nav-link whitespace-nowrap" href="/settings">Settings</a>
+        <a class="nav-link{% if active_nav == 'dashboard' %} nav-link-active{% endif %} whitespace-nowrap" href="/dashboard"{% if active_nav == 'dashboard' %} aria-current="page"{% endif %}>Dashboard</a>
+        <a class="nav-link{% if active_nav == 'repos' %} nav-link-active{% endif %} whitespace-nowrap" href="/repos"{% if active_nav == 'repos' %} aria-current="page"{% endif %}>Repos</a>
+        <a class="nav-link{% if active_nav == 'news' %} nav-link-active{% endif %} whitespace-nowrap" href="/news"{% if active_nav == 'news' %} aria-current="page"{% endif %}>News</a>
+        <a class="nav-link{% if active_nav == 'notifications' %} nav-link-active{% endif %} whitespace-nowrap" href="/notifications"{% if active_nav == 'notifications' %} aria-current="page"{% endif %}>Notifications</a>
+        <a class="nav-link{% if active_nav == 'policies' %} nav-link-active{% endif %} whitespace-nowrap" href="/policies"{% if active_nav == 'policies' %} aria-current="page"{% endif %}>Policies</a>
+        <a class="nav-link{% if active_nav == 'approvals' %} nav-link-active{% endif %} whitespace-nowrap" href="/approvals"{% if active_nav == 'approvals' %} aria-current="page"{% endif %}>Approvals</a>
+        <a class="nav-link{% if active_nav == 'accounts' %} nav-link-active{% endif %} whitespace-nowrap" href="/accounts"{% if active_nav == 'accounts' %} aria-current="page"{% endif %}>Accounts</a>
+        <a class="nav-link{% if active_nav == 'settings' %} nav-link-active{% endif %} whitespace-nowrap" href="/settings"{% if active_nav == 'settings' %} aria-current="page"{% endif %}>Settings</a>
       </nav>
     </header>
 
@@ -181,7 +203,28 @@
       <p class="text-sm font-semibold text-brand-deep">{% block page_title %}Security workspace{% endblock %}</p>
       <span class="inline-flex items-center gap-1.5 rounded-full bg-brand-mist px-2.5 py-1 text-xs font-semibold text-brand-deep"><span class="h-2 w-2 rounded-full bg-brand-primary" aria-hidden="true"></span>Live queue</span>
       {% if user %}<p class="ml-auto truncate text-sm text-slate-600">Signed in as <span class="font-semibold text-brand-navy">{{ user.email }}</span> <span class="text-slate-500">({{ user.role }})</span></p>{% endif %}
-      <span hx-get="/notifications/count" hx-trigger="load" hx-swap="outerHTML"><a href="/notifications" class="grid h-9 w-9 place-items-center rounded-lg text-brand-deep hover:bg-brand-mist" aria-label="Notifications"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></a></span>
+      {% if user %}<span hx-get="/notifications/count" hx-trigger="load" hx-swap="outerHTML"><a href="/notifications" class="grid h-9 w-9 place-items-center rounded-lg text-brand-deep hover:bg-brand-mist" aria-label="Notifications"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></a></span>{% endif %}
+      {% if user %}
+      <div class="relative flex-none" id="avatarMenu">
+        <button id="avatarBtn" type="button" class="grid h-9 w-9 cursor-pointer place-items-center rounded-full bg-brand-navy text-sm font-extrabold text-white transition-colors duration-200 hover:bg-brand-deep focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu" title="{{ user.email }}">
+          {{ user.email[0]|upper }}
+        </button>
+        <div id="avatarDropdown" class="absolute right-0 z-30 mt-2 hidden w-64 rounded-xl bg-white py-2 shadow-[0_12px_32px_rgba(8,47,73,0.22)]" role="menu" aria-label="Account">
+          <p class="truncate px-4 pb-2 pt-1 text-xs text-slate-500">Signed in as<span class="block truncate text-sm font-bold text-brand-navy">{{ user.email }}</span></p>
+          <a href="/profile" class="flex cursor-pointer items-center gap-2.5 px-4 py-2 text-sm font-semibold text-brand-deep transition-colors duration-200 hover:bg-brand-mist" role="menuitem">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-3.5 4.5-5 8-5s6.5 1.5 8 5"/></svg>
+            Profile
+          </a>
+          <form method="post" action="/logout" class="mt-1 border-t border-brand-mist pt-1">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <button type="submit" class="flex w-full cursor-pointer items-center gap-2.5 bg-transparent px-4 py-2 text-sm font-semibold text-brand-deep transition-colors duration-200 hover:bg-brand-mist" role="menuitem">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
+              Log out
+            </button>
+          </form>
+        </div>
+      </div>
+      {% endif %}
     </div>
 
     <main id="main" class="mx-auto w-full max-w-[1440px] px-4 md:px-6 lg:px-8 py-6 lg:py-8">{% block content %}{% endblock %}</main>
@@ -305,6 +348,72 @@
       btn.prepend(spin);
       btn.setAttribute("aria-busy", "true");
       btn.disabled = true;
+    });
+  })();
+</script>
+<script type="text/javascript">
+  (function () {
+    /* User-timezone dates: every <time data-kind> carries a UTC instant in
+       `datetime`; rewrite the text in the reader's own timezone and locale.
+       The server-rendered UTC text stays as the no-JS fallback, and the
+       UTC instant stays visible on hover. Text goes through textContent
+       only — never parsed as HTML. */
+    function render(el) {
+      var d = new Date(el.getAttribute("datetime"));
+      if (isNaN(d.getTime())) { return; }
+      var opts = el.getAttribute("data-kind") === "date"
+        ? { dateStyle: "medium" }
+        : { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" };
+      el.textContent = new Intl.DateTimeFormat(undefined, opts).format(d);
+    }
+    function boot() {
+      if (typeof Intl === "undefined" || !Intl.DateTimeFormat) { return; }
+      document.querySelectorAll("time[data-kind]").forEach(render);
+    }
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", boot);
+    } else {
+      boot();
+    }
+  })();
+</script>
+<script type="text/javascript">
+  (function () {
+    /* Avatar menu: toggle on click, close on outside click or Escape.
+       Only one of the desktop/mobile menus is visible at a time. */
+    var pairs = [["avatarBtn", "avatarDropdown"], ["avatarBtnM", "avatarDropdownM"]];
+    function close(btn, menu) {
+      if (!btn || !menu) { return; }
+      menu.classList.add("hidden");
+      btn.setAttribute("aria-expanded", "false");
+    }
+    function closeAll(exceptMenu) {
+      pairs.forEach(function (ids) {
+        var menu = document.getElementById(ids[1]);
+        if (menu && menu !== exceptMenu) {
+          close(document.getElementById(ids[0]), menu);
+        }
+      });
+    }
+    pairs.forEach(function (ids) {
+      var btn = document.getElementById(ids[0]);
+      var menu = document.getElementById(ids[1]);
+      if (!btn || !menu) { return; }
+      btn.addEventListener("click", function (event) {
+        event.stopPropagation();
+        var willOpen = menu.classList.contains("hidden");
+        closeAll(menu);
+        if (willOpen) {
+          menu.classList.remove("hidden");
+          btn.setAttribute("aria-expanded", "true");
+        } else {
+          close(btn, menu);
+        }
+      });
+    });
+    document.addEventListener("click", function () { closeAll(null); });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") { closeAll(null); }
     });
   })();
 </script>

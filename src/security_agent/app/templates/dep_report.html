@@ -10,7 +10,7 @@
       <span class="inline-flex rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep">{{ report.status }}</span>
       <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">{{ report.sections|length }} updates</span>
       <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">{% if report.model_backed %}model-written summary{% else %}evidence template (no model summary){% endif %}</span>
-      <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">{{ report.created_at }}</span>
+      <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">{{ report.created_at|user_time }}</span>
     </p>
   </div>
 </div>
@@ -75,7 +75,7 @@
   <h2 id="decision-heading" class="text-lg">Decision</h2>
   <p class="mt-1.5 text-sm text-slate-600">
     Decided by <strong class="font-bold text-brand-navy">{{ decider.email if decider else "unknown" }}</strong>
-    {% if report.decided_at %}on {{ report.decided_at }}{% endif %}.
+    {% if report.decided_at %}on {{ report.decided_at|user_time }}{% endif %}.
     Approved {{ (report.decided_keys or [])|length }}, excluded {{ (report.excluded_keys or [])|length }}.
   </p>
   {% if report.decision_reason %}<p class="mt-1 text-sm text-slate-600">Reason: {{ report.decision_reason }}</p>{% endif %}
