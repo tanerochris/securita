@@ -15,3 +15,19 @@ master.key
 deliveries/
 *.db
 .DS_Store
+# IDE and agent workspace dirs (local-only, never committed).
+.vscode/
+.idea/
+.agent/
+.claude/
+.codebuddy/
+.codex/
+.continue/
+.cursor/
+.gemini/
+.kiro/
+.opencode/
+.qoder/
+.roo/
+.trae/
+.windsurf/
