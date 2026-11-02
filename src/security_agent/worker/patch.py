@@ -944,6 +944,14 @@ def _persist_proposal(
     ignored: list[str],
     patch_text: str,
 ) -> int:
+    # D20 persist-time recheck: a dependency PR that appeared while this
+    # group patched wins the bump; never persist a second live PR.
+    from security_agent.worker.deps_patch import live_dep_proposal_for_package
+
+    if findings and live_dep_proposal_for_package(repo_id, findings[0].package):
+        raise PatchError(
+            "queued behind a live dependency PR for this package (D20)"
+        )
     with session_scope() as db:
         proposal = Proposal(
             repo_id=repo_id,

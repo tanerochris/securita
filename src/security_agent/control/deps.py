@@ -216,11 +216,26 @@ def deps_budget_state() -> dict:
     return {"spent": spent, "cap": cap, "exhausted": spent >= cap}
 
 
-def deps_notify_email_enabled() -> bool:
-    """Whether dependency pool entries also fan out by email (D16 opt-in)."""
+def deps_notify_outbound_enabled() -> bool:
+    """Whether dependency pool entries also fan out to routed channels.
+
+    D16: dashboard-only by default; the opt-in delivers through the
+    existing severity routing, so email, Slack, webhook, and any other
+    configured channel kinds all receive dependency events.
+    """
     with session_scope() as db:
         row = db.get(NotifyState, _DEPS_NOTIFY_EMAIL_KEY)
         return row is not None and row.value == "on"
+
+
+def deps_notify_email_enabled() -> bool:
+    """Backward-compatible alias for the outbound fan-out toggle."""
+    return deps_notify_outbound_enabled()
+
+
+def set_deps_notify_outbound(enabled: bool, user: User) -> bool:
+    """Owner-only toggle for dependency outbound fan-out (D16)."""
+    return set_deps_notify_email(enabled, user)
 
 
 def set_deps_notify_email(enabled: bool, user: User) -> bool:
@@ -245,13 +260,19 @@ def set_deps_notify_email(enabled: bool, user: User) -> bool:
 
 
 def list_repo_dependencies(repo_id: int) -> list[Dependency]:
-    """Dependencies tab rows: grouped by manifest, then package (D11/D18)."""
+    """Dependencies tab rows: grouped by manifest, then package (D11/D18).
+
+    Bounded at 5000 rows (far above the 20-manifest tracked ceiling for
+    real repos) so a pathological manifest set cannot produce an
+    unbounded page render.
+    """
     with session_scope() as db:
         rows = list(
             db.scalars(
                 select(Dependency)
                 .where(Dependency.repo_id == repo_id)
                 .order_by(Dependency.manifest_path, Dependency.package)
+                .limit(5000)
             )
         )
         for r in rows:
@@ -289,13 +310,22 @@ def _require_approver(user: User) -> None:
         raise PermissionError("Only an Owner or Maintainer may decide dependency updates.")
 
 
-def decline_version(dep_id: int, user: User, *, reason: str = "") -> Dependency:
+def _scoped_dep(db, dep_id: int, repo_id: int | None) -> Dependency:
+    row = db.get(Dependency, dep_id)
+    if row is None:
+        raise ValueError(f"Unknown dependency {dep_id}.")
+    if repo_id is not None and row.repo_id != repo_id:
+        raise ValueError(f"Dependency {dep_id} does not belong to repo {repo_id}.")
+    return row
+
+
+def decline_version(
+    dep_id: int, user: User, *, reason: str = "", repo_id: int | None = None
+) -> Dependency:
     """Silence this specific version; a newer version re-proposes (D10/D21)."""
     _require_approver(user)
     with session_scope() as db:
-        row = db.get(Dependency, dep_id)
-        if row is None:
-            raise ValueError(f"Unknown dependency {dep_id}.")
+        row = _scoped_dep(db, dep_id, repo_id)
         row.status = DependencyStatus.DECLINED
         row.declined_version = row.latest_version
         db.flush()
@@ -308,13 +338,13 @@ def decline_version(dep_id: int, user: User, *, reason: str = "") -> Dependency:
     return row
 
 
-def ignore_package(dep_id: int, user: User, *, reason: str = "") -> Dependency:
+def ignore_package(
+    dep_id: int, user: User, *, reason: str = "", repo_id: int | None = None
+) -> Dependency:
     """Ignore a manifest+package: still checked, never reported (D21)."""
     _require_approver(user)
     with session_scope() as db:
-        row = db.get(Dependency, dep_id)
-        if row is None:
-            raise ValueError(f"Unknown dependency {dep_id}.")
+        row = _scoped_dep(db, dep_id, repo_id)
         row.status = DependencyStatus.IGNORED
         row.ignored_by = user.id
         row.ignored_at = datetime.now(UTC)
@@ -328,13 +358,11 @@ def ignore_package(dep_id: int, user: User, *, reason: str = "") -> Dependency:
     return row
 
 
-def unignore_package(dep_id: int, user: User) -> Dependency:
+def unignore_package(dep_id: int, user: User, *, repo_id: int | None = None) -> Dependency:
     """Rejoin the next report if an update is available (D21)."""
     _require_approver(user)
     with session_scope() as db:
-        row = db.get(Dependency, dep_id)
-        if row is None:
-            raise ValueError(f"Unknown dependency {dep_id}.")
+        row = _scoped_dep(db, dep_id, repo_id)
         row.status = (
             DependencyStatus.UPDATE_AVAILABLE
             if row.latest_version and row.latest_version != row.installed_version
@@ -364,6 +392,7 @@ def decide_report(
     included_keys: list[str],
     *,
     reason: str = "",
+    repo_id: int | None = None,
 ) -> DependencyReport:
     """One decision on the combined report (D7/D10).
 
@@ -371,38 +400,82 @@ def decide_report(
     (unticked) packages are declined for that specific version only.
     Approving authorizes the worker to run the existing patch flow
     (D7/D8); merge still needs the FR-9 gate, unchanged.
+
+    Only rows still awaiting a decision (or parked at the budget cap)
+    transition; a row individually silenced after the report was built
+    keeps its silence and stays in undecided_keys as a disclosed
+    non-actionable remainder. decided/excluded record only transitions
+    that actually happened.
     """
     _require_approver(decider)
     with session_scope() as db:
+        # Claim the decision atomically: exactly one approver wins the
+        # pending -> decided transition; a concurrent loser sees the
+        # guarded UPDATE miss and gets "already decided".
+        from typing import Any, cast
+
+        from sqlalchemy import update
+        from sqlalchemy.engine import CursorResult
+
+        claimed = db.execute(
+            update(DependencyReport)
+            .where(
+                DependencyReport.id == report_id,
+                DependencyReport.status == "pending",
+            )
+            .values(
+                status="decided",
+                decided_by=decider.id,
+                decided_at=datetime.now(UTC),
+                decision_reason=reason or None,
+            )
+        )
+        if cast("CursorResult[Any]", claimed).rowcount != 1:
+            existing = db.get(DependencyReport, report_id)
+            if existing is None:
+                raise ValueError(f"Unknown report {report_id}.")
+            raise ValueError(f"Report {report_id} is already {existing.status}.")
         report = db.get(DependencyReport, report_id)
-        if report is None:
+        if report is None:  # pragma: no cover - claimed above
             raise ValueError(f"Unknown report {report_id}.")
-        if report.status != "pending":
-            raise ValueError(f"Report {report_id} is already {report.status}.")
+        if repo_id is not None and report.repo_id != repo_id:
+            raise ValueError(f"Report {report_id} does not belong to repo {repo_id}.")
         undecided = list(report.undecided_keys or [])
-        included = [k for k in included_keys if k in undecided]
-        excluded = [k for k in undecided if k not in set(included)]
-        report.status = "decided"
-        report.decided_keys = included
-        report.excluded_keys = excluded
-        report.decided_by = decider.id
-        report.decided_at = datetime.now(UTC)
-        report.decision_reason = reason or None
+        undecided_set = set(undecided)
+        included = [k for k in included_keys if k in undecided_set]
+        included_set = set(included)
         rows = list(
             db.scalars(
                 select(Dependency).where(
                     Dependency.repo_id == report.repo_id,
-                    Dependency.status == DependencyStatus.AWAITING_DECISION,
+                    Dependency.status.in_(
+                        [
+                            DependencyStatus.AWAITING_DECISION,
+                            DependencyStatus.REPORT_PENDING_CAP,
+                        ]
+                    ),
                 )
             )
         )
+        actual_included: list[str] = []
+        actual_excluded: list[str] = []
         for row in rows:
-            key = f"{row.ecosystem}|{row.manifest_path}|{row.package}"
-            if key in set(included):
+            key = dep_key(row)
+            if key in included_set:
                 row.status = DependencyStatus.PROPOSED
-            elif key in set(excluded):
+                actual_included.append(key)
+            elif key in undecided_set:
                 row.status = DependencyStatus.DECLINED
                 row.declined_version = row.latest_version
+                actual_excluded.append(key)
+        transitioned = set(actual_included) | set(actual_excluded)
+        report.status = "decided"
+        report.decided_keys = actual_included
+        report.excluded_keys = actual_excluded
+        report.undecided_keys = [k for k in undecided if k not in transitioned]
+        report.decided_by = decider.id
+        report.decided_at = datetime.now(UTC)
+        report.decision_reason = reason or None
         db.flush()
         db.expunge(report)
     audit.append(
@@ -410,13 +483,82 @@ def decide_report(
         decision="report-decided",
         line=(
             f"report={report_id} by={decider.id} role={decider.role.value} "
-            f"included={len(included)} excluded={len(excluded)} reason={reason or '—'}"
+            f"included={len(actual_included)} excluded={len(actual_excluded)} "
+            f"reason={reason or '—'}"
         ),
     )
     return report
 
 
 # --- Collision with vulnerability Findings (D20) ---
+
+
+def package_finding_index(repo_id: int) -> dict[str, list[Finding]]:
+    """Open/proposed Findings for a repo, indexed by package (batch load).
+
+    Loaded once per check instead of two queries per tracked package.
+    """
+    with session_scope() as db:
+        findings = list(
+            db.scalars(
+                select(Finding).where(
+                    Finding.repo_id == repo_id,
+                    Finding.status.in_([FindingStatus.OPEN, FindingStatus.PROPOSED]),
+                )
+            )
+        )
+        index: dict[str, list[Finding]] = {}
+        for finding in findings:
+            db.expunge(finding)
+            index.setdefault(finding.package, []).append(finding)
+        return index
+
+
+def live_proposal_packages(
+    repo_id: int, index: dict[str, list[Finding]]
+) -> set[str]:
+    """Packages with a live (open) Finding Proposal, from a loaded index."""
+    if not index:
+        return set()
+    with session_scope() as db:
+        proposals = list(
+            db.scalars(
+                select(Proposal).where(
+                    Proposal.repo_id == repo_id,
+                    Proposal.status == ProposalStatus.OPEN,
+                )
+            )
+        )
+    live: set[str] = set()
+    by_id = {f.id: pkg for pkg, rows in index.items() for f in rows}
+    for proposal in proposals:
+        for fid in proposal.finding_ids or []:
+            if fid in by_id:
+                live.add(by_id[fid])
+    return live
+
+
+def security_fix_from(
+    findings: list[Finding], installed: str | None, latest: str | None
+) -> Finding | None:
+    """Pure form of security_fix_for over a preloaded Finding list."""
+    if not installed or not latest:
+        return None
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        installed_v, latest_v = Version(installed), Version(latest)
+    except InvalidVersion:
+        return None
+    for finding in findings:
+        for fixed in finding.fixed_versions or []:
+            try:
+                fixed_v = Version(str(fixed))
+            except InvalidVersion:
+                continue
+            if installed_v < fixed_v <= latest_v:
+                return finding
+    return None
 
 
 def live_finding_proposal(repo_id: int, package: str) -> Proposal | None:

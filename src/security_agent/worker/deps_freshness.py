@@ -32,6 +32,9 @@ log = logging.getLogger(__name__)
 
 RunFn = Callable[..., str]
 
+NPM_REGISTRY_HOST = "registry.npmjs.org"
+PYPI_HOST = "pypi.org"
+
 _PIP_AVAILABLE_RE = re.compile(r"^Available versions:\s*(.+)$", re.IGNORECASE)
 _PIP_LATEST_RE = re.compile(r"^\s*LATEST:\s*(\S+)", re.IGNORECASE)
 
@@ -105,7 +108,69 @@ def select_latest(versions: list[str], installed: str | None) -> str | None:
     installed_pre = is_prerelease(installed)
     candidates = [p for p in parsed if installed_pre or not p[0].is_prerelease]
     if not candidates:
-        candidates = parsed
+        return None  # stable install: prereleases never count (D13)
+    candidates.sort(key=lambda p: p[0])
+    return candidates[-1][1]
+
+
+def _spec_admits(spec: str, version: str) -> bool | None:
+    """Whether a pip/Poetry spec admits a version; None when unparseable."""
+    from packaging.specifiers import InvalidSpecifier, SpecifierSet
+
+    text = (spec or "").strip().strip("\"'")
+    if not text or text == "*":
+        return True
+    try:
+        target = Version(version)
+    except InvalidVersion:
+        return None
+    if text.startswith("^"):
+        base_text = text[1:].strip()
+        try:
+            base = Version(base_text)
+        except InvalidVersion:
+            return None
+        rel = list(base.release) + [0, 0, 0]
+        if rel[0] != 0:
+            upper = Version(f"{rel[0] + 1}.0.0")
+        elif rel[1] != 0:
+            upper = Version(f"0.{rel[1] + 1}.0")
+        else:
+            upper = Version(f"0.0.{rel[2] + 1}")
+        return base <= target < upper
+    if text.startswith("~") and not text.startswith("~="):
+        base_text = text[1:].strip()
+        try:
+            base = Version(base_text)
+        except InvalidVersion:
+            return None
+        rel = list(base.release) + [0, 0]
+        upper = Version(f"{rel[0]}.{rel[1] + 1}.0")
+        return base <= target < upper
+    try:
+        spec_set = SpecifierSet(text)
+    except InvalidSpecifier:
+        return None
+    return target in spec_set
+
+
+def select_wanted(versions: list[str], installed: str | None, spec: str) -> str | None:
+    """Highest in-range version (the lower-risk step the report names, D13)."""
+    parsed: list[tuple[Version, str]] = []
+    for raw in versions:
+        try:
+            parsed.append((Version(raw), raw))
+        except InvalidVersion:
+            continue
+    installed_pre = is_prerelease(installed)
+    candidates = []
+    for version, raw in parsed:
+        if not installed_pre and version.is_prerelease:
+            continue
+        if _spec_admits(spec, raw) is True:
+            candidates.append((version, raw))
+    if not candidates:
+        return None
     candidates.sort(key=lambda p: p[0])
     return candidates[-1][1]
 
@@ -253,6 +318,55 @@ def npm_latest(
     return None
 
 
+def npm_available_versions(
+    package: str,
+    *,
+    manifest_dir: Path | None = None,
+    run: RunFn = run_allowlisted,
+    timeout: int = 120,
+) -> list[str]:
+    """All published versions via `npm view <pkg> versions --json`."""
+    out = run(
+        "npm",
+        ["view", package, "versions", "--json"],
+        cwd=str(manifest_dir) if manifest_dir else None,
+        timeout=timeout,
+        allow_network=True,
+    )
+    try:
+        data = json.loads(out or "[]")
+    except ValueError:
+        return []
+    if isinstance(data, str):
+        return [data]
+    if isinstance(data, list):
+        return [str(v) for v in data if isinstance(v, str)]
+    return []
+
+
+def _newer(candidate: str | None, current: str | None) -> bool:
+    cand_v, cur_v = _parse_version(candidate), _parse_version(current)
+    if cand_v is None:
+        return False
+    if cur_v is None:
+        return True
+    return cand_v > cur_v
+
+
+def _registry_hint(exc: BaseException, default_host: str) -> str:
+    """Name the registry host in a tool failure (D19 named state).
+
+    Private registries surface their host in the native tool's error
+    text; when none is visible, the ecosystem default is named so the
+    check_failed state always identifies the registry involved.
+    """
+    import re as _re
+
+    match = _re.search(r"https?://([A-Za-z0-9.-]+)", str(exc))
+    host = match.group(1) if match else default_host
+    return f"registry host {host}: {exc}"
+
+
 def pip_available_versions(
     package: str,
     *,
@@ -307,7 +421,29 @@ def check_npm_manifest(
             try:
                 latest = npm_latest(package, manifest_dir=manifest_dir, run=run)
             except (RuntimeError, TimeoutError) as exc:
-                error = f"latest lookup failed: {exc}"
+                error = f"latest lookup failed: {_registry_hint(exc, NPM_REGISTRY_HOST)}"
+                latest = None
+        # D13 prerelease rule for npm/yarn/pnpm: prereleases count only
+        # when installed is itself a prerelease, and never otherwise.
+        if is_prerelease(installed):
+            try:
+                selected = select_latest(
+                    npm_available_versions(package, manifest_dir=manifest_dir, run=run),
+                    installed,
+                )
+            except (RuntimeError, TimeoutError) as exc:
+                selected = None
+                if latest is None:
+                    error = f"latest lookup failed: {_registry_hint(exc, NPM_REGISTRY_HOST)}"
+            if _newer(selected, latest):
+                latest = selected
+        elif latest is not None and is_prerelease(latest):
+            try:
+                latest = select_latest(
+                    npm_available_versions(package, manifest_dir=manifest_dir, run=run),
+                    installed,
+                )
+            except (RuntimeError, TimeoutError):
                 latest = None
         if latest is None and sweep_error and error is None:
             error = f"outdated sweep failed: {sweep_error}"
@@ -329,13 +465,13 @@ def check_pip_packages(
 ) -> dict[str, Freshness]:
     """Freshness for Python packages via `pip index versions` each.
 
-    Latest is the absolute latest stable per D13; `wanted` stays None
-    (pip reports no in-range answer) and the report proposes latest.
-    Yanked releases cannot be told apart in pip index output — callers
-    disclose this once per report.
+    Latest is the absolute latest stable per D13; wanted is the highest
+    in-range version computed from the same version list, so the report
+    can name the lower-risk step. Yanked releases cannot be told apart
+    in pip index output — callers disclose this once per report.
     """
     out: dict[str, Freshness] = {}
-    for package, (installed, _spec) in specs.items():
+    for package, (installed, spec) in specs.items():
         try:
             versions = pip_available_versions(package, run=run)
         except (RuntimeError, TimeoutError) as exc:
@@ -345,14 +481,14 @@ def check_pip_packages(
                 wanted=None,
                 latest=None,
                 update_class=None,
-                error=f"index lookup failed: {exc}",
+                error=f"index lookup failed: {_registry_hint(exc, PYPI_HOST)}",
             )
             continue
         latest = select_latest(versions, installed)
         out[package] = Freshness(
             package=package,
             installed=installed,
-            wanted=None,
+            wanted=select_wanted(versions, installed, spec),
             latest=latest,
             update_class=classify_update(installed, latest),
             error=None if latest else "no published versions found",

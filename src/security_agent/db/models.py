@@ -889,6 +889,17 @@ class DependencyReport(Base):
     """
 
     __tablename__ = "dependency_reports"
+    __table_args__ = (
+        # Single decision point invariant (D9): at most one pending
+        # combined report per repo, enforced atomically.
+        Index(
+            "uq_dependency_reports_one_pending",
+            "repo_id",
+            unique=True,
+            sqlite_where=text("status = 'pending'"),
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     repo_id: Mapped[int] = mapped_column(ForeignKey("repos.id"), index=True)

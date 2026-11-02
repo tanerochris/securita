@@ -86,7 +86,34 @@ def test_check_pip_packages_selects_stable():
     out = df.check_pip_packages({"a": ("1.0.0", "==1.0.0")}, run=_run_for(calls))
     assert out["a"].latest == "2.0.0"
     assert out["a"].update_class == "major"
-    assert out["a"].wanted is None  # pip reports no in-range answer
+    assert out["a"].wanted == "1.0.0"  # in-range ceiling for ==1.0.0 (D13)
+
+
+def test_prerelease_only_registry_never_counts_for_stable():
+    assert df.select_latest(["2.0.0a1"], "1.0.0") is None
+    assert df.select_latest(["2.0.0a1"], "2.0.0a0") == "2.0.0a1"
+
+
+def test_select_wanted_in_range():
+    versions = ["1.0.0", "1.5.0", "2.0.0"]
+    assert df.select_wanted(versions, "1.0.0", ">=1.0,<2.0") == "1.5.0"
+    assert df.select_wanted(versions, "1.0.0", "^1.0.0") == "1.5.0"
+    assert df.select_wanted(versions, "1.0.0", "==1.0.0") == "1.0.0"
+    assert df.select_wanted(versions, "1.0.0", "git+https://x") is None
+
+
+def test_npm_prerelease_installed_sees_newer_prerelease(tmp_path):
+    def run(name, args, **kwargs):
+        if args[:1] == ["outdated"]:
+            return json.dumps({"a": {"current": "2.0.0a1", "latest": "1.0.0"}})
+        if args[1:3] == ["a", "versions"]:
+            return json.dumps(["1.0.0", "2.0.0a1", "2.0.0b1"])
+        if args[:1] == ["view"]:
+            return json.dumps("1.0.0")
+        raise AssertionError(args)
+
+    out = df.check_npm_manifest(tmp_path, {"a": ("2.0.0a1", "^2.0.0a1")}, run=run)
+    assert out["a"].latest == "2.0.0b1"
 
 
 def test_pip_available_versions_limited_parse():

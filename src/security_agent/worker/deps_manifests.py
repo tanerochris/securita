@@ -54,9 +54,7 @@ _NPM_LOCK_NAMES = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml")
 _PY_LOCK_NAMES = ("poetry.lock", "Pipfile.lock", "pdm.lock", "uv.lock")
 
 _NPM_EXACT_RE = re.compile(r"^[=v]?\d")
-_YARN_ENTRY_RE = re.compile(r'^"?([^"\s@]+)@[^":]*"?:\s*$')
-_YARN_VERSION_RE = re.compile(r'^\s{2}version\s+"?([^"\s]+)"?\s*$')
-_PNPM_PKG_RE = re.compile(r"^ {2}/(?:@([^/\s]+)/)?([^/\s@][^/\s]*)@([^:\s(]+)")
+_YARN_VERSION_RE = re.compile(r'^\s+version\s*:?\s+"?([^"\s]+)"?\s*$')
 _REQ_PIN_RE = re.compile(r"==\s*([^,;\s#]+)")
 _PY_SPEC_RE = re.compile(r"^\s*([A-Za-z0-9._-]+(?:\[[^\]]*\])?)\s*(.*)$")
 _NPM_RANGE_PREFIX_RE = re.compile(r"^(\^|~|>=?|<=?|=|v)?(.+)$")
@@ -147,15 +145,10 @@ def _is_manifest_name(path: Path) -> bool:
     name = path.name
     if name in ("package.json", "pyproject.toml", "Pipfile"):
         return True
-    if name == "requirements.txt" or (
-        name.startswith("requirements-") and name.endswith(".txt")
-    ):
+    if name.startswith("requirements") and name.endswith(".txt"):
         return True
-    if (
-        name.endswith(".txt")
-        and path.parent.name == "requirements"
-        and name.startswith("requirements")
-    ):
+    # Common layout: requirements/base.txt, requirements/prod.txt, ...
+    if name.endswith(".txt") and path.parent.name == "requirements":
         return True
     return False
 
@@ -303,36 +296,80 @@ def _resolve_package_lock(lockfile: Path) -> dict[str, str]:
     return out
 
 
+def _yarn_descriptor_package(descriptor: str) -> str | None:
+    """Package name from one Yarn descriptor (`@scope/pkg@npm:^1`, `a@^1`)."""
+    text = descriptor.strip().strip("\"'").strip()
+    if not text:
+        return None
+    if text.startswith("@"):
+        slash = text.find("/")
+        if slash < 0:
+            return None
+        at = text.find("@", slash)
+        return text[:at] if at > slash else text
+    at = text.find("@")
+    return text[:at] if at > 0 else text
+
+
 def _resolve_yarn_lock(lockfile: Path) -> dict[str, str]:
+    """Classic + Berry yarn.lock: descriptor blocks, then a version line.
+
+    Classic: `a@^1.0.0:` + `  version "1.2.3"`.
+    Berry: `"a@npm:^1.0.0", "a@npm:^1.1.0":` + `  version: 1.2.3`.
+    """
     text = read_text_capped(lockfile)
     if text is None:
         return {}
     out: dict[str, str] = {}
-    current: str | None = None
+    current: list[str] = []
     for line in text.splitlines():
         if not line.startswith((" ", "\t")) and line.rstrip().endswith(":"):
-            match = _YARN_ENTRY_RE.match(line.strip())
-            current = match.group(1) if match else None
-        elif current is not None:
-            match = _YARN_VERSION_RE.match(line)
-            if match:
-                out.setdefault(current, match.group(1))
-                current = None
+            header = line.strip().removesuffix(":")
+            current = []
+            for descriptor in header.split(","):
+                package = _yarn_descriptor_package(descriptor)
+                if package:
+                    current.append(package)
+            continue
+        if not current:
+            continue
+        match = _YARN_VERSION_RE.match(line)
+        if match:
+            for package in current:
+                out.setdefault(package, match.group(1))
+            current = []
     return out
 
 
 def _resolve_pnpm_lock(lockfile: Path) -> dict[str, str]:
-    """Minimal pnpm-lock.yaml read: `  /name@version` package lines."""
+    """pnpm-lock package keys across v6/v8 (`/name@ver`) and v9 (`name@ver`)."""
     text = read_text_capped(lockfile)
     if text is None:
         return {}
     out: dict[str, str] = {}
     for line in text.splitlines():
-        match = _PNPM_PKG_RE.match(line)
-        if match:
-            scope, name, version = match.group(1), match.group(2), match.group(3)
-            full = f"@{scope}/{name}" if scope else name
-            out.setdefault(full, version)
+        if not line.startswith("  ") or line.startswith("   "):
+            continue
+        key = line.strip()
+        if key.endswith(": {}"):
+            key = key[:-4]
+        elif key.endswith(":"):
+            key = key[:-1]
+        else:
+            continue
+        if "@" not in key:
+            continue
+        key = key.strip().strip("\"'").removeprefix("/")
+        key = key.split("(", 1)[0]  # peer suffix: name@ver(peer@x)
+        at = key.rfind("@", 1)
+        if at <= 0:
+            continue
+        package, version = key[:at], key[at + 1 :]
+        if not package or not version or " " in package or " " in version:
+            continue
+        if not (version[0].isdigit() or version[0] in "vV"):
+            continue
+        out.setdefault(package, version)
     return out
 
 
@@ -350,6 +387,18 @@ def _load_pyproject(path: Path, rel: str) -> DepManifest:
         return manifest
     if not isinstance(data, dict):
         return manifest
+    seen: set[str] = set()
+
+    def _add(name: str, spec: str, section: str) -> None:
+        # One row per (manifest, package): the Dependency key has no
+        # section leg, so the first (primary) declaration wins and later
+        # extras/groups for the same package do not flip its label.
+        key = normalize_dist_name(name)
+        if key in seen:
+            return
+        seen.add(key)
+        manifest.packages.append(TrackedPackage(name=name, spec=spec, section=section))
+
     project = data.get("project")
     if isinstance(project, dict):
         deps = project.get("dependencies")
@@ -357,11 +406,7 @@ def _load_pyproject(path: Path, rel: str) -> DepManifest:
             for entry in deps:
                 parsed = _parse_pep508(entry)
                 if parsed:
-                    manifest.packages.append(
-                        TrackedPackage(
-                            name=parsed[0], spec=parsed[1], section="dependencies"
-                        )
-                    )
+                    _add(parsed[0], parsed[1], "dependencies")
         optional = project.get("optional-dependencies")
         if isinstance(optional, dict):
             for extra, entries in optional.items():
@@ -370,11 +415,7 @@ def _load_pyproject(path: Path, rel: str) -> DepManifest:
                 for entry in entries:
                     parsed = _parse_pep508(entry)
                     if parsed:
-                        manifest.packages.append(
-                            TrackedPackage(
-                                name=parsed[0], spec=parsed[1], section=f"extra:{extra}"
-                            )
-                        )
+                        _add(parsed[0], parsed[1], f"extra:{extra}")
     poetry = data.get("tool", {}).get("poetry") if isinstance(data.get("tool"), dict) else None
     if isinstance(poetry, dict):
         deps = poetry.get("dependencies")
@@ -382,13 +423,7 @@ def _load_pyproject(path: Path, rel: str) -> DepManifest:
             for pkg, spec in deps.items():
                 if pkg == "python":
                     continue
-                manifest.packages.append(
-                    TrackedPackage(
-                        name=str(pkg),
-                        spec=_poetry_spec(spec),
-                        section="poetry",
-                    )
-                )
+                _add(str(pkg), _poetry_spec(spec), "poetry")
         group = poetry.get("group")
         if isinstance(group, dict):
             for group_name, group_data in group.items():
@@ -397,13 +432,7 @@ def _load_pyproject(path: Path, rel: str) -> DepManifest:
                 deps = group_data.get("dependencies")
                 if isinstance(deps, dict):
                     for pkg, spec in deps.items():
-                        manifest.packages.append(
-                            TrackedPackage(
-                                name=str(pkg),
-                                spec=_poetry_spec(spec),
-                                section=f"poetry:{group_name}",
-                            )
-                        )
+                        _add(str(pkg), _poetry_spec(spec), f"poetry:{group_name}")
     for lock_name, lock_kind in (
         ("poetry.lock", "poetry"),
         ("pdm.lock", "pdm"),
@@ -432,7 +461,7 @@ def _parse_pep508(entry: object) -> tuple[str, str] | None:
     match = _PY_SPEC_RE.match(text.split(";")[0])
     if match is None:
         return None
-    name = match.group(1).strip()
+    name = match.group(1).strip().split("[", 1)[0].strip()  # extras are not identity
     spec = match.group(2).strip() or "*"
     if not name or "/" in name or "@" in name.split(",")[0]:
         return None
@@ -461,6 +490,7 @@ def _load_requirements(path: Path, rel: str, workdir: Path) -> DepManifest:
         return manifest  # D22: dev-named requirements files excluded
     manifest.extra_files = _expand_dep_includes(workdir, path)
     files = [path, *manifest.extra_files]
+    seen: set[str] = set()
     for req_file in files:
         if _DEV_NAME_RE.search(req_file.stem):
             continue
@@ -469,19 +499,23 @@ def _load_requirements(path: Path, rel: str, workdir: Path) -> DepManifest:
             continue
         for line in text.splitlines():
             name = requirement_name(line)
-            if name is None:
+            if name is None or name in seen:
                 continue
+            seen.add(name)
             code = line.split("#", 1)[0]
             spec = _requirements_spec(code, name)
-            if not any(p.name == name for p in manifest.packages):
-                manifest.packages.append(
-                    TrackedPackage(name=name, spec=spec, section="requirements")
-                )
+            manifest.packages.append(
+                TrackedPackage(name=name, spec=spec, section="requirements")
+            )
     return manifest
 
 
 def _expand_dep_includes(workdir: Path, path: Path) -> list[Path]:
-    """In-repo .txt files reachable via -r/-c includes (depth/cycle guarded)."""
+    """In-repo .txt files reachable via -r includes (depth/cycle guarded).
+
+    -c constraint files bound versions; they are not declarations, so
+    their pins never become tracked direct dependencies (D3).
+    """
     try:
         resolved_workdir = workdir.resolve()
     except OSError:
@@ -498,7 +532,7 @@ def _expand_dep_includes(workdir: Path, path: Path) -> list[Path]:
             continue
         for line in text.splitlines():
             found = requirement_include_target(line)
-            if found is None:
+            if found is None or found[0] != "require":
                 continue
             try:
                 candidate = (current.parent / found[1]).resolve()
@@ -558,6 +592,15 @@ def _pipfile_spec(spec: object) -> str:
         if isinstance(version, str) and version and version != "*":
             return version
     return "*"
+
+
+def pip_spec_base(spec: str) -> str | None:
+    """Base version of a pip spec (>=1.0 -> 1.0, ~=1.2 -> 1.2), else None."""
+    text = (spec or "").strip().strip("\"'")
+    if not text or "://" in text:
+        return None
+    match = re.search(r"(?:==|>=|<=|~=|>|<|=)?\s*v?(\d+(?:\.\d+)*)", text.split(";")[0])
+    return match.group(1) if match else None
 
 
 def pip_spec_exact(spec: str) -> str | None:
@@ -640,12 +683,16 @@ def _resolve_python_lock_file(lock: Path) -> dict[str, str]:
     return out
 
 
+def resolved_versions(manifest: DepManifest) -> dict[str, str]:
+    """Whole lockfile resolution for one manifest (parse once, reuse)."""
+    if manifest.ecosystem == "npm":
+        return resolve_npm_lock(manifest)
+    return resolve_pip_lock(manifest)
+
+
 def installed_for(manifest: DepManifest, package: str) -> str | None:
     """Lockfile-resolved version for one tracked package (D3), else None."""
+    resolved = resolved_versions(manifest)
     if manifest.ecosystem == "npm":
-        resolved = resolve_npm_lock(manifest)
-        if package in resolved:
-            return resolved[package]
-        return None
-    resolved = resolve_pip_lock(manifest)
+        return resolved.get(package)
     return resolved.get(normalize_dist_name(package))

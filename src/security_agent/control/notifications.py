@@ -47,9 +47,9 @@ def push_notification(
         db.flush()
         db.expunge(row)
     if kind in KINDS:
-        from security_agent.control.deps import deps_notify_email_enabled
+        from security_agent.control.deps import deps_notify_outbound_enabled
 
-        if deps_notify_email_enabled():
+        if deps_notify_outbound_enabled():
             from security_agent.notify import notify_event
 
             link = f"/repos/{repo_id}/dependencies" if repo_id else "/repos"
@@ -146,24 +146,28 @@ def mark_read(notification_id: int, user_id: int) -> bool:
 
 
 def mark_all_read(user_id: int) -> int:
-    """Mark every pool row read for this user; returns newly marked count."""
-    from sqlalchemy.exc import IntegrityError
+    """Mark every unread pool row read for this user (one bulk insert)."""
+    from sqlalchemy import insert
 
     with session_scope() as db:
-        ids = list(db.scalars(select(DashboardNotification.id)))
-        marked = 0
-        for nid in ids:
-            try:
-                with db.begin_nested():
-                    db.add(
-                        NotificationRead(
-                            notification_id=nid,
-                            user_id=user_id,
-                            read_at=datetime.now(UTC),
-                        )
-                    )
-                    db.flush()
-            except IntegrityError:
-                continue
-            marked += 1
-        return marked
+        already = select(NotificationRead.notification_id).where(
+            NotificationRead.user_id == user_id
+        )
+        ids = list(
+            db.scalars(
+                select(DashboardNotification.id).where(
+                    DashboardNotification.id.notin_(already)
+                )
+            )
+        )
+        if not ids:
+            return 0
+        now = datetime.now(UTC)
+        db.execute(
+            insert(NotificationRead),
+            [
+                {"notification_id": nid, "user_id": user_id, "read_at": now}
+                for nid in ids
+            ],
+        )
+        return len(ids)

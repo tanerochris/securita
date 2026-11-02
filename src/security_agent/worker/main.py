@@ -161,14 +161,6 @@ def run_once(*, max_runs: int = 100) -> dict:
     dep_enqueued = dep_tick()
     dep_drain: dict = {"executed": 0, "failed": 0}
     dep_patches: dict = {"proposal_ids": [], "errors": []}
-    try:
-        dep_drain = drain_dep_checks(WORKER_ID)
-    except Exception:  # noqa: BLE001 - dep checks never kill the worker loop
-        log.exception("dependency check drain failed")
-    try:
-        dep_patches = drain_dep_patches()
-    except Exception:  # noqa: BLE001 - dep patches never kill the worker loop
-        log.exception("dependency patch drain failed")
     graph = build_graph()
     executed = failed = parked = 0
     while executed + failed + parked < max_runs:
@@ -201,6 +193,16 @@ def run_once(*, max_runs: int = 100) -> dict:
             finally:
                 stop.set()
                 beat.join(timeout=10)
+    # Dependency work drains after security scans: separate failure
+    # domains (D5) and no head-of-line latency for the scan pipeline.
+    try:
+        dep_drain = drain_dep_checks(WORKER_ID)
+    except Exception:  # noqa: BLE001 - dep checks never kill the worker loop
+        log.exception("dependency check drain failed")
+    try:
+        dep_patches = drain_dep_patches()
+    except Exception:  # noqa: BLE001 - dep patches never kill the worker loop
+        log.exception("dependency patch drain failed")
     return {
         "enqueued": len(enqueued),
         "executed": executed,

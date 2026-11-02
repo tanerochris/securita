@@ -94,35 +94,50 @@ def gather_usage(workdir: str, ecosystem: str, package: str) -> list[str]:
         if ecosystem == "npm"
         else pip_usage_patterns(package)
     )
-    sites: list[str] = []
+    # One ripgrep container per package: all patterns as -e alternatives.
+    args: list[str] = []
     for pattern in patterns:
-        if len(sites) >= MAX_USAGE_SITES:
+        args.extend(["-e", pattern])
+    args.append(workdir)
+    args.extend(_RG_GLOB_EXCLUDES)
+    try:
+        out = run_allowlisted("ripgrep", args, cwd=workdir)
+    except (RuntimeError, TimeoutError, ValueError) as exc:
+        log.debug("usage search failed for %s: %s", package, exc)
+        return []
+    sites: list[str] = []
+    seen: set[str] = set()
+    for line in (out or "").splitlines():
+        text = line.strip()
+        if not text or len(sites) >= MAX_USAGE_SITES:
             break
-        try:
-            out = run_allowlisted(
-                "ripgrep", [pattern, workdir, *_RG_GLOB_EXCLUDES], cwd=workdir
-            )
-        except (RuntimeError, TimeoutError, ValueError) as exc:
-            log.debug("usage search failed for %s: %s", package, exc)
-            continue
-        for line in (out or "").splitlines():
-            text = line.strip()
-            if not text or len(sites) >= MAX_USAGE_SITES:
-                break
-            # rg --line-number prints path:line:match; keep path:line.
-            parts = text.split(":", 2)
-            if len(parts) >= 2:
-                site = f"{parts[0]}:{parts[1]}"
-                if site not in sites:
-                    sites.append(site)
+        # rg --line-number prints path:line:match; keep path:line.
+        parts = text.split(":", 2)
+        if len(parts) >= 2:
+            site = f"{parts[0]}:{parts[1]}"
+            if site not in seen:
+                seen.add(site)
+                sites.append(site)
     return sites
+
+
+def _segment_count(text: str) -> int:
+    """Numeric release segments in a partial version (1 -> 1, 1.2.x -> 2)."""
+    count = 0
+    for part in text.strip().lstrip("vV").split("."):
+        if part.isdigit():
+            count += 1
+        else:
+            break
+    return max(count, 1)
 
 
 def satisfies_npm_range(spec: str, version: str) -> bool | None:
     """Whether an npm range admits a version; None when unknowable.
 
-    Covers ^, ~, exact, and simple comparator sets; tags, URLs, and
-    hyphen ranges return None (the report marks them undetermined).
+    Covers ^, ~ (including partials like ~1), exact, x-ranges, hyphen
+    ranges, || unions, and simple comparator sets; tags and URLs return
+    None (the report marks them undetermined).
     """
     from packaging.version import InvalidVersion, Version
 
@@ -135,8 +150,28 @@ def satisfies_npm_range(spec: str, version: str) -> bool | None:
         return True
     if text.startswith(("http", "git+", "file:", "link:", "workspace:", "npm:")):
         return None
-    if " - " in text or "||" in text or text.startswith("http"):
+    if "||" in text:
+        verdicts = [satisfies_npm_range(part, version) for part in text.split("||")]
+        if any(v is True for v in verdicts):
+            return True
+        if all(v is False for v in verdicts):
+            return False
         return None
+    if " - " in text:
+        low_text, high_text = (p.strip() for p in text.split(" - ", 1))
+        try:
+            low = Version(low_text)
+            high = Version(high_text)
+        except InvalidVersion:
+            return None
+        if _segment_count(high_text) == 1:
+            high_ok = target < Version(f"{list(high.release)[0] + 1}.0.0")
+        elif _segment_count(high_text) == 2:
+            rel = list(high.release) + [0]
+            high_ok = target < Version(f"{rel[0]}.{rel[1] + 1}.0")
+        else:
+            high_ok = target <= high
+        return low <= target and high_ok
     if text.startswith("^"):
         try:
             base = Version(text[1:])
@@ -151,19 +186,51 @@ def satisfies_npm_range(spec: str, version: str) -> bool | None:
             upper = Version(f"0.0.{release[2] + 1}")
         return base <= target < upper
     if text.startswith("~"):
+        base_text = text[1:]
         try:
-            base = Version(text[1:])
+            base = Version(base_text)
         except InvalidVersion:
             return None
         release = list(base.release) + [0, 0]
-        upper = Version(f"{release[0]}.{release[1] + 1}.0")
+        if _segment_count(base_text) == 1:
+            upper = Version(f"{release[0] + 1}.0.0")
+        else:
+            upper = Version(f"{release[0]}.{release[1] + 1}.0")
         return base <= target < upper
+    if "," in text:
+        verdicts = [satisfies_npm_range(clause, version) for clause in text.split(",")]
+        if all(v is True for v in verdicts):
+            return True
+        if any(v is False for v in verdicts):
+            return False
+        return None
     parts = text.split()
-    if len(parts) == 1 and parts[0] and parts[0][0].isdigit():
-        try:
-            return target == Version(parts[0].lstrip("=vV"))
-        except InvalidVersion:
-            return None
+    if len(parts) == 1:
+        only = parts[0]
+        comparator = re.match(r"^(>=|<=|>|<)(.+)$", only)
+        if comparator:
+            try:
+                other = Version(comparator.group(2))
+            except InvalidVersion:
+                return None
+            return {
+                ">": target > other,
+                "<": target < other,
+                ">=": target >= other,
+                "<=": target <= other,
+            }[comparator.group(1)]
+        if any(seg in ("x", "X", "*") for seg in only.lstrip("=vV").split(".")):
+            wanted = [
+                int(seg) for seg in only.lstrip("=vV").split(".") if seg.isdigit()
+            ]
+            actual = list(target.release)
+            return actual[: len(wanted)] == wanted
+        if only and (only[0].isdigit() or only[0] in "vV="):
+            try:
+                return target == Version(only.lstrip("=vV"))
+            except InvalidVersion:
+                return None
+        return None  # dist-tag or other non-version spec
     result: bool | None = True
     for part in parts:
         match = re.match(r"^(>=|<=|>|<|=)?(.+)$", part)
@@ -242,9 +309,13 @@ def build_section(
     }
 
 
+MAX_PROMPT_SECTIONS = 100  # prompt stays bounded on mega-reports
+
+
 def _section_prompt_text(sections: list[dict]) -> str:
     lines = []
-    for section in sections:
+    shown = sections[:MAX_PROMPT_SECTIONS]
+    for section in shown:
         lines.append(
             "- {package} ({ecosystem}, {manifest}): {installed} -> {latest} "
             "({update_class}); wanted={wanted}; security={security} "
@@ -265,6 +336,11 @@ def _section_prompt_text(sections: list[dict]) -> str:
                 else "",
                 wanted_note=section.get("wanted_note") or "",
             )
+        )
+    if len(sections) > MAX_PROMPT_SECTIONS:
+        lines.append(
+            f"({len(sections) - MAX_PROMPT_SECTIONS} further updates omitted "
+            "from this prompt for size; they are in the report sections.)"
         )
     lines.append(
         "Changelogs were NOT retrieved: mark every changelog-dependent "
@@ -325,6 +401,14 @@ def generate_summary(
         bound = get_chat_model()
     else:
         bound = model
+    # Pre-check: never pay for a call the budget will only park (D23).
+    from security_agent.control.deps import DepsBudgetExceeded, deps_budget_state
+
+    budget = deps_budget_state()
+    if budget["exhausted"]:
+        raise DepsBudgetExceeded(
+            f"dependency budget hit ({budget['spent']}/{budget['cap']} tokens)"
+        )
     prompt = render_prompt(
         "deps_summary",
         max_words=str(MAX_SUMMARY_WORDS),
@@ -397,7 +481,12 @@ def create_report(
             db.scalars(
                 select(Dependency).where(
                     Dependency.repo_id == repo_id,
-                    Dependency.status == DependencyStatus.UPDATE_AVAILABLE,
+                    Dependency.status.in_(
+                        [
+                            DependencyStatus.UPDATE_AVAILABLE,
+                            DependencyStatus.REPORT_PENDING_CAP,
+                        ]
+                    ),
                 )
             )
         )

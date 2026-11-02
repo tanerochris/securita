@@ -89,64 +89,76 @@ def null_deps_adapt(
 # --- Style-preserving spec bumps (D8) ---
 
 
+def _truncate_version(target: str, segments: int) -> str:
+    """Target truncated to the original spec's segment count (~1.2 -> 2.0)."""
+    from packaging.version import Version
+
+    release = list(Version(target).release)
+    while len(release) < segments:
+        release.append(0)
+    return ".".join(str(p) for p in release[:segments])
+
+
 def bump_spec_text(spec: str, target: str) -> str | None:
     """Approved-target spec preserving the existing style; None if unshaped.
 
-    ^/~ prefixes survive, exact pins stay exact, single lower bounds
-    (>=, >, ~=) move to the target, bare names pin. Multi-clause ranges
-    whose upper bound excludes the target, URLs, and workspace links
-    return None: the patcher reports them for a manual bump instead of
-    guessing a new range.
+    ^/~ prefixes survive at the original segment count, exact pins stay
+    exact, single lower bounds (>=, >, ~=) move to the target, bare
+    unpinned specs pin. Anything whose shape cannot be rewritten without
+    changing its meaning — || unions, hyphen ranges, multi-clause sets
+    that exclude the target, dist-tags, URLs, workspace links — returns
+    None (or the original text when it already admits the target): the
+    patcher reports those for a manual bump instead of narrowing them.
     """
     from packaging.version import InvalidVersion, Version
 
+    from security_agent.worker.deps_report import _segment_count, satisfies_npm_range
+
     text = (spec or "").strip().strip("\"'")
-    if not text or text in ("*", "latest"):
+    if not text or text == "*":
         return target  # unpinned: pin the approved target
     if text.startswith(("http:", "https:", "git+", "file:", "link:", "workspace:", "npm:")):
         return None
+    if "||" in text or " - " in text or "," in text or len(text.split()) > 1:
+        return text if satisfies_npm_range(text, target) is True else None
     if text.startswith("^"):
-        return f"^{target}"
-    if text.startswith("~") and not text.startswith("~="):
-        return f"~{target}"
-    clauses = [c.strip() for c in text.split(",") if c.strip()]
-    if len(clauses) > 1:
+        base = text[1:]
         try:
-            target_v = Version(target)
+            Version(base)
+        except InvalidVersion:
+            return text if satisfies_npm_range(text, target) is True else None
+        return f"^{_truncate_version(target, _segment_count(base))}"
+    if text.startswith("~="):
+        base = text[2:]
+        try:
+            Version(base)
         except InvalidVersion:
             return None
-        for clause in clauses:
-            match = re.match(r"^(==|!=|>=|<=|>|<|~=)?\s*(.+)$", clause)
-            if match is None:
-                return None
-            op, raw = match.group(1) or "==", match.group(2)
-            try:
-                other = Version(raw)
-            except InvalidVersion:
-                return None
-            ok = {
-                "==": target_v == other,
-                "!=": target_v != other,
-                ">": target_v > other,
-                "<": target_v < other,
-                ">=": target_v >= other,
-                "<=": target_v <= other,
-                "~=": target_v >= other,
-            }[op]
-            if not ok:
-                return None
-        return text  # complex range already admits the target: keep it
-    match = re.match(r"^(==|!=|>=|<=|>|<|~=|=)?\s*(.+)$", text)
+        return f"~={_truncate_version(target, _segment_count(base))}"
+    if text.startswith("~"):
+        base = text[1:]
+        try:
+            Version(base)
+        except InvalidVersion:
+            return text if satisfies_npm_range(text, target) is True else None
+        return f"~{_truncate_version(target, _segment_count(base))}"
+    match = re.match(r"^(==|!=|>=|<=|>|<|=)?\s*(.+)$", text)
     if match is None:
         return None
     op, raw = match.group(1) or "", match.group(2)
-    if op == "!=":
-        return None
-    if op in ("<", "<="):
-        return None  # upper-bound-only specs never admit a newer target
+    if op in ("!=", "<", "<="):
+        return None  # exclusion/upper-bound-only specs never admit a bump
     if op == "==":
         return f"=={target}"
     if op in ("", "="):
+        if not raw or not (raw[0].isdigit() or raw[0] in "vV"):
+            return None  # dist-tag (next, beta, latest) or other non-version
+        if any(seg in ("x", "X", "*") for seg in raw.lstrip("vV").split(".")):
+            return text if satisfies_npm_range(text, target) is True else None
+        try:
+            Version(raw.lstrip("vV"))
+        except InvalidVersion:
+            return None
         return target
     return f"{op}{target}"
 
@@ -156,7 +168,7 @@ def apply_npm_bump_at(manifest_file: Path, package: str, target: str) -> str:
     data = read_json_capped(manifest_file)
     if data is None:
         raise PatchError(f"{manifest_file.name} unreadable, oversize, or not an object")
-    for section in ("dependencies", "optionalDependencies", "devDependencies"):
+    for section in ("dependencies", "optionalDependencies"):
         deps = data.get(section)
         if not isinstance(deps, dict) or package not in deps:
             continue
@@ -529,11 +541,37 @@ def _pending_approved(repo_id: int, report_id: int | None) -> list[Dependency]:
         return rows
 
 
-def _manifest_of(workdir: Path, rel: str) -> DepManifest:
+def _manifest_of(
+    workdir: Path, rel: str, cache: dict[str, DepManifest] | None = None
+) -> DepManifest:
+    """Manifest for one patch group; discovery is cached per patch run.
+
+    Groups in one run share the same source tree, so the first group's
+    full walk+parse is reused with paths rebased into each fresh
+    workdir instead of re-walking the tree per group.
+    """
     from security_agent.worker.deps_manifests import discover_dep_manifests
 
+    if cache is not None and rel in cache:
+        cached = cache[rel]
+        manifest_file = workdir / rel
+        parent = manifest_file.parent
+        return DepManifest(
+            path=manifest_file,
+            rel=rel,
+            ecosystem=cached.ecosystem,
+            kind=cached.kind,
+            packages=list(cached.packages),
+            lockfile=parent / cached.lockfile.name if cached.lockfile else None,
+            lock_kind=cached.lock_kind,
+            peer_ranges=dict(cached.peer_ranges),
+            python_locks=[parent / p.name for p in cached.python_locks],
+            extra_files=[parent / p.name for p in cached.extra_files],
+        )
     manifests, _ = discover_dep_manifests(workdir)
     for manifest in manifests:
+        if cache is not None:
+            cache[manifest.rel] = manifest
         if manifest.rel == rel:
             return manifest
     raise PatchError(f"manifest {rel} no longer present; re-run the check")
@@ -583,39 +621,97 @@ def lock_for(workdir: Path, manifest: DepManifest) -> Path:
     return (workdir / manifest.rel).parent / "package-lock.json"
 
 
-def _persist_deps_proposal(
-    repo_id: int,
-    members: list[Dependency],
-    bumps: dict[str, str],
-    reason: str,
-    verification: str,
-    ignored: list[str],
-    patch_text: str,
-) -> int:
+class _QueuedBehindFinding(Exception):
+    """A live Finding Proposal appeared for this package mid-patch (D20)."""
+
+
+def _claim_group(repo_id: int, members: list[Dependency], reason: str) -> int | None:
+    """Atomically claim a group before any patch work starts.
+
+    Creates the Proposal row and links every member with a guarded
+    UPDATE (status PROPOSED + no proposal yet). If any member was
+    already claimed, the whole claim rolls back and the group is
+    skipped — two worker replicas can never patch the same group.
+    """
+    from typing import Any, cast
+
+    from sqlalchemy import update
+    from sqlalchemy.engine import CursorResult
+
     with session_scope() as db:
-        finding_ids: list[int] = []
-        for row in members:
-            if row.finding_id is not None and row.finding_id not in finding_ids:
-                finding_ids.append(row.finding_id)
-        summary_from = "; ".join(f"{r.package}@{r.installed_version}" for r in members)
-        summary_to = "; ".join(f"{r.package}@{bumps[r.package]}" for r in members)
         proposal = Proposal(
             repo_id=repo_id,
-            finding_ids=finding_ids,
+            finding_ids=[],
             grouping_reason=f"{DEPS_GROUP_PREFIX}{reason}",
-            package_from=summary_from[:100],
-            package_to=summary_to[:100],
-            verification_result=verification,
-            ignored_tests=ignored,
-            patch=patch_text,
+            package_from="patching",
+            package_to="patching",
+            verification_result="patching in progress",
         )
         db.add(proposal)
         db.flush()
         proposal_id = proposal.id
+        claimed = 0
         for row in members:
-            stored = db.get(Dependency, row.id)
-            if stored is not None:
-                stored.proposal_id = proposal_id
+            result = db.execute(
+                update(Dependency)
+                .where(
+                    Dependency.id == row.id,
+                    Dependency.status == DependencyStatus.PROPOSED,
+                    Dependency.proposal_id.is_(None),
+                )
+                .values(proposal_id=proposal_id)
+            )
+            claimed += cast("CursorResult[Any]", result).rowcount
+        if claimed != len(members):
+            db.rollback()
+            return None
+        return proposal_id
+
+
+def _finalize_deps_proposal(
+    proposal_id: int,
+    members: list[Dependency],
+    bumps: dict[str, str],
+    verification: str,
+    ignored: list[str],
+    patch_text: str,
+) -> None:
+    """Fill a claimed Proposal with the verified patch (D8)."""
+    with session_scope() as db:
+        proposal = db.get(Proposal, proposal_id)
+        if proposal is None:
+            raise PatchError("claimed proposal vanished before finalize")
+        finding_ids: list[int] = []
+        for row in members:
+            if row.finding_id is not None and row.finding_id not in finding_ids:
+                finding_ids.append(row.finding_id)
+        proposal.finding_ids = finding_ids
+        proposal.package_from = "; ".join(
+            f"{r.package}@{r.installed_version}" for r in members
+        )[:100]
+        proposal.package_to = "; ".join(
+            f"{r.package}@{bumps[r.package]}" for r in members
+        )[:100]
+        proposal.verification_result = verification
+        proposal.ignored_tests = ignored
+        proposal.patch = patch_text
+        # D20 backstop: this delivery lands the fix, so any other live
+        # Finding Proposal for the same findings is superseded (the
+        # persist-time recheck normally queues us first; this covers
+        # the residual race window).
+        if finding_ids:
+            others = list(
+                db.scalars(
+                    select(Proposal).where(
+                        Proposal.repo_id == proposal.repo_id,
+                        Proposal.id != proposal_id,
+                        Proposal.status == ProposalStatus.OPEN,
+                    )
+                )
+            )
+            for other in others:
+                if set(other.finding_ids or []) & set(finding_ids):
+                    other.status = ProposalStatus.SUPERSEDED
     for row in members:
         if row.finding_id is not None:
             with session_scope() as db:
@@ -626,22 +722,31 @@ def _persist_deps_proposal(
                     transition_finding(row.finding_id, FindingStatus.PROPOSED)
                 except ValueError:
                     pass  # raced with the security pipeline; the rescan owns it
-    return proposal_id
 
 
-def _release_group_to_available(dep_ids: list[int]) -> None:
-    """Failed groups go back to update_available so the next check re-reports."""
+def _abandon_claim(proposal_id: int, *, queued_behind_finding: bool = False) -> None:
+    """Release a claimed group: delete the placeholder Proposal.
+
+    Failed groups return to update_available so the next check
+    re-reports them; groups that lost the D20 race queue as
+    covered_by_finding instead.
+    """
     with session_scope() as db:
+        proposal = db.get(Proposal, proposal_id)
+        if proposal is not None:
+            db.delete(proposal)
         rows = list(
             db.scalars(
-                select(Dependency).where(
-                    Dependency.id.in_(dep_ids),
-                    Dependency.proposal_id.is_(None),
-                )
+                select(Dependency).where(Dependency.proposal_id == proposal_id)
             )
         )
         for row in rows:
-            row.status = DependencyStatus.UPDATE_AVAILABLE
+            row.proposal_id = None
+            row.status = (
+                DependencyStatus.COVERED_BY_FINDING
+                if queued_behind_finding
+                else DependencyStatus.UPDATE_AVAILABLE
+            )
 
 
 def run_approved_updates(
@@ -682,8 +787,11 @@ def run_approved_updates(
         else:
             workable.append(row)
     results: list[dict] = []
+    manifest_cache: dict[str, DepManifest] = {}
     for _key, members, reason in group_approved(workable):
-        results.append(_patch_group(repo, members, reason, source_dir, hook))
+        results.append(
+            _patch_group(repo, members, reason, source_dir, hook, manifest_cache)
+        )
     proposal_ids = [r["proposal_id"] for r in results if "proposal_id" in r]
     _notify_patch_result(repo_id, report_id, results, queued)
     return {"proposal_ids": proposal_ids, "results": results, "queued_behind_findings": queued}
@@ -695,13 +803,19 @@ def _patch_group(
     reason: str,
     source_template: Path | None,
     hook: DepsAdaptHook,
+    manifest_cache: dict[str, DepManifest] | None = None,
 ) -> dict:
+    from security_agent.control.deps import live_finding_proposal
+
     manifest_rel = members[0].manifest_path
     dep_ids = [r.id for r in members]
     failures: list[str] = []
+    proposal_id = _claim_group(repo.id, members, reason)
+    if proposal_id is None:
+        return {"dep_ids": dep_ids, "outcome": "claimed-elsewhere"}
     try:
         with _fresh_workdir(repo, source_template) as workdir:
-            manifest = _manifest_of(workdir, manifest_rel)
+            manifest = _manifest_of(workdir, manifest_rel, manifest_cache)
             pre = _scan_keys_for(_scannable_locks(workdir, manifest_rel))
             fixed = _fixed_keys_for(members)
             baseline_proof = _baseline_tests(workdir, manifest)
@@ -717,8 +831,13 @@ def _patch_group(
             if violations:
                 raise PatchError(f"validate: {'; '.join(violations)}")
             _changed, untracked = diff_files(workdir)
-            proposal_id = _persist_deps_proposal(
-                repo.id, members, bumps, reason, verification, ignored,
+            # D20 recheck at persist time: a Finding Proposal that
+            # appeared while this group patched wins the bump.
+            for member in members:
+                if live_finding_proposal(repo.id, member.package) is not None:
+                    raise _QueuedBehindFinding(member.package)
+            _finalize_deps_proposal(
+                proposal_id, members, bumps, verification, ignored,
                 diff_text(workdir, untracked),
             )
             return {
@@ -728,9 +847,12 @@ def _patch_group(
                 "bumps": bumps,
                 "grouping": reason,
             }
+    except _QueuedBehindFinding:
+        _abandon_claim(proposal_id, queued_behind_finding=True)
+        return {"dep_ids": dep_ids, "outcome": "queued"}
     except (PatchError, ScanError, RuntimeError, TimeoutError) as exc:
         failures.append(str(exc))
-        _release_group_to_available(dep_ids)
+        _abandon_claim(proposal_id)
         guidance = (
             f"No verified dependency patch for {manifest_rel} "
             f"({', '.join(m.package for m in members)}): {'; '.join(failures)}; "
@@ -919,6 +1041,38 @@ def render_deps_pr(
     return title, "\n".join(lines)
 
 
+def _claim_delivery(proposal_id: int, branch: str) -> bool:
+    """Claim one proposal for delivery by stamping its branch first."""
+    from typing import Any, cast
+
+    from sqlalchemy import update
+    from sqlalchemy.engine import CursorResult
+
+    with session_scope() as db:
+        result = db.execute(
+            update(Proposal)
+            .where(Proposal.id == proposal_id, Proposal.branch.is_(None))
+            .values(branch=branch)
+        )
+        return cast("CursorResult[Any]", result).rowcount == 1
+
+
+def _release_delivery(proposal_id: int, branch: str) -> None:
+    """Clear a delivery claim after a failed attempt (retry stays possible)."""
+    from sqlalchemy import update
+
+    with session_scope() as db:
+        db.execute(
+            update(Proposal)
+            .where(
+                Proposal.id == proposal_id,
+                Proposal.branch == branch,
+                Proposal.pr_url.is_(None),
+            )
+            .values(branch=None)
+        )
+
+
 def run_dep_deliver(
     repo_id: int,
     *,
@@ -972,10 +1126,12 @@ def run_dep_deliver(
     errors: list[str] = []
     notes: list[str] = []
     for proposal in pending:
+        branch = f"{deps_branch_name('manifest', 'updates')}-{proposal.id}"
+        if not _claim_delivery(proposal.id, branch):
+            continue  # another deliverer owns this proposal
         try:
             with _fresh_workdir(repo, source_dir) as workdir:
                 base = _checkout_base(workdir, repo.default_branch)
-                branch = f"{deps_branch_name('manifest', 'updates')}-{proposal.id}"
                 run_allowlisted("git", ["checkout", "-b", branch], cwd=str(workdir))
                 if not proposal.patch:
                     raise DeliverError("proposal is missing its stored patch")
@@ -1048,5 +1204,6 @@ def run_dep_deliver(
                     )
                 delivered.append(proposal.id)
         except (DeliverError, RuntimeError, TimeoutError) as exc:
+            _release_delivery(proposal.id, branch)
             errors.append(f"proposal {proposal.id}: {exc}")
     return {"proposal_ids": delivered, "errors": errors, "notes": notes}

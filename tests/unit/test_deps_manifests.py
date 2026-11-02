@@ -151,6 +151,51 @@ def test_pipfile_packages_not_develop(tmp_path):
     assert dm.installed_for(manifest, "celery") == "5.3.1"
 
 
+def test_yarn_berry_and_classic_scoped(tmp_path):
+    (tmp_path / "package.json").write_text('{"dependencies": {"a": "^1.0.0"}}')
+    (tmp_path / "yarn.lock").write_text(
+        '"lodash@npm:^4.17.0":\n  version: 4.17.21\n'
+        '  resolution: "lodash@npm:4.17.21"\n'
+        '"@scope/pkg@npm:^1.0.0", "@scope/pkg@npm:^1.1.0":\n  version: 1.2.3\n'
+    )
+    manifest = dm._load_package_json(tmp_path / "package.json", "package.json")
+    assert dm.resolve_npm_lock(manifest) == {"lodash": "4.17.21", "@scope/pkg": "1.2.3"}
+
+
+def test_pnpm_v9_slashless_and_peer_suffix(tmp_path):
+    (tmp_path / "package.json").write_text('{"dependencies": {"a": "^1.0.0"}}')
+    (tmp_path / "pnpm-lock.yaml").write_text(
+        "lockfileVersion: '9.0'\nsnapshots:\n  lodash@4.17.21: {}\n"
+        "  '@scope/pkg@1.2.3': {}\n  other@2.0.0(peer@1.0.0): {}\n"
+    )
+    manifest = dm._load_package_json(tmp_path / "package.json", "package.json")
+    assert dm.resolve_npm_lock(manifest) == {
+        "lodash": "4.17.21",
+        "@scope/pkg": "1.2.3",
+        "other": "2.0.0",
+    }
+
+
+def test_requirements_dir_layout_and_constraints(tmp_path):
+    req_dir = tmp_path / "requirements"
+    req_dir.mkdir()
+    (req_dir / "base.txt").write_text("django==4.2.0\n-c constraints.txt\n")
+    (req_dir / "constraints.txt").write_text("celery==5.3.0\n")
+    manifests, _ = dm.discover_dep_manifests(tmp_path)
+    reqs = [m for m in manifests if m.kind == "requirements"]
+    assert reqs and reqs[0].rel == "requirements/base.txt"
+    # -c constraints bound versions; they are not tracked declarations.
+    assert {p.name for p in reqs[0].packages} == {"django"}
+
+
+def test_pep508_extras_are_not_identity(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\ndependencies = ["requests[security,socks]==2.31.0"]\n'
+    )
+    manifest = dm._load_pyproject(tmp_path / "pyproject.toml", "pyproject.toml")
+    assert [(p.name, p.spec) for p in manifest.packages] == [("requests", "==2.31.0")]
+
+
 def test_spec_exact_helpers():
     assert dm.npm_spec_exact("1.2.3") == "1.2.3"
     assert dm.npm_spec_exact("=1.2.3") == "1.2.3"

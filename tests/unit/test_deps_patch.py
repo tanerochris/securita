@@ -118,6 +118,38 @@ def test_pyproject_and_pipfile_rewriters_roundtrip(tmp_path):
     assert 'celery = "==5.4.0"' in pipfile.read_text()
 
 
+def test_bump_spec_text_never_narrows_ranges():
+    # || unions, hyphen/space sets, tags, and x-ranges are never narrowed.
+    assert dp.bump_spec_text("^1.2.3 || ^2.0.0", "2.0.0") == "^1.2.3 || ^2.0.0"
+    assert dp.bump_spec_text("^1.2.3 || ^2.0.0", "3.0.0") is None
+    assert dp.bump_spec_text(">=1.0 <2.0", "2.0.0") is None
+    assert dp.bump_spec_text("1.0.0 - 1.9.9", "2.0.0") is None
+    assert dp.bump_spec_text("next", "2.0.0") is None
+    assert dp.bump_spec_text("latest", "2.0.0") is None
+    assert dp.bump_spec_text("1.2.x", "1.2.9") == "1.2.x"  # already admits
+    assert dp.bump_spec_text("1.2.x", "2.0.0") is None
+    # Segment count is preserved for ~, ^, and ~=.
+    assert dp.bump_spec_text("~1.2", "1.9.0") == "~1.9"
+    assert dp.bump_spec_text("~1", "2.0.0") == "~2"
+    assert dp.bump_spec_text("^1", "2.0.0") == "^2"
+    assert dp.bump_spec_text("~=1.2", "2.0.0") == "~=2.0"
+    assert dp.bump_spec_text("~=1.2.3", "2.0.0") == "~=2.0.0"
+
+
+def test_claim_group_is_atomic():
+    repo = _repo()
+    a = _dep(repo.id, package="a")
+    b = _dep(repo.id, package="b", proposal_id=999999)  # already claimed elsewhere
+    assert dp._claim_group(repo.id, [a, b], "test") is None
+    with session_scope() as db:
+        assert db.get(Dependency, a.id).proposal_id is None  # rolled back whole
+    pid = dp._claim_group(repo.id, [a], "test")
+    assert pid is not None
+    with session_scope() as db:
+        assert db.get(Dependency, a.id).proposal_id == pid
+        assert db.get(Proposal, pid) is not None
+
+
 def test_grouping_majors_alone_rest_together():
     repo = _repo()
     major = _dep(repo.id, package="m", update_class="major", latest_version="2.0.0")

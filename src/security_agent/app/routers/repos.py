@@ -365,7 +365,7 @@ def dependencies_decide(
 
     _repo_or_404(repo_id)
     try:
-        deps_svc.decide_report(report_id, user, included, reason=reason)
+        deps_svc.decide_report(report_id, user, included, reason=reason, repo_id=repo_id)
     except (ValueError, PermissionError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return RedirectResponse(
@@ -381,7 +381,7 @@ def dependencies_decline(
 
     _repo_or_404(repo_id)
     try:
-        deps_svc.decline_version(dep_id, user, reason=reason)
+        deps_svc.decline_version(dep_id, user, reason=reason, repo_id=repo_id)
     except (ValueError, PermissionError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return RedirectResponse(f"/repos/{repo_id}/dependencies", status_code=303)
@@ -395,7 +395,7 @@ def dependencies_ignore(
 
     _repo_or_404(repo_id)
     try:
-        deps_svc.ignore_package(dep_id, user, reason=reason)
+        deps_svc.ignore_package(dep_id, user, reason=reason, repo_id=repo_id)
     except (ValueError, PermissionError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return RedirectResponse(f"/repos/{repo_id}/dependencies", status_code=303)
@@ -407,7 +407,7 @@ def dependencies_unignore(repo_id: int, dep_id: int, user: User = Depends(requir
 
     _repo_or_404(repo_id)
     try:
-        deps_svc.unignore_package(dep_id, user)
+        deps_svc.unignore_package(dep_id, user, repo_id=repo_id)
     except (ValueError, PermissionError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return RedirectResponse(f"/repos/{repo_id}/dependencies", status_code=303)

@@ -371,6 +371,100 @@ def test_enqueue_single_flight_and_due():
         deps_svc.set_repo_dep_interval(repo.id, None, owner)
 
 
+def test_failed_check_preserves_silences(tmp_path):
+    """A tool failure marks values stale; it never erases user state (D21)."""
+    from security_agent.app import accounts as accounts_svc
+
+    owner = accounts_svc.create_user(
+        f"sil-{datetime.now(UTC).timestamp()}@example.com", None, Role.OWNER
+    )
+    repo = _repo()
+    source = _source(tmp_path)
+    _run(repo.id, source, summary_model=_Model("s"))
+    rows = {r.package: r for r in _rows(repo.id)}
+    deps_svc.decline_version(rows["left-pad"].id, owner)
+    deps_svc.ignore_package(rows["django"].id, owner)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("registry down")
+
+    _run(repo.id, source, npm_fetch=_boom, pip_fetch=_boom)
+    rows = {r.package: r for r in _rows(repo.id)}
+    assert rows["left-pad"].status == DependencyStatus.DECLINED  # silence kept
+    assert rows["django"].status == DependencyStatus.IGNORED
+    assert rows["left-pad"].stale is True and rows["django"].stale is True
+    # Next good check still honours the declined version (no re-proposal).
+    calls: list = []
+    _, out = _run(repo.id, source, summary_model=_Model(calls=calls))
+    assert out["report_id"] is None and calls == []
+    rows = {r.package: r for r in _rows(repo.id)}
+    assert rows["left-pad"].status == DependencyStatus.DECLINED
+
+
+def test_pending_cap_rows_recover_into_next_report(tmp_path):
+    """Raised budget + new report + decision patches parked rows (D23)."""
+    from security_agent.app import accounts as accounts_svc
+
+    owner = accounts_svc.create_user(
+        f"rec-{datetime.now(UTC).timestamp()}@example.com", None, Role.OWNER
+    )
+    deps_svc.set_deps_token_cap(1, owner)
+    repo = _repo()
+    source = _source(tmp_path)
+    try:
+        _run(repo.id, source, summary_model=_Model("s" * 500))
+    finally:
+        deps_svc.set_deps_token_cap(deps_svc.DEFAULT_DEPS_TOKEN_CAP, owner)
+    rows = {r.package: r for r in _rows(repo.id)}
+    assert rows["left-pad"].status == DependencyStatus.REPORT_PENDING_CAP
+    _, out = _run(repo.id, source, summary_model=_Model("fresh"))
+    assert out["report_id"]
+    rows = {r.package: r for r in _rows(repo.id)}
+    assert rows["left-pad"].status == DependencyStatus.AWAITING_DECISION
+    report = _reports(repo.id)[-1]
+    deps_svc.decide_report(
+        report.id, owner, ["npm|package.json|left-pad", "pip|requirements.txt|django"]
+    )
+    rows = {r.package: r for r in _rows(repo.id)}
+    assert rows["left-pad"].status == DependencyStatus.PROPOSED
+
+
+def test_touch_and_fenced_finish():
+    repo = _repo()
+    _settle_checks(repo.id)
+    check = dc.enqueue_dependency_check(repo.id, RunTrigger.MANUAL)
+    owned = dc.claim_dep_checks("worker-a", limit=500)  # suite leaves stale claims
+    assert any(c.id == check.id for c in owned)
+    assert dc.touch_dep_claim(check.id, "worker-a") is True
+    assert dc.touch_dep_claim(check.id, "worker-b") is False
+    dc.fail_dependency_check(check.id, "boom", worker_id="worker-b")  # fenced off
+    with session_scope() as db:
+        assert db.get(DependencyCheck, check.id).status == RunStatus.RUNNING
+    dc.fail_dependency_check(check.id, "boom", worker_id="worker-a")
+    with session_scope() as db:
+        assert db.get(DependencyCheck, check.id).status == RunStatus.FAILED
+
+
+def test_purge_old_dep_records():
+    from datetime import timedelta
+
+    repo = _repo()
+    _settle_checks(repo.id)
+    old = datetime.now(UTC) - timedelta(days=200)
+    with session_scope() as db:
+        row = DependencyCheck(
+            repo_id=repo.id, status=RunStatus.DONE, trigger=RunTrigger.MANUAL,
+            started_at=old, finished_at=old,
+        )
+        db.add(row)
+        db.flush()
+        old_check_id = row.id
+    counts = dc.purge_old_dep_records()
+    assert counts["checks"] >= 1
+    with session_scope() as db:
+        assert db.get(DependencyCheck, old_check_id) is None
+
+
 def test_prune_absent_packages(tmp_path):
     repo = _repo()
     _run(repo.id, _source(tmp_path), summary_model=_Model("s"))

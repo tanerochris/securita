@@ -183,6 +183,29 @@ def test_developer_cannot_decide_or_silence():
     assert resp.status_code == 303  # developers can trigger checks
 
 
+def test_cross_repo_ids_are_rejected():
+    """A report/dep from repo B cannot be decided via repo A's URLs."""
+    _login_as(Role.OWNER)
+    repo_a, _, _, _ = _seed()
+    repo_b, dep_b, _, report_b = _seed()
+    csrf = _csrf(f"/repos/{repo_a}/dependencies")
+    resp = client.post(
+        f"/repos/{repo_a}/dependencies/report/{report_b}/decide",
+        data={"csrf": csrf, "included": []},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 400
+    resp = client.post(
+        f"/repos/{repo_a}/dependencies/{dep_b}/ignore",
+        data={"csrf": csrf},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 400
+    with session_scope() as db:
+        assert db.get(Dependency, dep_b).status == DependencyStatus.AWAITING_DECISION
+    _ = repo_b
+
+
 def test_repo_cadence_override():
     _login_as(Role.OWNER)
     repo_id, _, _, _ = _seed()

@@ -44,9 +44,9 @@ from security_agent.worker.deps_freshness import check_npm_manifest, check_pip_p
 from security_agent.worker.deps_manifests import (
     DepManifest,
     discover_dep_manifests,
-    installed_for,
-    npm_spec_exact,
-    pip_spec_exact,
+    npm_spec_base,
+    pip_spec_base,
+    resolved_versions,
 )
 from security_agent.worker.scan import clone_repo
 
@@ -135,11 +135,14 @@ def dep_due_repos(now: datetime | None = None) -> list[Repo]:
             due = (Repo.dep_last_check_at.is_(None)) | (cutoff <= now)  # noqa: E712
         rows = list(
             db.scalars(
-                select(Repo).where(
+                select(Repo)
+                .where(
                     ~running,
                     Repo.dep_schedule_hours.is_(None) | (Repo.dep_schedule_hours != 0),
                     due,
                 )
+                .order_by(Repo.id)
+                .limit(200)  # bounded burst per tick; the rest wait a minute
             )
         )
         for r in rows:
@@ -218,7 +221,22 @@ def persist_dependencies(repo_id: int, records: list[dict]) -> list[Dependency]:
                     status=DependencyStatus.UP_TO_DATE,
                 )
                 db.add(row)
-                db.flush()
+                try:
+                    with db.begin_nested():
+                        db.flush()
+                except IntegrityError:
+                    # Lost an insert race to a concurrent check for the
+                    # same repo: adopt the winner's row (scan precedent).
+                    row = db.scalar(
+                        select(Dependency).where(
+                            Dependency.repo_id == repo_id,
+                            Dependency.ecosystem == record["ecosystem"],
+                            Dependency.manifest_path == record["manifest_path"],
+                            Dependency.package == record["package"],
+                        )
+                    )
+                    if row is None:
+                        raise
             _apply_record(row, record)
             db.flush()
             db.expunge(row)
@@ -230,7 +248,14 @@ def _apply_record(row: Dependency, record: dict) -> None:
     """Merge one freshness record, honouring sticky states (D10/D20/D21)."""
     failed = record.get("failed", False)
     if failed:
-        row.status = DependencyStatus.CHECK_FAILED
+        # Silences and approvals are user state, not freshness state: a
+        # tool failure marks values stale but never erases them (D10/D21).
+        if row.status not in (
+            DependencyStatus.IGNORED,
+            DependencyStatus.DECLINED,
+            DependencyStatus.PROPOSED,
+        ):
+            row.status = DependencyStatus.CHECK_FAILED
         row.stale = True
         row.check_error = record.get("error") or "freshness tool failed"
         row.last_checked_at = datetime.now(UTC)
@@ -300,15 +325,52 @@ def prune_absent_packages(repo_id: int, manifests: list[DepManifest], *, truncat
 # --- The check (D4/D5) ---
 
 
-def _finish_check(check_id: int, status: RunStatus, notes: list[str]) -> None:
+def _finish_check(
+    check_id: int, status: RunStatus, notes: list[str], *, worker_id: str | None = None
+) -> None:
+    """Finish a check; worker-owned finishes are fenced on the claim.
+
+    A stale owner whose lease was taken over cannot overwrite the new
+    owner's status/notes: the guarded UPDATE matches only while this
+    worker still holds the claim on a RUNNING row.
+    """
+    from typing import Any, cast
+
+    from sqlalchemy import func, literal, update
+    from sqlalchemy.engine import CursorResult
+
+    joined = "\n".join(n for n in notes if n)
+    if worker_id is None:
+        with session_scope() as db:
+            check = db.get(DependencyCheck, check_id)
+            if check is None:
+                return
+            check.status = status
+            check.finished_at = datetime.now(UTC)
+            prior = f"{check.notes}\n" if check.notes else ""
+            check.notes = prior + joined
+        return
     with session_scope() as db:
-        check = db.get(DependencyCheck, check_id)
-        if check is None:
-            return
-        check.status = status
-        check.finished_at = datetime.now(UTC)
-        prior = f"{check.notes}\n" if check.notes else ""
-        check.notes = prior + "\n".join(n for n in notes if n)
+        bind = db.get_bind()
+        now = datetime.now(UTC)
+        sql_now = now.replace(tzinfo=None) if bind and bind.dialect.name == "sqlite" else now
+        result = db.execute(
+            update(DependencyCheck)
+            .where(
+                DependencyCheck.id == check_id,
+                DependencyCheck.claimed_by == worker_id,
+                DependencyCheck.status == RunStatus.RUNNING,
+            )
+            .values(
+                status=status,
+                finished_at=sql_now,
+                notes=func.coalesce(DependencyCheck.notes, "").op("||")(
+                    literal(f"\n{joined}" if joined else "")
+                ),
+            )
+        )
+        if cast("CursorResult[Any]", result).rowcount != 1:
+            log.debug("dep check %d finish fenced off (claim lost)", check_id)
 
 
 def _record_manifest_outcome(check_id: int, outcome: dict) -> None:
@@ -321,9 +383,34 @@ def _record_manifest_outcome(check_id: int, outcome: dict) -> None:
         check.manifests = manifests
 
 
-def fail_dependency_check(check_id: int, error: str) -> None:
+def fail_dependency_check(
+    check_id: int, error: str, *, worker_id: str | None = None
+) -> None:
     """Fail a check the worker could not execute (queue fencing for deps)."""
-    _finish_check(check_id, RunStatus.FAILED, [error])
+    _finish_check(check_id, RunStatus.FAILED, [error], worker_id=worker_id)
+
+
+def touch_dep_claim(check_id: int, worker_id: str) -> bool:
+    """Renew one dep check's lease; False when the claim was lost."""
+    from typing import Any, cast
+
+    from sqlalchemy import update
+    from sqlalchemy.engine import CursorResult
+
+    now = datetime.now(UTC)
+    with session_scope() as db:
+        bind = db.get_bind()
+        sql_now = now.replace(tzinfo=None) if bind and bind.dialect.name == "sqlite" else now
+        result = db.execute(
+            update(DependencyCheck)
+            .where(
+                DependencyCheck.id == check_id,
+                DependencyCheck.claimed_by == worker_id,
+                DependencyCheck.status == RunStatus.RUNNING,
+            )
+            .values(claimed_at=sql_now)
+        )
+        return cast("CursorResult[Any]", result).rowcount == 1
 
 
 def claim_dep_checks(worker_id: str | None = None, limit: int = 20) -> list[DependencyCheck]:
@@ -396,11 +483,18 @@ def reap_stale_dep_checks(*, older_than_hours: float = 24) -> int:
         sql_now = now.replace(tzinfo=None) if bind and bind.dialect.name == "sqlite" else now
         cutoff = sql_now - timedelta(hours=older_than_hours)
         note = "\nreaped: no worker finished this check in time"
+        from security_agent.worker.scheduler import CLAIM_LEASE_MINUTES
+
+        lease_cutoff = sql_now - timedelta(minutes=CLAIM_LEASE_MINUTES)
         result = db.execute(
             update(DependencyCheck)
             .where(
                 DependencyCheck.status == RunStatus.RUNNING,
                 DependencyCheck.started_at < cutoff,
+                # Spare live claim holders, like reap_stale_runs: only
+                # unclaimed or lease-expired rows are dead.
+                (DependencyCheck.claimed_at.is_(None))
+                | (DependencyCheck.claimed_at < lease_cutoff),
             )
             .values(
                 status=RunStatus.FAILED,
@@ -415,8 +509,105 @@ def reap_stale_dep_checks(*, older_than_hours: float = 24) -> int:
     return reaped
 
 
+def _dep_heartbeat(check_id: int, worker_id: str, stop) -> None:
+    """Renew the claim lease until the check finishes (lease is 10 min)."""
+    while not stop.wait(DEP_HEARTBEAT_SECONDS):
+        try:
+            if not touch_dep_claim(check_id, worker_id):
+                log.error(
+                    "dep check %d claim lost mid-run; finish will be fenced", check_id
+                )
+                return
+        except Exception:  # noqa: BLE001 - a lost beat never kills the check
+            log.exception("dep check %d heartbeat failed", check_id)
+            return
+
+
+def purge_old_dep_records(
+    *, notification_days: int = 90, check_days: int = 90, report_days: int = 180
+) -> dict:
+    """Retention for dependency records (bounded storage growth).
+
+    Notifications and finished checks age out after 90 days; decided or
+    superseded reports after 180 days. References are nulled before
+    deletes so live rows never dangle; running checks and pending
+    reports are never purged.
+    """
+    from datetime import timedelta
+    from typing import Any, cast
+
+    from sqlalchemy import delete, update
+    from sqlalchemy.engine import CursorResult
+
+    from security_agent.db.models import (
+        DashboardNotification,
+        NotificationRead,
+    )
+
+    now = datetime.now(UTC)
+    counts = {"notifications": 0, "checks": 0, "reports": 0}
+    with session_scope() as db:
+        bind = db.get_bind()
+        sql_now = now.replace(tzinfo=None) if bind and bind.dialect.name == "sqlite" else now
+        old_notifs = select(DashboardNotification.id).where(
+            DashboardNotification.created_at < sql_now - timedelta(days=notification_days)
+        )
+        db.execute(
+            delete(NotificationRead).where(
+                NotificationRead.notification_id.in_(old_notifs)
+            )
+        )
+        res = db.execute(
+            delete(DashboardNotification).where(
+                DashboardNotification.created_at
+                < sql_now - timedelta(days=notification_days)
+            )
+        )
+        counts["notifications"] = cast("CursorResult[Any]", res).rowcount or 0
+        old_checks = select(DependencyCheck.id).where(
+            DependencyCheck.finished_at.is_not(None),
+            DependencyCheck.started_at < sql_now - timedelta(days=check_days),
+        )
+        db.execute(
+            update(DependencyReport)
+            .where(DependencyReport.check_id.in_(old_checks))
+            .values(check_id=None)
+        )
+        res = db.execute(
+            delete(DependencyCheck).where(
+                DependencyCheck.finished_at.is_not(None),
+                DependencyCheck.started_at < sql_now - timedelta(days=check_days),
+            )
+        )
+        counts["checks"] = cast("CursorResult[Any]", res).rowcount or 0
+        old_reports = select(DependencyReport.id).where(
+            DependencyReport.status != "pending",
+            DependencyReport.created_at < sql_now - timedelta(days=report_days),
+        )
+        db.execute(
+            update(DependencyCheck)
+            .where(DependencyCheck.report_id.in_(old_reports))
+            .values(report_id=None)
+        )
+        db.execute(
+            update(DashboardNotification)
+            .where(DashboardNotification.report_id.in_(old_reports))
+            .values(report_id=None)
+        )
+        res = db.execute(
+            delete(DependencyReport).where(
+                DependencyReport.status != "pending",
+                DependencyReport.created_at < sql_now - timedelta(days=report_days),
+            )
+        )
+        counts["reports"] = cast("CursorResult[Any]", res).rowcount or 0
+    return counts
+
+
 def drain_dep_checks(worker_id: str, *, max_checks: int = 100) -> dict:
     """Execute claimed checks oldest-first; one bad check never kills the drain."""
+    import threading
+
     executed = failed = 0
     while executed + failed < max_checks:
         pending = claim_dep_checks(worker_id)
@@ -424,13 +615,27 @@ def drain_dep_checks(worker_id: str, *, max_checks: int = 100) -> dict:
             break
         for check in pending:
             force = "force-report" in (check.notes or "")
+            stop = threading.Event()
+            beat = threading.Thread(
+                target=_dep_heartbeat,
+                args=(check.id, worker_id, stop),
+                daemon=True,
+            )
+            beat.start()
             try:
-                run_dependency_check(check.repo_id, check.id, force_report=force)
+                run_dependency_check(
+                    check.repo_id, check.id, force_report=force, worker_id=worker_id
+                )
             except Exception as exc:  # noqa: BLE001 - one bad check never kills the drain
                 failed += 1
-                fail_dependency_check(check.id, f"check crashed: {exc}")
+                fail_dependency_check(
+                    check.id, f"check crashed: {exc}", worker_id=worker_id
+                )
                 log.exception("dependency check %d crashed", check.id)
                 continue
+            finally:
+                stop.set()
+                beat.join(timeout=10)
             executed += 1
     return {"executed": executed, "failed": failed}
 
@@ -469,6 +674,9 @@ def drain_dep_patches(*, max_repos: int = 50) -> dict:
     return {"proposal_ids": proposals, "errors": errors}
 
 
+DEP_HEARTBEAT_SECONDS = 4 * 60
+
+
 def run_dependency_check(
     repo_id: int,
     check_id: int,
@@ -479,6 +687,7 @@ def run_dependency_check(
     pip_fetch=None,
     usage_fetch=None,
     summary_model=None,
+    worker_id: str | None = None,
 ) -> dict:
     """Execute one freshness check; failures land on the check record.
 
@@ -493,10 +702,15 @@ def run_dependency_check(
         if repo is None or check is None:
             raise ValueError(f"Unknown repo {repo_id} or check {check_id}.")
         db.expunge(repo)
-    from security_agent.control.deps import live_finding_proposal, security_fix_for
+    from security_agent.control.deps import (
+        live_proposal_packages,
+        package_finding_index,
+    )
     from security_agent.worker.deps_patch import release_settled_proposals
 
     release_settled_proposals(repo_id)
+    finding_index = package_finding_index(repo_id)
+    live_packages = live_proposal_packages(repo_id, finding_index)
     notes: list[str] = []
     workdir = source_dir
     owned = workdir is None
@@ -510,7 +724,7 @@ def run_dependency_check(
         if not manifests:
             notes.append("no supported manifests; nothing to track")
             prune_absent_packages(repo_id, [], truncated=False)
-            _finish_check(check_id, RunStatus.DONE, notes)
+            _finish_check(check_id, RunStatus.DONE, notes, worker_id=worker_id)
             return {"status": RunStatus.DONE.value, "manifests": 0}
         peer_ranges: dict[str, dict[str, str]] = {}
         failures = 0
@@ -521,8 +735,8 @@ def run_dependency_check(
                     repo_id,
                     npm_fetch=npm_fetch,
                     pip_fetch=pip_fetch,
-                    live_finding_proposal=live_finding_proposal,
-                    security_fix_for=security_fix_for,
+                    finding_index=finding_index,
+                    live_packages=live_packages,
                 )
             except (DependencyCheckError, RuntimeError, TimeoutError) as exc:
                 failures += 1
@@ -555,7 +769,7 @@ def run_dependency_check(
             persist_dependencies(repo_id, records)
         if failures and failures == len(manifests):
             notes.append("all manifests failed")
-            _finish_check(check_id, RunStatus.FAILED, notes)
+            _finish_check(check_id, RunStatus.FAILED, notes, worker_id=worker_id)
             _notify_failure(repo_id, check_id, notes)
             return {"status": RunStatus.FAILED.value, "error": "; ".join(notes)}
         prune_absent_packages(repo_id, manifests, truncated=truncated)
@@ -569,7 +783,7 @@ def run_dependency_check(
             summary_model=summary_model,
         )
         notes.extend(outcome.get("notes", []))
-        _finish_check(check_id, RunStatus.DONE, notes)
+        _finish_check(check_id, RunStatus.DONE, notes, worker_id=worker_id)
         with session_scope() as db:
             check_row = db.get(DependencyCheck, check_id)
             if check_row is not None:
@@ -583,7 +797,7 @@ def run_dependency_check(
         }
     except (DependencyCheckError, RuntimeError, TimeoutError) as exc:
         notes.append(f"failed: {exc}")
-        _finish_check(check_id, RunStatus.FAILED, notes)
+        _finish_check(check_id, RunStatus.FAILED, notes, worker_id=worker_id)
         _notify_failure(repo_id, check_id, notes)
         return {"status": RunStatus.FAILED.value, "error": str(exc)}
     finally:
@@ -607,18 +821,24 @@ def _check_manifest(
     *,
     npm_fetch,
     pip_fetch,
-    live_finding_proposal,
-    security_fix_for,
+    finding_index,
+    live_packages,
 ) -> list[dict]:
     """Freshness records for one manifest via native tooling (D4)."""
+    from security_agent.control.deps import security_fix_from
+    from security_agent.worker.scan import normalize_dist_name
+
+    resolved = resolved_versions(manifest)  # one lockfile parse per manifest
     specs: dict[str, tuple[str | None, str]] = {}
     for pkg in manifest.packages:
-        installed = installed_for(manifest, pkg.name)
-        if installed is None:
-            installed = (
-                npm_spec_exact(pkg.spec)
-                if manifest.ecosystem == "npm"
-                else pip_spec_exact(pkg.spec)
+        if manifest.ecosystem == "npm":
+            base = npm_spec_base(pkg.spec)
+            installed = resolved.get(pkg.name) or (
+                base if base and base[0].isdigit() else None
+            )
+        else:
+            installed = resolved.get(normalize_dist_name(pkg.name)) or pip_spec_base(
+                pkg.spec
             )
         specs[pkg.name] = (installed, pkg.spec)
     if manifest.ecosystem == "npm":
@@ -644,8 +864,10 @@ def _check_manifest(
             records.append(_failed_record(manifest, pkg.name, fresh.error))
             continue
         installed = fresh.installed or specs[pkg.name][0]
-        live = live_finding_proposal(repo_id, pkg.name)
-        fix = security_fix_for(repo_id, pkg.name, installed, fresh.latest)
+        live = pkg.name in live_packages
+        fix = security_fix_from(
+            finding_index.get(pkg.name, []), installed, fresh.latest
+        )
         records.append(
             {
                 "ecosystem": manifest.ecosystem,
@@ -659,7 +881,7 @@ def _check_manifest(
                 "update_class": fresh.update_class,
                 "security": fix is not None,
                 "finding_id": fix.id if fix else None,
-                "covered_by_finding": live is not None,
+                "covered_by_finding": live,
             }
         )
     return records
@@ -752,14 +974,36 @@ def _maybe_report(
         _park_rows_pending_cap(repo_id, [r.id for r in reportable])
         _notify_cap(repo_id, check_id)
         return {"hash": current_hash, "report_id": None, "reused_report_id": None, "notes": notes}
-    report = create_report(
-        repo_id,
-        check_id,
-        sections,
-        summary,
-        model_backed=model_backed,
-        update_set_hash=current_hash,
-    )
+    try:
+        report = create_report(
+            repo_id,
+            check_id,
+            sections,
+            summary,
+            model_backed=model_backed,
+            update_set_hash=current_hash,
+        )
+    except IntegrityError:
+        # One-pending invariant (D9): a concurrent check won the report
+        # slot; reuse its pending report instead of failing the check.
+        notes.append("concurrent check created the pending report; reusing it")
+        with session_scope() as db:
+            winner = db.scalar(
+                select(DependencyReport)
+                .where(
+                    DependencyReport.repo_id == repo_id,
+                    DependencyReport.status == "pending",
+                )
+                .order_by(DependencyReport.id.desc())
+                .limit(1)
+            )
+            winner_id = winner.id if winner else None
+        return {
+            "hash": current_hash,
+            "report_id": None,
+            "reused_report_id": winner_id,
+            "notes": notes,
+        }
     notes.append(f"combined report #{report.id} ({len(sections)} updates)")
     if any(s.get("update_class") == "major" or s.get("security") for s in sections):
         _notify_report(repo_id, check_id, report.id, sections)

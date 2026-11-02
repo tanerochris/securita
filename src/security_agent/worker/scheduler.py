@@ -248,6 +248,7 @@ def dep_tick(now: datetime | None = None) -> list:
     from security_agent.worker.deps_check import (
         dep_due_repos,
         enqueue_dependency_check,
+        purge_old_dep_records,
         reap_stale_dep_checks,
     )
 
@@ -255,6 +256,10 @@ def dep_tick(now: datetime | None = None) -> list:
         reap_stale_dep_checks()
     except Exception as exc:  # noqa: BLE001 - housekeeping never fails the tick
         log.warning("dep reap failed: %s", exc)
+    try:
+        purge_old_dep_records()
+    except Exception as exc:  # noqa: BLE001 - housekeeping never fails the tick
+        log.warning("dep retention purge failed: %s", exc)
     enqueued = []
     try:
         due = dep_due_repos(now)

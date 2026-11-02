@@ -31,6 +31,7 @@ CHAIN = [
     "0016_policy_rag",
     "0017_dependencies",
     "0018_notify_extra_channels",
+    "0019_dep_report_guard",
 ]
 
 
