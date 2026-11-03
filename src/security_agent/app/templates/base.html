@@ -494,6 +494,35 @@
 </script>
 <script type="text/javascript">
   (function () {
+    /* Localizable numbers: every [data-num] carries the raw count;
+       rewrite the text via Intl.NumberFormat (compact notation, or
+       full grouped digits for data-kind="grouped") and refresh the
+       title with the exact grouped value, so each reader sees their
+       own locale. The server-rendered text stays as the no-JS
+       fallback. Text goes through textContent only — never parsed
+       as HTML. */
+    function render(el) {
+      var v = Number(el.getAttribute("data-num"));
+      if (!isFinite(v)) { return; }
+      var opts = el.getAttribute("data-kind") === "grouped"
+        ? {}
+        : { notation: "compact", maximumFractionDigits: 1 };
+      el.textContent = new Intl.NumberFormat(undefined, opts).format(v);
+      el.title = new Intl.NumberFormat(undefined).format(v);
+    }
+    function boot() {
+      if (typeof Intl === "undefined" || !Intl.NumberFormat) { return; }
+      document.querySelectorAll("[data-num]").forEach(render);
+    }
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", boot);
+    } else {
+      boot();
+    }
+  })();
+</script>
+<script type="text/javascript">
+  (function () {
     /* Avatar menu: toggle on click, close on outside click or Escape.
        Only one of the desktop/mobile menus is visible at a time. */
     var pairs = [["avatarBtn", "avatarDropdown"], ["avatarBtnM", "avatarDropdownM"]];

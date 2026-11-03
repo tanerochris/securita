@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
+from security_agent.app.numfmt import compact as _compact
 from security_agent.app.timefmt import user_time as _user_time
 from security_agent.control.cost import format_usd as _format_usd
 
@@ -17,6 +18,7 @@ BASE = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE / "templates"))
 templates.env.filters["user_time"] = _user_time
 templates.env.filters["usd"] = _format_usd
+templates.env.filters["compact"] = _compact
 
 
 def _chat_md(text: str, viewer_is_owner: bool = False):

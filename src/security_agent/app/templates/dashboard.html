@@ -13,7 +13,7 @@
     </a>
     <a class="btn-primary" href="/approvals">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10z"/><path d="m9 11.5 2 2 4-4.5"/></svg>
-      Review approvals{% if pending_approvals %} ({{ pending_approvals }}){% endif %}
+      Review approvals{% if pending_approvals %} ({{ pending_approvals|compact }}){% endif %}
     </a>
   </div>
 </div>
@@ -21,7 +21,7 @@
 {% if pending_approvals %}
 <div class="mt-5 flex flex-wrap items-center gap-3 rounded-xl bg-brand-mist px-4 py-3" role="status">
   <svg class="text-brand-primary" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-  <p class="text-sm text-brand-deep"><strong class="font-bold text-brand-navy">{{ pending_approvals }} approval{{ "s" if pending_approvals != 1 }} waiting.</strong> Gates expire after 72 hours — decide before they re-queue.</p>
+  <p class="text-sm text-brand-deep"><strong class="font-bold text-brand-navy">{{ pending_approvals|compact }} approval{{ "s" if pending_approvals != 1 }} waiting.</strong> Gates expire after 72 hours — decide before they re-queue.</p>
   <a class="ml-auto text-sm font-bold text-brand-primary hover:text-brand-deep" href="/approvals">Open queue &rarr;</a>
 </div>
 {% endif %}
@@ -75,7 +75,7 @@
       <span class="text-[13px] font-semibold text-slate-600">Repositories</span>
       <svg class="text-brand-primary" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
     </span>
-    <span class="mt-2 block text-[32px] font-extrabold leading-none tracking-tight text-brand-navy">{{ repo_count }}</span>
+    <span class="mt-2 block text-[32px] font-extrabold leading-none tracking-tight text-brand-navy">{{ repo_count|compact }}</span>
     <span class="mt-1.5 block text-[13px] text-slate-600">Connected and scheduled for scans</span>
   </a>
   <a class="stat-card" href="#attention-heading">
@@ -83,15 +83,15 @@
       <span class="text-[13px] font-semibold text-slate-600">Open findings</span>
       <svg class="text-brand-primary" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
     </span>
-    <span class="mt-2 block text-[32px] font-extrabold leading-none tracking-tight text-brand-navy">{{ open_findings }}</span>
-    <span class="mt-1.5 block text-[13px] text-slate-600">{% if kev_count %}<span class="font-bold text-brand-deep">{{ kev_count }} KEV-exploited</span> needs action first{% else %}No KEV-exploited findings open{% endif %}</span>
+    <span class="mt-2 block text-[32px] font-extrabold leading-none tracking-tight text-brand-navy">{{ open_findings|compact }}</span>
+    <span class="mt-1.5 block text-[13px] text-slate-600">{% if kev_count %}<span class="font-bold text-brand-deep">{{ kev_count|compact }} KEV-exploited</span> needs action first{% else %}No KEV-exploited findings open{% endif %}</span>
   </a>
   <a class="stat-card" href="/approvals">
     <span class="flex items-center justify-between gap-3">
       <span class="text-[13px] font-semibold text-slate-600">Pending approvals</span>
       <svg class="text-brand-primary" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10z"/><path d="m9 11.5 2 2 4-4.5"/></svg>
     </span>
-    <span class="mt-2 block text-[32px] font-extrabold leading-none tracking-tight text-brand-navy">{{ pending_approvals }}</span>
+    <span class="mt-2 block text-[32px] font-extrabold leading-none tracking-tight text-brand-navy">{{ pending_approvals|compact }}</span>
     <span class="mt-1.5 block text-[13px] text-slate-600">Merge, rotation and publish gates</span>
   </a>
   <a class="stat-card" href="#secrets-heading">
@@ -99,7 +99,7 @@
       <span class="text-[13px] font-semibold text-slate-600">Open secrets</span>
       <svg class="text-brand-primary" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4.5"/><path d="m11.2 11.8 8.3-8.3M17 5l2.5 2.5M14 8l2 2"/></svg>
     </span>
-    <span class="mt-2 block text-[32px] font-extrabold leading-none tracking-tight text-brand-navy">{{ open_secrets }}</span>
+    <span class="mt-2 block text-[32px] font-extrabold leading-none tracking-tight text-brand-navy">{{ open_secrets|compact }}</span>
     <span class="mt-1.5 block text-[13px] text-slate-600">Leaked credentials still to rotate</span>
   </a>
 </div>
@@ -114,8 +114,8 @@
     {% for key, label in [("day", "Today"), ("week", "Last 7 days"), ("month", "This month")] %}
     <div class="rounded-xl bg-brand-mist/60 px-4 py-3.5">
       <p class="text-xs font-semibold text-slate-600">{{ label }}</p>
-      <p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">{{ ai_usage[key].total_tokens }} <span class="text-sm font-semibold text-slate-500">tokens</span></p>
-      <p class="mt-1 text-[13px] text-slate-600">{{ ai_usage[key].prompt_tokens }} in · {{ ai_usage[key].completion_tokens }} out</p>
+      <p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">{{ ai_usage[key].total_tokens|compact }} <span class="text-sm font-semibold text-slate-500">tokens</span></p>
+      <p class="mt-1 text-[13px] text-slate-600">{{ ai_usage[key].prompt_tokens|compact }} in · {{ ai_usage[key].completion_tokens|compact }} out</p>
       <p class="mt-1 text-sm font-bold text-brand-deep">{{ ai_usage[key].spend_usd|usd }}</p>
     </div>
     {% endfor %}
@@ -147,7 +147,7 @@
   <section class="rounded-xl bg-white p-5 shadow-card lg:col-span-2" aria-labelledby="trend-heading">
     <div class="flex flex-wrap items-baseline gap-2">
       <h2 id="trend-heading" class="text-base">Findings opened — last 7 days</h2>
-      <span class="ml-auto text-sm font-bold text-brand-navy">{{ trend_total }} total</span>
+      <span class="ml-auto text-sm font-bold text-brand-navy">{{ trend_total|compact }} total</span>
     </div>
     <p class="mt-1 text-[13px] text-slate-600">New vulnerability findings per day, all repositories.</p>
     {% if trend_total %}
@@ -179,15 +179,15 @@
     <p class="mt-1 text-[13px] text-slate-600">Where attention goes next, by finding state.</p>
     <dl class="mt-4 space-y-4">
       <div>
-        <div class="flex items-baseline justify-between gap-3 text-sm"><dt class="font-semibold text-brand-deep">Open</dt><dd class="font-extrabold text-brand-navy">{{ breakdown.open }}</dd></div>
+        <div class="flex items-baseline justify-between gap-3 text-sm"><dt class="font-semibold text-brand-deep">Open</dt><dd class="font-extrabold text-brand-navy">{{ breakdown.open|compact }}</dd></div>
         <div class="mt-1.5 h-2 overflow-hidden rounded-full bg-brand-mist"><div class="h-full rounded-full bg-brand-primary transition-[width] duration-300" style="width: {{ breakdown.open_pct }}%"></div></div>
       </div>
       <div>
-        <div class="flex items-baseline justify-between gap-3 text-sm"><dt class="font-semibold text-brand-deep">Patch proposed</dt><dd class="font-extrabold text-brand-navy">{{ breakdown.proposed }}</dd></div>
+        <div class="flex items-baseline justify-between gap-3 text-sm"><dt class="font-semibold text-brand-deep">Patch proposed</dt><dd class="font-extrabold text-brand-navy">{{ breakdown.proposed|compact }}</dd></div>
         <div class="mt-1.5 h-2 overflow-hidden rounded-full bg-brand-mist"><div class="h-full rounded-full bg-brand-sky transition-[width] duration-300" style="width: {{ breakdown.proposed_pct }}%"></div></div>
       </div>
       <div>
-        <div class="flex items-baseline justify-between gap-3 text-sm"><dt class="font-semibold text-brand-deep">KEV-exploited</dt><dd class="font-extrabold text-brand-navy">{{ breakdown.kev }}</dd></div>
+        <div class="flex items-baseline justify-between gap-3 text-sm"><dt class="font-semibold text-brand-deep">KEV-exploited</dt><dd class="font-extrabold text-brand-navy">{{ breakdown.kev|compact }}</dd></div>
         <div class="mt-1.5 h-2 overflow-hidden rounded-full bg-brand-mist"><div class="h-full rounded-full bg-brand-deep transition-[width] duration-300" style="width: {{ breakdown.kev_pct }}%"></div></div>
       </div>
     </dl>
@@ -232,7 +232,7 @@
 <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
   <section aria-labelledby="secrets-heading">
     <div class="flex flex-wrap items-baseline gap-3">
-      <h2 id="secrets-heading" class="text-lg">Open secrets ({{ open_secrets }})</h2>
+      <h2 id="secrets-heading" class="text-lg">Open secrets ({{ open_secrets|compact }})</h2>
       <a class="ml-auto text-sm font-bold text-brand-primary hover:text-brand-deep" href="/repos">All repositories &rarr;</a>
     </div>
     {% if top_secrets %}

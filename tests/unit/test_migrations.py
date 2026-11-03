@@ -34,6 +34,9 @@ CHAIN = [
     "0019_dep_report_guard",
     "0020_notification_link",
     "0021_run_spend",
+    "0022_chat",
+    "0023_chat_attachments",
+    "0024_chat_multi",
 ]
 
 
@@ -90,6 +93,9 @@ def test_migration_chain_upgrades_and_0007_roundtrips(tmp_path):
     assert "kind" in _columns(engine, "dashboard_notifications")
     assert "link" in _columns(engine, "dashboard_notifications")
     assert "notification_id" in _columns(engine, "notification_reads")
+    assert "repo_id" in _columns(engine, "conversations")
+    assert "card" in _columns(engine, "chat_messages")
+    assert "blob" in _columns(engine, "chat_attachments")
     eco = _load("0007_ecosystem")
     _run(engine, eco, direction="downgrade")
     assert "ecosystem" not in _columns(engine, "findings")
@@ -276,6 +282,80 @@ def test_migration_0014_roundtrips(tmp_path):
     assert "news_finding_links" not in sa_inspect(engine).get_table_names()
     _run(engine, mod14)
     assert "news_finding_links" in sa_inspect(engine).get_table_names()
+
+
+class _FakeInspector:
+    def __init__(self, uniques):
+        self._uniques = uniques
+
+    def get_unique_constraints(self, _table):
+        return self._uniques
+
+
+class _FakeBind:
+    class dialect:
+        name = "postgresql"
+
+    def __init__(self, rows=None):
+        self._rows = rows if rows is not None else []
+
+    def execute(self, *_args, **_kwargs):
+        rows = self._rows
+
+        class _Result:
+            def all(self):
+                return rows
+
+        return _Result()
+
+
+class _FakeOp:
+    def __init__(self, bind):
+        self._bind = bind
+        self.calls = []
+
+    def get_bind(self):
+        return self._bind
+
+    def drop_constraint(self, *args, **kwargs):
+        self.calls.append(("drop", args, kwargs))
+
+    def create_unique_constraint(self, *args, **kwargs):
+        self.calls.append(("create", args, kwargs))
+
+
+def _stub_postgres(monkeypatch, name, uniques, rows=None):
+    import sqlalchemy as sa
+
+    module = _load(name)
+    fake_op = _FakeOp(_FakeBind(rows))
+    monkeypatch.setattr(module, "op", fake_op)
+    monkeypatch.setattr(sa, "inspect", lambda _bind: _FakeInspector(uniques))
+    return module, fake_op
+
+
+def test_migration_0024_upgrade_skips_missing_constraint(monkeypatch):
+    module, fake_op = _stub_postgres(monkeypatch, "0024_chat_multi", [])
+    module.upgrade()
+    assert fake_op.calls == []
+
+
+def test_migration_0024_upgrade_drops_present_constraint(monkeypatch):
+    uniques = [{"name": "conversations_user_id_key", "column_names": ["user_id"]}]
+    module, fake_op = _stub_postgres(monkeypatch, "0024_chat_multi", uniques)
+    module.upgrade()
+    assert [call[0] for call in fake_op.calls] == ["drop"]
+    assert fake_op.calls[0][1][:2] == ("conversations_user_id_key", "conversations")
+
+
+def test_migration_0024_downgrade_creates_constraint_only_when_missing(monkeypatch):
+    module, fake_op = _stub_postgres(monkeypatch, "0024_chat_multi", [])
+    module.downgrade()
+    assert [call[0] for call in fake_op.calls] == ["create"]
+    uniques = [{"name": "conversations_user_id_key", "column_names": ["user_id"]}]
+    module, fake_op = _stub_postgres(monkeypatch, "0024_chat_multi", uniques)
+    module.downgrade()
+    assert fake_op.calls == []
 
 
 def test_migration_0021_backfills_run_spend_and_roundtrips(tmp_path):
