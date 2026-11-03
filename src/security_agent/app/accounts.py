@@ -87,9 +87,42 @@ def is_breached(password: str) -> bool:
     return result
 
 
-def user_count() -> int:
+GUEST_EMAIL = "guest@scurita.local"
+
+
+def is_guest(user: User | None) -> bool:
+    return user is not None and user.email == GUEST_EMAIL
+
+
+def ensure_guest_user() -> User:
+    """Demo guest: always-on Owner with no password.
+
+    Idempotent and self-healing: if an Owner demotes, disables, or
+    passwords the guest, the next guest login restores Owner + active
+    + passwordless so the demo entry point cannot be wedged. No
+    password hash means the account is unreachable via /login — only
+    via POST /guest-login.
+    """
     with session_scope() as db:
-        return db.scalar(select(func.count()).select_from(User)) or 0
+        user = db.scalar(select(User).where(User.email == GUEST_EMAIL))
+        if user is None:
+            user = User(email=GUEST_EMAIL, password_hash=None, role=Role.OWNER)
+            db.add(user)
+        else:
+            user.role = Role.OWNER
+            user.disabled = False
+            user.password_hash = None
+        db.flush()
+        db.refresh(user)
+        db.expunge(user)
+        return user
+
+
+def user_count() -> int:
+    """Real accounts only: the demo guest never closes first-user Owner signup."""
+    with session_scope() as db:
+        stmt = select(func.count()).select_from(User).where(User.email != GUEST_EMAIL)
+        return db.scalar(stmt) or 0
 
 
 def first_user_role(existing_count: int) -> Role:

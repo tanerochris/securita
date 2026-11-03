@@ -21,7 +21,9 @@ def list_accounts(request: Request, _owner: User = Depends(require_owner)):
     from security_agent.app.main import templates
 
     return templates.TemplateResponse(
-        request, "accounts.html", {"users": svc.list_users(), "csrf": _csrf()}
+        request,
+        "accounts.html",
+        {"users": svc.list_users(), "csrf": _csrf(), "guest_email": svc.GUEST_EMAIL},
     )
 
 

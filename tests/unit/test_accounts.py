@@ -80,3 +80,31 @@ def test_session_idle_expiry():
         assert row is not None
         row.last_seen_at = datetime.now(UTC) - timedelta(minutes=31)
     assert svc.validate_session(sid) is None
+
+
+def test_guest_user_is_owner_without_password():
+    guest = svc.ensure_guest_user()
+    assert guest.email == svc.GUEST_EMAIL
+    assert guest.role == Role.OWNER
+    assert guest.password_hash is None
+    assert guest.disabled is False
+
+
+def test_guest_user_idempotent_and_self_healing():
+    first = svc.ensure_guest_user()
+    assert svc.ensure_guest_user().id == first.id
+    with session_scope() as db:
+        row = db.get(User, first.id)
+        assert row is not None
+        row.role = Role.REPORTER
+        row.disabled = True
+    healed = svc.ensure_guest_user()
+    assert healed.id == first.id
+    assert healed.role == Role.OWNER
+    assert healed.disabled is False
+
+
+def test_user_count_excludes_guest():
+    before = svc.user_count()
+    svc.ensure_guest_user()
+    assert svc.user_count() == before

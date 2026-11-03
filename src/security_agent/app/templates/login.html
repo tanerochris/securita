@@ -30,6 +30,7 @@
 
 <p class="mt-4 text-right text-sm"><a class="font-bold text-brand-primary hover:text-brand-deep" href="/reset">Forgot password?</a></p>
 
+<!-- Social logins hidden for now; restore by removing this comment wrapper.
 <div class="my-6 flex items-center gap-3" aria-hidden="true">
   <span class="h-px flex-1 bg-brand-mist"></span>
   <span class="text-xs font-semibold text-slate-500">or continue with</span>
@@ -46,6 +47,18 @@
     Continue with Microsoft
   </a>
 </div>
+-->
+
+<div class="my-6 flex items-center gap-3" aria-hidden="true">
+  <span class="h-px flex-1 bg-brand-mist"></span>
+  <span class="text-xs font-semibold text-slate-500">or explore the demo</span>
+  <span class="h-px flex-1 bg-brand-mist"></span>
+</div>
+
+<form method="post" action="/guest-login">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button class="btn-secondary w-full !py-3" type="submit">Continue as guest</button>
+</form>
 
 <p class="mt-6 border-t border-brand-mist pt-5 text-center text-sm text-slate-600">New to the workspace? <a class="font-bold text-brand-primary hover:text-brand-deep" href="/signup">Create an account</a></p>
 {% endblock %}
