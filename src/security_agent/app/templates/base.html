@@ -113,6 +113,74 @@
   .datatable-pagination .active a, .datatable-pagination .active button { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
   .datatable-pagination .disabled a, .datatable-pagination .disabled button { cursor: not-allowed; opacity: 0.5; }
   .datatable-info { color: var(--color-muted); font-size: 0.8125rem; }
+  /* Chat: launcher bubble, panel, bubbles, composer, history. */
+  #chat-widget { position: fixed; right: 1.25rem; bottom: 1.25rem; z-index: 40; width: 24rem; max-width: calc(100vw - 2rem); }
+  #chat-widget [hidden] { display: none !important; }
+  #chat-launcher { display: grid; place-items: center; position: relative; width: 3.25rem; height: 3.25rem; margin-left: auto; border-radius: 9999px; background: var(--color-navy); color: #fff; border: none; box-shadow: 0 8px 24px rgba(8,47,73,0.35); cursor: pointer; transition: background-color 200ms ease; }
+  #chat-launcher:hover { background: var(--color-deep); }
+  #chat-launcher:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  #chat-launcher .chat-dot { position: absolute; top: 2px; right: 2px; width: 0.7rem; height: 0.7rem; border-radius: 9999px; background: #22C55E; border: 2px solid #fff; }
+  #chat-panel { background: #fff; border: 1px solid var(--color-border); border-radius: 16px; box-shadow: 0 16px 48px rgba(8,47,73,0.28); overflow: hidden; }
+  .chat-head { display: flex; align-items: center; gap: 0.6rem; padding: 0.7rem 0.8rem; background: var(--color-navy); color: #fff; }
+  .chat-brand { display: grid; place-items: center; width: 1.9rem; height: 1.9rem; flex: none; border-radius: 9999px; background: rgba(125,211,252,0.24); color: #BAE6FD; }
+  .chat-title { font-weight: 700; font-size: 0.9375rem; letter-spacing: -0.01em; }
+  .chat-head-btns { margin-left: auto; display: flex; align-items: center; gap: 0.15rem; }
+  .chat-icon-btn { display: inline-grid; place-items: center; width: 2rem; height: 2rem; flex: none; border-radius: 8px; background: transparent; border: none; color: inherit; cursor: pointer; transition: background-color 200ms ease, color 200ms ease; }
+  .chat-head .chat-icon-btn { color: #E0F2FE; }
+  .chat-head .chat-icon-btn:hover { background: rgba(125,211,252,0.16); color: #fff; }
+  .chat-icon-btn:focus-visible { outline: 2px solid var(--color-sky); outline-offset: 1px; }
+  #widget-thread { display: flex; flex-direction: column; gap: 0.7rem; overflow-y: auto; min-height: 20rem; max-height: 32rem; padding: 0.9rem; font-size: 0.875rem; background: #F6FBFF; }
+  .chat-msg { display: flex; gap: 0.5rem; max-width: 100%; }
+  .chat-body { min-width: 0; max-width: 100%; }
+  .chat-user { justify-content: flex-end; }
+  .chat-user .chat-text { background: var(--color-primary); color: #fff; border-radius: 14px 14px 4px 14px; padding: 0.55rem 0.85rem; max-width: 85%; }
+  .chat-assistant .chat-text { background: #fff; border: 1px solid #E0F2FE; border-radius: 4px 14px 14px 14px; padding: 0.55rem 0.85rem; box-shadow: 0 1px 2px rgba(8,47,73,0.06); }
+  .chat-assistant .chat-text p { margin: 0.4rem 0; }
+  .chat-assistant .chat-text p:first-child { margin-top: 0; }
+  .chat-assistant .chat-text p:last-child { margin-bottom: 0; }
+  .chat-assistant .chat-text pre { background: var(--color-navy); color: #E0F2FE; border-radius: 8px; padding: 0.6rem 0.75rem; overflow-x: auto; font-size: 0.8125rem; }
+  .chat-assistant .chat-text code { font-size: 0.8125rem; }
+  .chat-assistant .chat-text :not(pre) > code { background: var(--color-mist); border-radius: 4px; padding: 0.1rem 0.35rem; }
+  .chat-avatar { display: grid; place-items: center; width: 1.6rem; height: 1.6rem; flex: none; border-radius: 9999px; background: var(--color-navy); color: #BAE6FD; margin-top: 0.15rem; }
+  .chat-system .chat-text, .chat-sys { color: var(--color-muted); font-size: 0.8125rem; }
+  .chat-card { background: #fff; border: 1px solid var(--color-border); border-radius: 12px; padding: 0.7rem 0.9rem; margin-top: 0.5rem; box-shadow: 0 1px 3px rgba(8,47,73,0.08); }
+  .chat-card-title { font-weight: 700; font-size: 0.875rem; color: var(--color-navy); margin-bottom: 0.35rem; }
+  .chat-card form { display: inline-block; }
+  .chat-gate { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0; font-size: 0.875rem; }
+  .chat-run-log { white-space: pre-wrap; font-size: 0.8125rem; color: var(--color-muted); max-height: 12rem; overflow-y: auto; }
+  .chat-composer { display: flex; align-items: center; gap: 0.4rem; padding: 0.65rem 0.75rem; border-top: 1px solid #E0F2FE; background: #fff; }
+  .chat-composer input[type="text"] { flex: 1; min-width: 0; border: none; background: transparent; padding: 0.55rem 0.5rem; font-size: 0.875rem; color: var(--color-navy); }
+  .chat-composer input[type="text"]:focus { outline: none; }
+  .chat-composer .chat-icon-btn { color: var(--color-muted); }
+  .chat-composer .chat-icon-btn:hover { background: var(--color-mist); color: var(--color-navy); }
+  .chat-attach-btn { cursor: pointer; }
+  .chat-send { display: grid; place-items: center; width: 2.25rem; height: 2.25rem; flex: none; border-radius: 9999px; background: var(--color-primary); color: #fff; border: none; cursor: pointer; transition: background-color 200ms ease; }
+  .chat-send:hover { background: var(--color-deep); }
+  .chat-send:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  .chat-files { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0 0.9rem 0.6rem; font-size: 0.75rem; }
+  #chat-history-view { min-height: 20rem; max-height: 32rem; overflow-y: auto; background: #fff; }
+  .chat-history-top { display: flex; align-items: center; gap: 0.4rem; padding: 0.5rem; border-bottom: 1px solid #E0F2FE; }
+  .chat-history-top .chat-icon-btn { color: var(--color-muted); }
+  .chat-history-top .chat-icon-btn:hover { background: var(--color-mist); color: var(--color-navy); }
+  #chat-history-list { padding: 0.5rem; }
+  .chat-scope { padding: 0.45rem 0.9rem 0; background: #F6FBFF; }
+  .chat-scope select { width: 100%; font-size: 0.75rem; border: 1px solid #E0F2FE; border-radius: 8px; padding: 0.35rem 0.5rem; color: var(--color-deep); background: #fff; }
+  .chat-threads-head { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-muted); padding: 0.25rem 0.5rem; }
+  .chat-thread { display: block; width: 100%; text-align: left; background: none; border: none; border-radius: 8px; padding: 0.5rem 0.6rem; cursor: pointer; transition: background-color 200ms ease; }
+  .chat-thread:hover { background: var(--color-mist); }
+  .chat-thread-active { background: var(--color-mist); }
+  .chat-thread-title { display: block; font-size: 0.875rem; font-weight: 600; color: var(--color-navy); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chat-thread-meta { display: block; font-size: 0.75rem; color: var(--color-muted); }
+  .chat-typing { display: flex; gap: 0.3rem; padding: 0.4rem 0.9rem; }
+  .chat-typing span { width: 0.45rem; height: 0.45rem; border-radius: 9999px; background: var(--color-sky); animation: chat-blink 1.2s infinite; }
+  .chat-typing span:nth-child(2) { animation-delay: 0.2s; }
+  .chat-typing span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes chat-blink { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .chat-typing span { animation: none; opacity: 0.7; } }
+  .mention-pick { position: absolute; z-index: 50; background: #fff; border: 1px solid var(--color-border); border-radius: 8px; box-shadow: 0 12px 32px rgba(8,47,73,0.22); max-height: 12rem; overflow-y: auto; font-size: 0.8125rem; }
+  .mention-pick button { display: block; width: 100%; text-align: left; background: none; border: none; padding: 0.45rem 0.7rem; cursor: pointer; color: var(--color-navy); }
+  .mention-pick button:hover, .mention-pick button.active { background: var(--color-mist); }
+  .chat-attach { display: inline-block; font-size: 0.75rem; background: var(--color-mist); border-radius: 6px; padding: 0.15rem 0.5rem; margin: 0.15rem 0.25rem 0 0; color: var(--color-deep); }
 </style>
 </head>
 <body class="bg-[#F6FBFF] antialiased">
@@ -463,6 +531,177 @@
       if (event.key === "Escape") { closeAll(null); }
     });
   })();
+</script>
+{% if user %}<div hx-get="/chat/widget" hx-trigger="load" hx-swap="outerHTML"></div>{% endif %}
+<script type="text/javascript">
+(function () {
+  // Mention picker: @repos/@users and #findings/#runs/#gates.
+  var pick = null;
+  function closePick() { if (pick) { pick.remove(); pick = null; } }
+  document.addEventListener("input", function (e) {
+    var input = e.target.closest ? e.target.closest("input[data-chat-input]") : null;
+    if (!input) return;
+    var before = input.value.slice(0, input.selectionStart || 0);
+    var m = before.match(/([@#])([\w.\-]*)$/);
+    if (!m) { closePick(); return; }
+    var kind = m[1], q = m[2];
+    fetch("/chat/mentions?q=" + encodeURIComponent(q) + "&kind=" + encodeURIComponent(kind))
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (items) {
+        closePick();
+        if (!items.length) return;
+        pick = document.createElement("div");
+        pick.className = "mention-pick";
+        var rect = input.getBoundingClientRect();
+        pick.style.left = Math.min(rect.left, window.innerWidth - 260) + "px";
+        pick.style.top = Math.max(8, rect.top - items.length * 34 - 12) + "px";
+        pick.style.minWidth = "240px";
+        items.forEach(function (item) {
+          var b = document.createElement("button");
+          b.type = "button";
+          b.textContent = item.label;
+          b.addEventListener("click", function () {
+            var pos = input.selectionStart || 0;
+            input.value = input.value.slice(0, pos - q.length - 1) + item.token + " "
+              + input.value.slice(pos);
+            input.focus();
+            closePick();
+          });
+          pick.appendChild(b);
+        });
+        document.body.appendChild(pick);
+      });
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") closePick();
+  });
+  document.addEventListener("click", function (e) {
+    if (pick && !pick.contains(e.target)) closePick();
+  });
+  // Voice input removed for now (mic buttons deleted); restore armMic here to bring it back.
+  // Widget open/close + history panel (delegated: widget loads via htmx).
+  document.addEventListener("click", function (e) {
+    var launcher = e.target.closest ? e.target.closest("#chat-launcher") : null;
+    var closer = e.target.closest ? e.target.closest("#chat-close") : null;
+    var panel = document.getElementById("chat-panel");
+    if (launcher && panel) {
+      panel.hidden = false;
+      launcher.hidden = true;
+      launcher.setAttribute("aria-expanded", "true");
+      var input = panel.querySelector("input[data-chat-input]");
+      if (input) input.focus();
+    }
+    if (closer && panel) {
+      panel.hidden = true;
+      var launch = document.getElementById("chat-launcher");
+      if (launch) { launch.hidden = false; launch.setAttribute("aria-expanded", "false"); }
+    }
+    var histBtn = e.target.closest ? e.target.closest("#chat-history-btn") : null;
+    if (histBtn) {
+      var view = document.getElementById("chat-history-view");
+      var thread = document.getElementById("chat-thread-view");
+      if (view && thread) {
+        var open = view.hidden;
+        view.hidden = !open;
+        thread.hidden = open;
+        histBtn.setAttribute("aria-expanded", open ? "true" : "false");
+        if (open) {
+          var list = document.getElementById("chat-history-list");
+          if (list && window.htmx) window.htmx.trigger(list, "load-threads");
+        }
+      }
+    }
+    var backBtn = e.target.closest ? e.target.closest("#chat-history-back") : null;
+    if (backBtn && window.chatShowThread) window.chatShowThread();
+  });
+  // Selected attachment names under the composer.
+  document.addEventListener("change", function (e) {
+    var input = e.target.closest ? e.target.closest('input[type="file"][name="files"]') : null;
+    if (!input) return;
+    var form = input.closest("form");
+    var box = form && form.parentElement ? form.parentElement.querySelector(".chat-files") : null;
+    if (!box) box = document.getElementById("page-files");
+    if (!box) return;
+    box.innerHTML = "";
+    Array.prototype.forEach.call(input.files || [], function (f) {
+      var chip = document.createElement("span");
+      chip.className = "chat-attach";
+      chip.textContent = f.name;
+      box.appendChild(chip);
+    });
+    box.hidden = !(input.files && input.files.length);
+  });
+  // Typing indicator while a turn runs.
+  document.body.addEventListener("htmx:beforeRequest", function (e) {
+    var form = e.detail.elt && e.detail.elt.closest ? e.detail.elt.closest("form.chat-composer") : null;
+    if (!form) return;
+    var box = form.parentElement ? form.parentElement.querySelector(".chat-typing") : null;
+    if (box) box.hidden = false;
+  });
+  window.chatFormSent = function (form) {
+    var scope = form.parentElement || document;
+    var box = scope.querySelector ? scope.querySelector(".chat-typing") : null;
+    if (box) box.hidden = true;
+    var files = scope.querySelector ? scope.querySelector(".chat-files") : null;
+    if (files) { files.innerHTML = ""; files.hidden = true; }
+    var thread = document.getElementById("widget-thread");
+    if (thread) thread.scrollTop = thread.scrollHeight;
+  };
+  window.chatShowThread = function () {
+    var view = document.getElementById("chat-history-view");
+    var threadView = document.getElementById("chat-thread-view");
+    if (view) view.hidden = true;
+    if (threadView) threadView.hidden = false;
+    var histBtn = document.getElementById("chat-history-btn");
+    if (histBtn) histBtn.setAttribute("aria-expanded", "false");
+  };
+  window.chatThreadSwitched = function () {
+    window.chatShowThread();
+    var thread = document.getElementById("widget-thread");
+    if (thread) thread.scrollTop = 0;
+  };
+  // Scan progress: stream run events into the widget, summarize on completion.
+  function watchChatRuns(scope) {
+    (scope || document).querySelectorAll("[data-run-watch]:not([data-watching])").forEach(function (el) {
+      el.dataset.watching = "1";
+      var log = el.querySelector(".chat-run-log");
+      var thread = el.closest("#widget-thread");
+      var src = new EventSource(el.dataset.runWatch);
+      src.addEventListener("log", function (e) {
+        var d = JSON.parse(e.data);
+        if (d.append) log.textContent += d.append;
+      });
+      src.addEventListener("complete", function () {
+        src.close();
+        log.textContent += "\nRun finished — summarizing…";
+        var panel = el.closest("#chat-widget");
+        var csrf = panel ? panel.querySelector('input[name="csrf"]') : null;
+        var form = new FormData();
+        form.append("csrf", csrf ? csrf.value : "");
+        form.append("thread", "widget-thread");
+        form.append("text", "Summarize run #" + el.dataset.runId + " on repo #" + el.dataset.repoId);
+        fetch("/chat/message", {method: "POST", body: form})
+          .then(function (r) { return r.text(); })
+          .then(function (html) {
+            var target = el.closest("#widget-thread");
+            if (target) {
+              target.insertAdjacentHTML("beforeend", html);
+              target.scrollTop = target.scrollHeight;
+            }
+            watchChatRuns(target || document);
+          });
+      });
+      src.addEventListener("gone", function () { src.close(); log.textContent += "\nRun is gone."; });
+    });
+  }
+  document.body.addEventListener("htmx:afterSwap", function (e) {
+    watchChatRuns(e.detail.target);
+    if (e.detail.target && e.detail.target.id === "widget-thread") {
+      e.detail.target.scrollTop = e.detail.target.scrollHeight;
+    }
+  });
+  watchChatRuns(document);
+})();
 </script>
 </body>
 </html>

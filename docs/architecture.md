@@ -92,7 +92,7 @@ Six logical planes mapped onto those services:
 
 - Pre-execution checkpoints between graph nodes. Triggers: merge, rotation, publish only. In-sandbox work (including external API calls) and PR/MR/issue creation are free.
 - Owner and Maintainer approve, single approver suffices. Developer triggers scans, approves nothing. Reporter view-only.
-- Sources: dashboard queue + provider-side (approving/merging the PR counts). Requests fan out to all notification channels; granting stays dashboard + provider-side (no in-chat approve v1).
+- Sources: dashboard queue + provider-side (approving/merging the PR counts). Requests fan out to all notification channels; granting stays dashboard + provider-side, plus the chat agent's approve/decline cards (chat override of FR-9 D5, see `docs/plans/2026-11-02-chat-agent.md`): same RBAC, same `decide_gate` core, explicit per-gate confirmation.
 - Timeout: deny after configurable window (default 72h); agent auto re-queues with note. No standing bypass; Owner may delegate to Developer (time-boxed 24h default, revocable, optionally class-narrowed, fully audited).
 - Audit: full decision context (timestamp, run id, actor + role, action + target, decision + decider + source, reason). Retention per install policy, default 1 year.
 
@@ -112,7 +112,7 @@ Six logical planes mapped onto those services:
 - Patches view: proposals with verification result, grouping pointers, PR/MR link + provider state, finding links (observe + link out, no merge button). Approval queue: pending gates with full decision context, Approve/Deny, delegation, timeout countdown, decided history.
 - Reports: on-screen run summaries + outstanding-risk view, JSON/CSV export, scheduled PDF/email digests via FR-13 channels.
 - Notification settings screen owned by FR-12 (channel list, per-severity routing, test-send, digest schedule); delivery mechanics owned by FR-13.
-- Stack: Jinja + HTMX base, FastAPI-only routing; lazy React islands only where justified (never blocking first paint); Node build for island bundles only. Chat deferred past v1.
+- Stack: Jinja + HTMX base, FastAPI-only routing; lazy React islands only where justified (never blocking first paint); Node build for island bundles only. Chat agent shipped as a floating widget on every dashboard page (see `docs/plans/2026-11-02-chat-agent.md`; the standalone `/chat` page was removed): backend-direct UI-parity tools plus sandbox-mediated repo inspection, per-day chat cap, injection-suite-gated.
 
 ## 5. Data, Audit, Recovery Plane
 

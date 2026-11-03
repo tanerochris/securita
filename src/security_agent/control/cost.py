@@ -40,6 +40,11 @@ _SPEND_CAP_KEY = "cost.spend_cap_monthly"
 _SPEND_CAP_ALERT_KEY = "cost.spend_cap_alert"
 _RUN_CAP_KEY = "cost.run_cap_usd"
 _RUN_CAP_LEGACY_KEY = "cost.run_cap"  # pre-USD token override, converted at price
+_CHAT_CAP_KEY = "cost.chat_cap_daily"
+
+
+class ChatCapExceeded(Exception):
+    """Today's install-wide chat spend cap is reached; the turn stops."""
 
 
 class CostCapExceeded(Exception):
@@ -337,6 +342,61 @@ def _usage_totals_since(db, cutoff: datetime) -> dict:
         "total_tokens": int(row[2] or 0),
         "spend_usd": float(row[3] or 0.0),
     }
+
+
+def effective_chat_cap() -> float:
+    """Install-wide per-day chat spend cap in USD (0 disables)."""
+    with session_scope() as db:
+        row = db.get(NotifyState, _CHAT_CAP_KEY)
+        if row is not None:
+            try:
+                return max(0.0, float(row.value))
+            except ValueError:
+                pass
+    return max(0.0, get_settings().chat_spend_cap_daily_usd)
+
+
+def set_chat_cap(value: float, user: User) -> float:
+    """Owner/Maintainer sets the install-wide per-day chat cap (0 disables)."""
+    if user.role not in (Role.OWNER, Role.MAINTAINER):
+        raise PermissionError("Only an Owner or Maintainer may change cost caps.")
+    if value < 0:
+        raise ValueError("Cap must be at least 0 (0 disables the cap).")
+    with session_scope() as db:
+        row = db.get(NotifyState, _CHAT_CAP_KEY)
+        if row is None:
+            db.add(NotifyState(key=_CHAT_CAP_KEY, value=str(value)))
+        else:
+            row.value = str(value)
+    audit.append(
+        action_class="cost",
+        decision="chat_cap",
+        line=f"chat_cap_usd={value} by={user.id} role={user.role.value}",
+    )
+    return value
+
+
+def chat_spend_today(now: datetime | None = None) -> float:
+    """Chat task spend since UTC midnight (install-wide)."""
+    now = now or datetime.now(UTC)
+    cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    with session_scope() as db:
+        bind = db.get_bind()
+        if bind is not None and bind.dialect.name == "sqlite":
+            cutoff = cutoff.replace(tzinfo=None)
+        row = db.execute(
+            select(func.coalesce(func.sum(ModelUsage.cost_usd), 0.0)).where(
+                ModelUsage.task == "chat", ModelUsage.created_at >= cutoff
+            )
+        ).one()
+        return float(row[0] or 0.0)
+
+
+def check_chat_cap(now: datetime | None = None) -> None:
+    """Hard stop when chat spend reaches the daily cap (0 disables)."""
+    cap = effective_chat_cap()
+    if cap > 0 and chat_spend_today(now) >= cap:
+        raise ChatCapExceeded(f"Chat spend reached the ${cap:.2f} daily cap.")
 
 
 def usage_summary(now: datetime | None = None) -> dict:

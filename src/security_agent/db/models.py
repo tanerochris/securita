@@ -10,6 +10,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -831,9 +832,7 @@ class Dependency(Base):
     ignored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     stale: Mapped[bool] = mapped_column(default=False)  # last-known values (D19)
     check_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    last_checked_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
@@ -904,9 +903,7 @@ class DependencyReport(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     repo_id: Mapped[int] = mapped_column(ForeignKey("repos.id"), index=True)
-    check_id: Mapped[int | None] = mapped_column(
-        ForeignKey("dependency_checks.id"), nullable=True
-    )
+    check_id: Mapped[int | None] = mapped_column(ForeignKey("dependency_checks.id"), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|decided|superseded
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)  # model-written (D6)
     sections: Mapped[list] = mapped_column(JSON, default=list)  # per-package impact sections
@@ -940,9 +937,7 @@ class DashboardNotification(Base):
     report_id: Mapped[int | None] = mapped_column(
         ForeignKey("dependency_reports.id"), nullable=True
     )
-    check_id: Mapped[int | None] = mapped_column(
-        ForeignKey("dependency_checks.id"), nullable=True
-    )
+    check_id: Mapped[int | None] = mapped_column(ForeignKey("dependency_checks.id"), nullable=True)
     title: Mapped[str] = mapped_column(String(300))
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     link: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -951,14 +946,76 @@ class DashboardNotification(Base):
     )
 
 
+class Conversation(Base):
+    """One chat thread; users may keep many (history + new chat).
+
+    repo_id scopes the thread to a repo; NULL means all repos. The active
+    thread is the most recently updated; switching touches updated_at.
+    """
+
+    __tablename__ = "conversations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    repo_id: Mapped[int | None] = mapped_column(ForeignKey("repos.id"), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(200), default="Chat")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class ChatRole(enum.StrEnum):
+    USER = "user"
+    ASSISTANT = "assistant"
+    SYSTEM = "system"
+
+
+class ChatMessage(Base):
+    """One chat message. `card` carries structured UI (gate / confirm / info)
+    rendered from fixed templates — never free model prose for actions."""
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"), index=True)
+    role: Mapped[ChatRole] = mapped_column(_stored(ChatRole, "chat_role"))
+    content: Mapped[str] = mapped_column(Text, default="")
+    card: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
+
+
+class ChatAttachment(Base):
+    """One file attached to a chat message (image for vision, doc for context).
+
+    Blobs stay small (per-file cap enforced at upload); the agent consumes
+    images as vision parts and docs as capped, untrusted text.
+    """
+
+    __tablename__ = "chat_attachments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(
+        ForeignKey("conversations.id"), index=True
+    )
+    message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_messages.id"), nullable=True, index=True
+    )
+    filename: Mapped[str] = mapped_column(String(255))
+    mime: Mapped[str] = mapped_column(String(100))
+    size_bytes: Mapped[int] = mapped_column()
+    blob: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
 class NotificationRead(Base):
     """Per-user read marker for one dashboard notification (D17)."""
 
     __tablename__ = "notification_reads"
     __table_args__ = (
-        UniqueConstraint(
-            "notification_id", "user_id", name="uq_notification_read_notif_user"
-        ),
+        UniqueConstraint("notification_id", "user_id", name="uq_notification_read_notif_user"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

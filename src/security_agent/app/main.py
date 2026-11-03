@@ -18,6 +18,15 @@ templates = Jinja2Templates(directory=str(BASE / "templates"))
 templates.env.filters["user_time"] = _user_time
 templates.env.filters["usd"] = _format_usd
 
+
+def _chat_md(text: str, viewer_is_owner: bool = False):
+    from security_agent.chat.render import render_assistant
+
+    return render_assistant(text, viewer_is_owner=viewer_is_owner)
+
+
+templates.env.filters["chat_md"] = _chat_md
+
 _base_template_response = templates.TemplateResponse
 
 
@@ -104,6 +113,7 @@ def create_app() -> FastAPI:
         accounts,
         approvals,
         auth,
+        chat,
         git_providers,
         health,
         news,
@@ -163,6 +173,7 @@ def create_app() -> FastAPI:
     app.include_router(policies.router)
     app.include_router(approvals.router)
     app.include_router(settings.router)
+    app.include_router(chat.router)
     static_dir = BASE / "static"
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")

@@ -1,0 +1,12 @@
+<div class="chat-threads-head">Recent chats</div>
+{% for t in threads %}
+<form hx-post="/chat/switch/{{ t.id }}" hx-target="#widget-thread" hx-swap="innerHTML" hx-on::after-request="chatThreadSwitched()">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button type="submit" class="chat-thread{% if t.id == active_id %} chat-thread-active{% endif %}" {% if t.id == active_id %}aria-current="true"{% endif %}>
+    <span class="chat-thread-title">{{ t.title }}</span>
+    <span class="chat-thread-meta">{{ t.messages }} msgs · {{ t.updated_at|user_time }}</span>
+  </button>
+</form>
+{% else %}
+<p class="chat-sys">No chats yet.</p>
+{% endfor %}

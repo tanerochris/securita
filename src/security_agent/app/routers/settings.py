@@ -21,6 +21,8 @@ def _page(request: Request, *, notice: str = "", is_owner: bool = True):
     from security_agent.app.main import templates
     from security_agent.config import get_settings
     from security_agent.control.cost import (
+        chat_spend_today,
+        effective_chat_cap,
         effective_run_cap,
         list_parked_runs,
         spend_cap_state,
@@ -52,6 +54,8 @@ def _page(request: Request, *, notice: str = "", is_owner: bool = True):
             "digest": get_digest_schedule(),
             "cap": effective_run_cap(),
             "spend": spend_today(),
+            "chat_cap": effective_chat_cap(),
+            "chat_spend": chat_spend_today(),
             "warn_usd": settings.spend_warn_daily_usd,
             "critical_usd": settings.spend_critical_daily_usd,
             "spend_cap": spend_cap_state(),
@@ -298,6 +302,19 @@ def save_spend_cap(cap: str = Form(...), user: User = Depends(require_approver))
     if value <= 0:
         return _redirect("Monthly spend cap disabled.")
     return _redirect(f"Monthly spend cap set to ${value:.2f}.")
+
+
+@router.post("/cost/chat-cap", dependencies=[Depends(require_csrf)])
+def save_chat_cap(cap: str = Form(...), user: User = Depends(require_approver)):
+    from security_agent.control.cost import set_chat_cap
+
+    try:
+        value = set_chat_cap(float(cap), user)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    if value <= 0:
+        return _redirect("Chat daily cap disabled.")
+    return _redirect(f"Chat daily cap set to ${value:.2f}.")
 
 
 @router.post("/cost/resume", dependencies=[Depends(require_csrf)])

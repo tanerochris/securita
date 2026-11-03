@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     model_base_url: str = Field(default="https://api.meta.ai/v1", alias="MODEL_BASE_URL")
     model_api_key: str = Field(default="", alias="MODEL_API_KEY")
     model_name: str = Field(default="muse-spark", alias="MODEL_NAME")
+    # Chat agent model override (task "chat"); empty falls back to MODEL_NAME.
+    model_chat_name: str = Field(default="", alias="MODEL_CHAT_NAME")
+    # Chat agent daily spend cap in USD (install-wide, Owner/Maintainer
+    # adjustable from Settings; 0 disables the cap).
+    chat_spend_cap_daily_usd: float = Field(default=5.0, alias="CHAT_SPEND_CAP_DAILY_USD")
     # Git provider connect (PAT-only, self-hosted): default hosts offered
     # in the connect form; users can override per connection for
     # GitHub Enterprise / self-hosted GitLab. No OAuth app to register.

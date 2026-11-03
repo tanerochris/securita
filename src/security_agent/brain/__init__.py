@@ -9,10 +9,13 @@ def get_chat_model(task: str | None = None):
     from pydantic import SecretStr
 
     s = get_settings()
-    # Any OpenAI-compatible model allowed if the probe passes; tasks may override later.
-    _ = task
+    # Any OpenAI-compatible model allowed if the probe passes. Task slots
+    # override the default name; only "chat" has a slot in v1.
+    name = s.model_name
+    if task == "chat" and s.model_chat_name:
+        name = s.model_chat_name
     return ChatOpenAI(
-        model=s.model_name,
+        model=name,
         api_key=SecretStr(s.model_api_key or "unset"),
         base_url=s.model_base_url,
         temperature=0,

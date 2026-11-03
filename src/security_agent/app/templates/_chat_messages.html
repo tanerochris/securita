@@ -1,0 +1,64 @@
+{% for m in messages %}
+<div class="chat-msg chat-{{ m.role }}" {% if m.id %}id="chat-msg-{{ m.id }}"{% endif %}>
+  {% if m.role == "assistant" %}<span class="chat-avatar" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10z"/><path d="m9 11.5 2 2 4-4.5"/></svg></span>{% endif %}
+  <div class="chat-body">
+  {% if m.content and m.role == "assistant" %}<div class="chat-text">{{ m.content|chat_md(user.role.value == "owner") }}</div>{% elif m.content %}<div class="chat-text">{{ m.content }}</div>{% endif %}
+  {% if m.attachments %}<div>{% for a in m.attachments %}<span class="chat-attach">{{ a }}</span>{% endfor %}</div>{% endif %}
+  {% if m.card and m.card.kind == "confirm" and m.card.state == "pending" %}
+  <div class="chat-card">
+    <div class="chat-card-title">Confirm action</div>
+    <div class="chat-card-body">{{ m.card_text }}</div>
+    <form hx-post="/chat/confirm/{{ m.id }}" hx-target="#chat-msg-{{ m.id }}" hx-swap="outerHTML">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit">Confirm</button>
+    </form>
+    <form hx-post="/chat/dismiss/{{ m.id }}" hx-target="#chat-msg-{{ m.id }}" hx-swap="outerHTML">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="btn-secondary">Dismiss</button>
+    </form>
+  </div>
+  {% elif m.card and m.card.kind == "confirm" %}
+  <div class="chat-sys">Action {{ m.card.state }}.</div>
+  {% endif %}
+  {% if m.card and m.card.kind == "gates" %}
+  <div class="chat-card">
+    <div class="chat-card-title">Approval gates</div>
+    {% for g in m.card.gates %}
+    <div class="chat-gate">
+      <span>#{{ g.gate_id }} {{ g.action }} on {{ g.target }}</span>
+      {% if g.can_decide %}
+      <form hx-post="/chat/gates/{{ g.gate_id }}/request" hx-target="#{{ thread_id or 'thread' }}" hx-swap="beforeend" style="display:inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="thread" value="{{ thread_id or 'thread' }}">
+        <input type="hidden" name="approved" value="yes">
+        <button type="submit">Approve</button>
+      </form>
+      <form hx-post="/chat/gates/{{ g.gate_id }}/request" hx-target="#{{ thread_id or 'thread' }}" hx-swap="beforeend" style="display:inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="thread" value="{{ thread_id or 'thread' }}">
+        <input type="hidden" name="approved" value="no">
+        <button type="submit" class="btn-secondary">Deny</button>
+      </form>
+      {% else %}
+      <span class="chat-sys">(you cannot decide this)</span>
+      {% endif %}
+    </div>
+    {% else %}
+    <div class="chat-sys">No pending gates.</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if m.card and m.card.kind == "run" %}
+  <div class="chat-card" data-run-watch="{{ m.card.events_url }}" data-run-id="{{ m.card.run_id }}" data-repo-id="{{ m.card.repo_id }}">
+    <div class="chat-card-title">Run #{{ m.card.run_id }} <a href="/repos/{{ m.card.repo_id }}/runs/{{ m.card.run_id }}">details</a></div>
+    <div class="chat-run-log"></div>
+  </div>
+  {% endif %}
+  {% if m.card and m.card.kind == "dashboard_only" %}
+  <div class="chat-card">
+    <div class="chat-card-body">{{ m.card.message }} {% if m.card.link == "/accounts" %}<a href="/accounts">Open dashboard</a>{% else %}<a href="/repos">Open dashboard</a>{% endif %}</div>
+  </div>
+  {% endif %}
+  </div>
+</div>
+{% endfor %}
