@@ -44,8 +44,9 @@
 </div>
 {% else %}
 <div class="mt-5 rounded-xl bg-white px-5 py-8 text-center shadow-card">
-  <p class="text-sm font-semibold text-brand-deep">No repositories connected yet</p>
-  <p class="mx-auto mt-1 max-w-md text-[13px] text-slate-600">Pick a provider below to connect your first repository. The first scan starts right away.</p>
+  <svg class="mx-auto" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#0284C7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Git branch"><title>Git branch</title><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+  <p class="mt-3 text-sm font-semibold text-brand-deep">No repositories connected yet</p>
+  <p class="mx-auto mt-1 max-w-md text-[13px] text-slate-600">Pick a provider below to connect your first repository.</p>
 </div>
 {% endif %}
 
@@ -65,7 +66,7 @@
           <td>{{ c.auth_type.value | upper }}</td>
           <td class="text-slate-600">{{ c.base_url }}</td>
           <td>
-            <span class="flex flex-wrap gap-2">
+            <span class="flex flex-wrap items-center gap-2">
               <a class="font-bold text-brand-primary" href="/providers/{{ c.id }}/repos">Browse repos</a>
               <form method="post" action="/providers/{{ c.id }}/disconnect" data-confirm data-confirm-title="Disconnect this account?" data-confirm-message="The stored token for this provider account will be deleted. Repositories linked through it keep their data but can no longer sync until you reconnect." data-confirm-action="Disconnect">
                 <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -82,7 +83,7 @@
   <form class="mt-4 rounded-xl bg-white p-5 shadow-card" method="post" action="/providers/pat" autocomplete="off">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <p class="text-sm font-bold text-brand-deep">Connect with a personal access token</p>
-      <p class="mt-1 text-[13px] leading-relaxed text-slate-600">Create the token on your provider, then paste it here. Validated against the provider, stored encrypted, never shown again. Reconnect with a fresh token to rotate.</p>
+      <p class="mt-1 text-[13px] leading-relaxed text-slate-600">Create the token on your provider, then paste it here. Reconnect with a fresh token to rotate.</p>
       <div class="mt-3 grid grid-cols-1 gap-3">
         <label class="text-sm font-bold text-brand-deep">Provider
           <select class="mt-1.5 w-full" name="provider"><option value="github">GitHub</option><option value="gitlab">GitLab</option></select>

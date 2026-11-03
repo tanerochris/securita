@@ -18,6 +18,9 @@ from security_agent.crypto import decrypt_field, encrypt_field
 from security_agent.db.keys import get_encryption_key
 from security_agent.db.models import (
     Approval,
+    ChatAttachment,
+    ChatMessage,
+    Conversation,
     DashboardNotification,
     Dependency,
     DependencyCheck,
@@ -29,6 +32,10 @@ from security_agent.db.models import (
     NewsFindingLink,
     NewsRepoRelevance,
     NotificationRead,
+    PolicyChunk,
+    PolicyDocument,
+    PolicyRule,
+    PolicyRunSnapshot,
     Proposal,
     Repo,
     RepoKind,
@@ -148,9 +155,12 @@ def disconnect_repo(repo_id: int) -> None:
     """Remove a repo and everything it owns; the provider repo is untouched.
 
     Dependents go first (Postgres enforces the FKs): boosts/verdicts hang
-    off findings and runs, the cost ledger hangs off runs, proposals and
-    secrets reference each other, and the encrypted credential rows are
-    keyed by owner label, not FK.
+    off findings and runs, the cost ledger and guidance snapshots hang off
+    runs, notifications point at dep checks/reports, policy chunks/rules
+    hang off repo-scoped documents, chat rows hang off repo-scoped threads,
+    proposals and secrets reference each other, and the encrypted
+    credential rows are keyed by owner label, not FK. Platform-scope
+    policy rows and all-repos threads survive.
     """
     with session_scope() as db:
         repo = db.get(Repo, repo_id)
@@ -170,6 +180,51 @@ def disconnect_repo(repo_id: int) -> None:
             )
         )
         db.execute(delete(Approval).where(Approval.repo_id == repo_id))
+        # Dashboard notifications point at the dep rows (check_id/report_id
+        # FKs), so they go before checks and reports. Match by link as well
+        # as repo_id so repo_id=NULL orphans cannot block the delete either.
+        dep_check_ids = select(DependencyCheck.id).where(
+            DependencyCheck.repo_id == repo_id
+        )
+        dep_report_ids = select(DependencyReport.id).where(
+            DependencyReport.repo_id == repo_id
+        )
+        notif_ids = select(DashboardNotification.id).where(
+            or_(
+                DashboardNotification.repo_id == repo_id,
+                DashboardNotification.check_id.in_(dep_check_ids),
+                DashboardNotification.report_id.in_(dep_report_ids),
+            )
+        )
+        db.execute(
+            delete(NotificationRead).where(NotificationRead.notification_id.in_(notif_ids))
+        )
+        db.execute(
+            delete(DashboardNotification).where(DashboardNotification.id.in_(notif_ids))
+        )
+        # Policy guidance: chunks and rules hang off the repo's documents.
+        # Platform-scope rows (repo_id NULL) survive; other-scope rules that
+        # quote a deleted doc keep the rule but lose the provenance link.
+        doc_ids = select(PolicyDocument.id).where(PolicyDocument.repo_id == repo_id)
+        db.execute(delete(PolicyChunk).where(PolicyChunk.document_id.in_(doc_ids)))
+        db.execute(
+            update(PolicyRule)
+            .where(PolicyRule.source_document_id.in_(doc_ids))
+            .where(or_(PolicyRule.repo_id.is_(None), PolicyRule.repo_id != repo_id))
+            .values(source_document_id=None)
+        )
+        db.execute(delete(PolicyRule).where(PolicyRule.repo_id == repo_id))
+        db.execute(delete(PolicyDocument).where(PolicyDocument.repo_id == repo_id))
+        # Chat threads: attachments hang off messages and conversations, so
+        # they go first. All-repos threads (repo_id NULL) survive.
+        conv_ids = select(Conversation.id).where(Conversation.repo_id == repo_id)
+        db.execute(
+            delete(ChatAttachment).where(ChatAttachment.conversation_id.in_(conv_ids))
+        )
+        db.execute(
+            delete(ChatMessage).where(ChatMessage.conversation_id.in_(conv_ids))
+        )
+        db.execute(delete(Conversation).where(Conversation.id.in_(conv_ids)))
         # Dependency tracking: rows reference findings/proposals, so they
         # go before both. Checks and reports reference each other; null
         # the check leg first, then reports, then checks.
@@ -181,13 +236,6 @@ def disconnect_repo(repo_id: int) -> None:
         )
         db.execute(delete(DependencyReport).where(DependencyReport.repo_id == repo_id))
         db.execute(delete(DependencyCheck).where(DependencyCheck.repo_id == repo_id))
-        notif_ids = select(DashboardNotification.id).where(
-            DashboardNotification.repo_id == repo_id
-        )
-        db.execute(
-            delete(NotificationRead).where(NotificationRead.notification_id.in_(notif_ids))
-        )
-        db.execute(delete(DashboardNotification).where(DashboardNotification.repo_id == repo_id))
         db.execute(
             update(SecretFinding).where(SecretFinding.repo_id == repo_id).values(proposal_id=None)
         )
@@ -197,7 +245,9 @@ def disconnect_repo(repo_id: int) -> None:
         db.execute(delete(Finding).where(Finding.repo_id == repo_id))
         # Cost ledger rows point at the runs; Postgres blocks the run
         # delete until they are gone (NFR-8: spend history dies with the repo).
+        # Guidance snapshots pinned per run go with them.
         db.execute(delete(ModelUsage).where(ModelUsage.run_id.in_(run_ids)))
+        db.execute(delete(PolicyRunSnapshot).where(PolicyRunSnapshot.run_id.in_(run_ids)))
         db.execute(delete(ScanRun).where(ScanRun.repo_id == repo_id))
         db.execute(
             delete(EncryptedToken).where(

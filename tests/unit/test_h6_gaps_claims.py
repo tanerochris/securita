@@ -126,21 +126,46 @@ def test_reap_skips_fresh_claim_but_reaps_expired():
         _settle(stale, RunStatus.FAILED)
 
 
+def test_enqueue_queued_claim_flips_running():
+    from security_agent.db.models import RunTrigger
+    from security_agent.worker.scheduler import enqueue_scan
+
+    repo = _repo("queue-flow")
+    rid = _run_id(repo.id)
+    try:
+        assert _row(rid).status == RunStatus.QUEUED  # connect lands queued
+        again = enqueue_scan(repo.id, RunTrigger.MANUAL)
+        assert again.id == rid  # queued run holds the single-flight slot
+        assert rid in [r.id for r in claim_pending_runs("w-queue", limit=10000)]
+        row = _row(rid)
+        assert row.status == RunStatus.RUNNING and row.claimed_by == "w-queue"
+    finally:
+        _settle(rid)
+
+
 def test_boot_reap_spares_fresh_claim():
     live = _run_id(_repo("boot-live").id)
     dead = None
+    queued = None
     try:
         assert live in [r.id for r in claim_pending_runs("w-boot-old", limit=10000)]
-        # Created after the claim sweep, so it stays unclaimed: prior incarnation died.
+        # RUNNING with a dead lease: prior incarnation crashed mid-run.
         dead = _run_id(_repo("boot-dead").id)
-        _backdate(dead, started_hours_ago=1)
+        assert dead in [r.id for r in claim_pending_runs("w-boot-crashed", limit=10000)]
+        _backdate(dead, started_hours_ago=1, claimed_minutes_ago=CLAIM_LEASE_MINUTES + 1)
+        # Never claimed: still queued, the new boot picks it up instead.
+        queued = _run_id(_repo("boot-queued").id)
+        assert _row(queued).status == RunStatus.QUEUED
         reap_stale_runs(older_than_hours=0)  # boot: prior incarnation is dead
         assert _row(live).status == RunStatus.RUNNING  # fresh lease spared
-        assert _row(dead).status == RunStatus.FAILED  # unclaimed run reaped
+        assert _row(dead).status == RunStatus.FAILED  # crashed run reaped
+        assert _row(queued).status == RunStatus.QUEUED  # queued rows never reap
     finally:
         _settle(live)
         if dead is not None:
             _settle(dead, RunStatus.FAILED)
+        if queued is not None:
+            _settle(queued)
 
 
 def test_run_once_heartbeat_renews_during_long_run():

@@ -257,6 +257,9 @@
 
     <!-- Topbar (desktop) -->
     <div class="hidden md:flex items-center gap-4 border-b border-brand-mist bg-white/90 px-4 md:px-6 lg:px-8 py-3 sticky top-0 z-10">
+      <button id="histBack" type="button" class="grid h-9 w-9 flex-none place-items-center rounded-lg text-brand-deep hover:bg-brand-mist" aria-label="Go back" title="Go back">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
       <p class="text-sm font-semibold text-brand-deep">{% block page_title %}Security workspace{% endblock %}</p>
       <span class="inline-flex items-center gap-1.5 rounded-full bg-brand-mist px-2.5 py-1 text-xs font-semibold text-brand-deep"><span class="h-2 w-2 rounded-full bg-brand-primary" aria-hidden="true"></span>Live queue</span>
       {% if user %}<p class="ml-auto truncate text-sm text-slate-600">Signed in as <span class="font-semibold text-brand-navy">{{ user.email }}</span> <span class="text-slate-500">({{ user.role }})</span></p>{% endif %}
@@ -283,6 +286,12 @@
       </div>
       {% endif %}
     </div>
+    <script type="text/javascript">
+    (function () {
+      var back = document.getElementById("histBack");
+      if (back) { back.addEventListener("click", function () { history.back(); }); }
+    })();
+    </script>
 
     <main id="main" class="mx-auto w-full max-w-[1440px] px-4 md:px-6 lg:px-8 py-6 lg:py-8">{% block content %}{% endblock %}</main>
   </div>
@@ -364,7 +373,8 @@
        render. `status` only repaints the badge — a mid-pipeline DONE must
        never strand the page. Log lines go through textContent only. */
     var wrap = document.getElementById("liveLog");
-    if (!wrap || wrap.getAttribute("data-status") !== "running") { return; }
+    var liveStatus = wrap && wrap.getAttribute("data-status");
+    if (!wrap || (liveStatus !== "running" && liveStatus !== "queued")) { return; }
     if (typeof EventSource === "undefined") { return; }
     var log = document.getElementById("workerLog");
     var empty = document.getElementById("logEmpty");
@@ -373,6 +383,7 @@
     var badgeStatus = wrap.getAttribute("data-status");
     var BADGE_CLASS = {
       running: "inline-flex items-center gap-1.5 rounded-full bg-brand-primary px-2.5 py-1 text-white",
+      queued: "inline-flex items-center gap-1.5 rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep",
       done: "inline-flex rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep",
       failed: "inline-flex rounded-full bg-brand-navy px-2.5 py-1 text-white"
     };
@@ -387,32 +398,170 @@
       if (log) { log.style.display = ""; }
       if (copyBtn) { copyBtn.style.display = ""; }
     }
-    function setText(text) { reveal(); if (log) { log.textContent = text; } }
+    function setText(text) {
+      if (!text && !(log && log.textContent)) { return; } /* keep the empty state until the first line */
+      reveal();
+      if (log) { log.textContent = text; }
+    }
     function appendText(text) {
       if (!text) { return; }
       reveal();
       if (log) { log.textContent += text; }
+    }
+    /* Findings + cost tables: refresh from the summary JSON endpoint
+       on every stream event so rows land without a page reload. Rows
+       go through textContent only; each grid is destroyed and re-booted
+       around a rebuild so search/sort/pagination keep working. */
+    var summaryBox = document.getElementById("runFindings");
+    var summarySig = null;
+    var summaryBusy = false;
+    var summaryStopped = false;
+    function formatUsd(value) {
+      var v = Number(value) || 0;
+      if (v === 0) { return "$0.00"; }
+      var places = [2, 4, 6];
+      for (var i = 0; i < places.length; i++) {
+        var f = Math.pow(10, places[i]);
+        if (Math.round(Math.abs(v) * f) / f) { return "$" + v.toFixed(places[i]); }
+      }
+      return "$" + v.toFixed(6);
+    }
+    function numSpan(value, kind) {
+      var span = document.createElement("span");
+      span.setAttribute("data-num", String(value));
+      span.setAttribute("data-kind", kind);
+      span.textContent = String(value);
+      return span;
+    }
+    function renderFindings(data) {
+      var list = data.findings || [];
+      var count = document.getElementById("findingsCount");
+      var tableWrap = document.getElementById("findingsWrap");
+      var empty = document.getElementById("findingsEmpty");
+      var verdicts = document.getElementById("verdictLine");
+      if (count) { count.textContent = String(list.length); }
+      if (verdicts) {
+        verdicts.textContent = "Secrets first seen: " + data.secrets
+          + ". Reachability verdicts: " + data.reachable
+          + " reachable of " + data.verdicts + ".";
+      }
+      if (!tableWrap) { return; }
+      var table = document.getElementById("findingsTable");
+      if (table && table._datatable) {
+        try { table._datatable.destroy(); } catch (e) { /* re-boot below anyway */ }
+        table = document.getElementById("findingsTable");
+      }
+      if (!list.length) {
+        tableWrap.style.display = "none";
+        if (empty) { empty.style.display = ""; }
+        return;
+      }
+      var body = table ? table.querySelector("tbody") : null;
+      if (!table || !body) { return; }
+      while (body.firstChild) { body.removeChild(body.firstChild); }
+      list.forEach(function (f) {
+        var tr = document.createElement("tr");
+        [["package", "font-semibold text-brand-navy"], ["advisory_id", ""], ["status", ""]].forEach(function (col) {
+          var td = document.createElement("td");
+          if (col[1]) { td.className = col[1]; }
+          td.textContent = f[col[0]] || "";
+          tr.appendChild(td);
+        });
+        body.appendChild(tr);
+      });
+      tableWrap.style.display = "";
+      if (empty) { empty.style.display = "none"; }
+      if (typeof window.__bootGridTable === "function") { window.__bootGridTable(table); }
+    }
+    function renderCost(data) {
+      var list = data.usage || [];
+      var tableWrap = document.getElementById("costWrap");
+      var empty = document.getElementById("costEmpty");
+      var total = document.getElementById("costTotal");
+      if (!tableWrap) { return; }
+      var table = document.getElementById("costTable");
+      if (table && table._datatable) {
+        try { table._datatable.destroy(); } catch (e) { /* re-boot below anyway */ }
+        table = document.getElementById("costTable");
+      }
+      if (!list.length) {
+        tableWrap.style.display = "none";
+        if (empty) { empty.style.display = ""; }
+        if (total) { total.style.display = "none"; }
+        return;
+      }
+      var body = table ? table.querySelector("tbody") : null;
+      if (!table || !body) { return; }
+      while (body.firstChild) { body.removeChild(body.firstChild); }
+      list.forEach(function (u) {
+        var tr = document.createElement("tr");
+        var task = document.createElement("td");
+        task.className = "font-semibold text-brand-navy";
+        task.textContent = (u.task || "") + (u.estimated ? " (est.)" : "");
+        var tokens = document.createElement("td");
+        tokens.appendChild(numSpan(u.total_tokens || 0, "grouped"));
+        var usd = document.createElement("td");
+        usd.textContent = formatUsd(u.cost_usd);
+        tr.appendChild(task);
+        tr.appendChild(tokens);
+        tr.appendChild(usd);
+        body.appendChild(tr);
+      });
+      tableWrap.style.display = "";
+      if (empty) { empty.style.display = "none"; }
+      if (total) {
+        while (total.firstChild) { total.removeChild(total.firstChild); }
+        total.appendChild(document.createTextNode("Total: "));
+        total.appendChild(numSpan(data.usage_tokens || 0, "compact"));
+        total.appendChild(document.createTextNode(" tokens · " + formatUsd(data.usage_cost) + "."));
+        total.style.display = "";
+      }
+      if (typeof window.__renderNums === "function") { window.__renderNums(tableWrap.parentElement); }
+      if (typeof window.__bootGridTable === "function") { window.__bootGridTable(table); }
+    }
+    function renderSummary(data) {
+      renderFindings(data);
+      renderCost(data);
+    }
+    function refreshSummary() {
+      if (!summaryBox || summaryBusy || summaryStopped || document.hidden) { return; }
+      summaryBusy = true;
+      fetch(summaryBox.getAttribute("data-summary-url"), { headers: { "Accept": "application/json" } })
+        .then(function (resp) { return resp.ok ? resp.json() : null; })
+        .then(function (data) {
+          summaryBusy = false;
+          if (!data) { return; }
+          var sig = JSON.stringify(data);
+          if (sig === summarySig) { return; }
+          summarySig = sig;
+          renderSummary(data);
+        }, function () { summaryBusy = false; });
     }
     var src = new EventSource(wrap.getAttribute("data-events-url"));
     src.addEventListener("init", function (e) {
       var m = JSON.parse(e.data);
       setText(m.notes || "");
       setBadge(m.status);
+      refreshSummary();
     });
     src.addEventListener("log", function (e) {
       appendText(JSON.parse(e.data).append || "");
+      refreshSummary();
     });
     src.addEventListener("reset", function (e) {
       setText(JSON.parse(e.data).notes || "");
+      refreshSummary();
     });
     src.addEventListener("status", function (e) {
       setBadge(JSON.parse(e.data).status);
+      refreshSummary();
     });
     src.addEventListener("complete", function () {
+      summaryStopped = true;
       src.close();
       window.location.reload();
     });
-    src.addEventListener("gone", function () { src.close(); });
+    src.addEventListener("gone", function () { summaryStopped = true; src.close(); });
   })();
 </script>
 <script src="/static/vendor/simple-datatables/simple-datatables.js" integrity="sha384-OMR/OfeQC/fStE5yr0SBMKPPfMHctC+Ebr+QVzjdXw1FqbB0iBKgFkrAzvjhYByo" crossorigin="anonymous"></script>
@@ -421,19 +570,27 @@
     /* Every data table: search + sort + pagination from the vendored
        simple-datatables build (offline, no CDN). Per-table config comes
        from data attributes; without JS the full server table still shows. */
+    function bootTable(el) {
+      if (typeof simpleDatatables === "undefined" || !el) { return; }
+      el.removeAttribute("data-grid-done");
+      var per = parseInt(el.getAttribute("data-per-page") || "50", 10) || 50;
+      el._datatable = new simpleDatatables.DataTable(el, {
+        perPage: per,
+        perPageSelect: [["10", 10], ["25", 25], ["50", 50], ["100", 100], ["All", 0]],
+        searchable: el.getAttribute("data-grid-search") !== "false",
+        sortable: el.getAttribute("data-grid-sort") !== "false",
+        labels: { placeholder: "Search…", info: "Showing {start}–{end} of {rows}" }
+      });
+      el.setAttribute("data-grid-done", "1");
+    }
+    /* Live sections rebuild their tables on fresh data (destroy +
+       re-boot); the instance rides on the element for that. */
+    window.__bootGridTable = bootTable;
     function bootTables() {
       if (typeof simpleDatatables === "undefined") { return; }
       document.querySelectorAll("table[data-grid]").forEach(function (el) {
         if (el.getAttribute("data-grid-done") === "1") { return; }
-        el.setAttribute("data-grid-done", "1");
-        var per = parseInt(el.getAttribute("data-per-page") || "50", 10) || 50;
-        new simpleDatatables.DataTable(el, {
-          perPage: per,
-          perPageSelect: [["10", 10], ["25", 25], ["50", 50], ["100", 100], ["All", 0]],
-          searchable: el.getAttribute("data-grid-search") !== "false",
-          sortable: el.getAttribute("data-grid-sort") !== "false",
-          labels: { placeholder: "Search…", info: "Showing {start}–{end} of {rows}" }
-        });
+        bootTable(el);
       });
     }
     if (document.readyState === "loading") {
@@ -510,9 +667,13 @@
       el.textContent = new Intl.NumberFormat(undefined, opts).format(v);
       el.title = new Intl.NumberFormat(undefined).format(v);
     }
-    function boot() {
+    /* Live sections render new counts the same way after each refresh. */
+    window.__renderNums = function (root) {
       if (typeof Intl === "undefined" || !Intl.NumberFormat) { return; }
-      document.querySelectorAll("[data-num]").forEach(render);
+      (root || document).querySelectorAll("[data-num]").forEach(render);
+    };
+    function boot() {
+      window.__renderNums(document);
     }
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", boot);

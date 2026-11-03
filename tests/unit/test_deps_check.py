@@ -489,3 +489,216 @@ def test_prune_absent_packages(tmp_path):
     (tmp_path / "requirements.txt").unlink()  # django no longer declared
     _run(repo.id, tmp_path, summary_model=_Model("s2"))
     assert {r.package: r for r in _rows(repo.id)}.keys() == {"left-pad"}
+
+
+def test_dep_check_enqueue_queued_claim_flips_running():
+    repo = _repo()
+    with session_scope() as db:
+        check = db.scalar(
+            select(DependencyCheck).where(DependencyCheck.repo_id == repo.id)
+        )
+        assert check.status == RunStatus.QUEUED  # connect lands queued
+        check_id = check.id
+    owned = dc.claim_dep_checks("w-dep-queue", limit=500)
+    assert check_id in [c.id for c in owned]
+    with session_scope() as db:
+        row = db.get(DependencyCheck, check_id)
+        assert row.status == RunStatus.RUNNING and row.claimed_by == "w-dep-queue"
+    _settle_checks(repo.id)
+
+
+def test_disconnect_repo_removes_all_repo_owned_rows():
+    """Regression: disconnect must drop every repo-owned row, FK-ordered.
+
+    dashboard_notifications, policy docs/rules/chunks, run snapshots, and
+    chat threads all reference the repo (directly or via checks, runs, and
+    docs); missing any of them raises ForeignKeyViolation on Postgres.
+    SQLite skips FK enforcement by default, so this test turns it on to
+    reproduce the failure; the listener is removed afterwards. Platform
+    policy rows and all-repos conversations must survive.
+    """
+    from sqlalchemy import event
+
+    import security_agent.db.session as sess_mod
+    from security_agent.app import accounts as accounts_svc
+    from security_agent.db.models import (
+        ChatAttachment,
+        ChatMessage,
+        ChatRole,
+        Conversation,
+        NotificationRead,
+        PolicyChunk,
+        PolicyDocument,
+        PolicyRule,
+        PolicyRunSnapshot,
+        ScanRun,
+    )
+
+    repo = _repo()
+    owner = accounts_svc.create_user(
+        f"disc-sweep-{datetime.now(UTC).timestamp()}@example.com", None, Role.OWNER
+    )
+    with session_scope() as db:
+        check = db.scalar(
+            select(DependencyCheck).where(DependencyCheck.repo_id == repo.id)
+        )
+        run = db.scalar(select(ScanRun).where(ScanRun.repo_id == repo.id))
+        report = DependencyReport(
+            repo_id=repo.id, check_id=check.id, status="pending", sections=[]
+        )
+        db.add(report)
+        db.flush()
+        check.report_id = report.id
+        linked = DashboardNotification(
+            kind="deps-report",
+            title="linked",
+            repo_id=repo.id,
+            report_id=report.id,
+            check_id=check.id,
+        )
+        orphan = DashboardNotification(
+            kind="deps-failure", title="orphan", repo_id=None, check_id=check.id
+        )
+        db.add_all([linked, orphan])
+        db.flush()
+        db.add(NotificationRead(notification_id=linked.id, user_id=owner.id))
+        doc = PolicyDocument(
+            doc_key=f"disc-doc-{repo.id}",
+            scope="repo",
+            repo_id=repo.id,
+            title="repo policy",
+            source="upload",
+            content_hash="0" * 64,
+            text="guidance",
+        )
+        platform_doc = PolicyDocument(
+            doc_key=f"disc-platform-{repo.id}",
+            scope="platform",
+            repo_id=None,
+            title="platform policy",
+            source="upload",
+            content_hash="1" * 64,
+            text="guidance",
+        )
+        db.add_all([doc, platform_doc])
+        db.flush()
+        db.add(PolicyChunk(document_id=doc.id, chunk_index=0, text="guidance"))
+        db.add(
+            PolicyRule(
+                rule_key=f"disc-rule-{repo.id}",
+                scope="repo",
+                repo_id=repo.id,
+                effect="block",
+                match={},
+                reason="repo rule",
+                source_document_id=doc.id,
+            )
+        )
+        platform_rule = PolicyRule(
+            rule_key=f"disc-platform-rule-{repo.id}",
+            scope="platform",
+            repo_id=None,
+            effect="block",
+            match={},
+            reason="platform rule quoting a repo doc",
+            source_document_id=doc.id,
+        )
+        db.add(platform_rule)
+        db.add(PolicyRunSnapshot(run_id=run.id, doc_key=doc.doc_key, version=1))
+        conv = Conversation(user_id=owner.id, repo_id=repo.id)
+        shared_conv = Conversation(user_id=owner.id, repo_id=None)
+        db.add_all([conv, shared_conv])
+        db.flush()
+        msg = ChatMessage(conversation_id=conv.id, role=ChatRole.USER, content="hi")
+        db.add(msg)
+        db.flush()
+        db.add(
+            ChatAttachment(
+                conversation_id=conv.id,
+                message_id=msg.id,
+                filename="a.png",
+                mime="image/png",
+                size_bytes=3,
+                blob=b"img",
+            )
+        )
+        db.flush()
+        ids = {
+            "check": check.id,
+            "report": report.id,
+            "doc": doc.id,
+            "platform_doc": platform_doc.id,
+            "platform_rule": platform_rule.id,
+            "run": run.id,
+            "conv": conv.id,
+            "shared_conv": shared_conv.id,
+        }
+
+    engine = sess_mod.get_engine()
+
+    def _fk_on(dbapi_conn, _record):
+        dbapi_conn.execute("PRAGMA foreign_keys=ON")
+
+    event.listen(engine, "connect", _fk_on)
+    engine.dispose()
+    try:
+        repo_svc.disconnect_repo(repo.id)
+    finally:
+        event.remove(engine, "connect", _fk_on)
+        engine.dispose()
+
+    with session_scope() as db:
+        assert db.get(DependencyCheck, ids["check"]) is None
+        assert db.get(DependencyReport, ids["report"]) is None
+        assert (
+            db.scalar(
+                select(DashboardNotification).where(
+                    DashboardNotification.check_id == ids["check"]
+                )
+            )
+            is None
+        )
+        assert db.get(PolicyDocument, ids["doc"]) is None
+        assert (
+            db.scalar(
+                select(PolicyChunk).where(
+                    PolicyChunk.document_id == ids["doc"]
+                )
+            )
+            is None
+        )
+        assert (
+            db.scalar(
+                select(PolicyRule).where(PolicyRule.repo_id == repo.id)
+            )
+            is None
+        )
+        assert db.get(PolicyDocument, ids["platform_doc"]) is not None
+        surviving_rule = db.get(PolicyRule, ids["platform_rule"])
+        assert surviving_rule is not None and surviving_rule.source_document_id is None
+        assert (
+            db.scalar(
+                select(PolicyRunSnapshot).where(
+                    PolicyRunSnapshot.run_id == ids["run"]
+                )
+            )
+            is None
+        )
+        assert db.get(Conversation, ids["conv"]) is None
+        assert (
+            db.scalar(
+                select(ChatMessage).where(
+                    ChatMessage.conversation_id == ids["conv"]
+                )
+            )
+            is None
+        )
+        assert (
+            db.scalar(
+                select(ChatAttachment).where(
+                    ChatAttachment.conversation_id == ids["conv"]
+                )
+            )
+            is None
+        )
+        assert db.get(Conversation, ids["shared_conv"]) is not None

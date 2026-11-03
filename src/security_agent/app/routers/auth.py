@@ -106,6 +106,14 @@ def login(
     return _session_response(user.id)
 
 
+@router.post("/guest-login", dependencies=[Depends(require_csrf)])
+def guest_login(request: Request):
+    """One-click demo login: always-on Owner guest session."""
+    _check_rate(request, "/guest-login")
+    guest = svc.ensure_guest_user()
+    return _session_response(guest.id)
+
+
 @router.post("/logout", dependencies=[Depends(require_csrf)])
 def logout(session: str | None = Cookie(default=None, alias=SESSION_COOKIE)):
     if session:
@@ -309,7 +317,10 @@ def _dashboard_context() -> dict:
         running_runs = []
         for run_row in db.scalars(
             select(ScanRun)
-            .where(ScanRun.status == RunStatus.RUNNING, ScanRun.parked.is_(False))
+            .where(
+                ScanRun.status.in_([RunStatus.QUEUED, RunStatus.RUNNING]),
+                ScanRun.parked.is_(False),
+            )
             .order_by(ScanRun.started_at.desc())
             .limit(10)
         ):

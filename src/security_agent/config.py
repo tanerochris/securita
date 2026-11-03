@@ -110,6 +110,10 @@ class Settings(BaseSettings):
     # month; pipelines keep running. Owners/Maintainers can raise it
     # from the settings page (NotifyState cost.spend_cap_monthly wins).
     spend_cap_monthly_usd: float = Field(default=500.0, alias="SPEND_CAP_MONTHLY_USD")
+    # Worker role: "all" schedules and executes (dev/single-process),
+    # "orchestrator" only ticks/enqueues, "executor" only claims/runs.
+    # Deploy exactly one orchestrator; scale executors freely.
+    worker_role: str = Field(default="all", alias="WORKER_ROLE")
     # H6 recovery (NFR-9 D1/D2): backup dir + key-ceremony file target.
     backup_dir: str = Field(default="./backups", alias="BACKUP_DIR")
     backup_retention_count: int = Field(default=14, alias="BACKUP_RETENTION_COUNT")

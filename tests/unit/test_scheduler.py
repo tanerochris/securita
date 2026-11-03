@@ -72,9 +72,9 @@ def test_webhook_secret_verify_both_providers():
     assert repos.verify_gitlab_token(repo.id, "wrong") is False
 
 
-def test_due_skips_running_and_fresh():
+def test_due_skips_inflight_and_fresh():
     repo = repos.connect_repo("due-r", RepoKind.GIT, url="https://example.com/d.git")
-    assert repo.id not in [r.id for r in due_repos()]  # fresh + RUNNING connect run
+    assert repo.id not in [r.id for r in due_repos()]  # fresh + QUEUED connect run
     with session_scope() as db:
         run = db.scalar(select(ScanRun).where(ScanRun.repo_id == repo.id))
         run.status = RunStatus.DONE
@@ -119,7 +119,7 @@ def test_enqueue_coalesces_with_inflight_run():
     assert len(_runs(repo.id)) == 1
 
 
-def test_single_flight_index_rejects_second_running():
+def test_single_flight_index_rejects_second_inflight():
     import sqlalchemy.exc
 
     repo = repos.connect_repo("sfl-r", RepoKind.GIT, url="https://example.com/s.git")
@@ -135,17 +135,23 @@ def test_single_flight_index_rejects_second_running():
         db.flush()
 
 
-def test_reap_stale_runs_fails_abandoned():
-    from security_agent.worker.scheduler import reap_stale_runs
+def test_reap_spares_queued_runs():
+    from security_agent.worker.scheduler import claim_pending_runs, reap_stale_runs
 
     repo = repos.connect_repo("reap-r", RepoKind.GIT, url="https://example.com/p.git")
     with session_scope() as db:
         run = db.scalar(select(ScanRun).where(ScanRun.repo_id == repo.id))
         run.started_at = datetime.now(UTC) - timedelta(hours=25)
-    assert reap_stale_runs() >= 1
+    reap_stale_runs()
     (run,) = _runs(repo.id)
-    assert run.status == RunStatus.FAILED and "reaped" in (run.notes or "")
-    assert repo.id in [r.id for r in due_repos(datetime.now(UTC) + timedelta(hours=7))]
+    assert run.status == RunStatus.QUEUED  # queued rows never reap
+    assert repo.id not in [r.id for r in due_repos(datetime.now(UTC) + timedelta(hours=7))]
+    owned = [r.id for r in claim_pending_runs("w-reap-queue", limit=10000)]
+    assert run.id in owned  # still claimable; the claim flips it to RUNNING
+    with session_scope() as db:
+        row = db.get(ScanRun, run.id)
+        row.status = RunStatus.DONE
+        row.finished_at = datetime.now(UTC)
 
 
 def test_claim_pending_runs_oldest_first():
@@ -215,7 +221,7 @@ def test_reap_skips_parked_runs():
         run.park_reason = "cap"
     reap_stale_runs()
     (run,) = _runs(repo.id)
-    assert run.status == RunStatus.RUNNING  # parked is a resume handle, not a wedge
+    assert run.status == RunStatus.QUEUED  # parked is a resume handle, not a wedge
 
 
 def test_due_respects_per_repo_schedule_in_sql():

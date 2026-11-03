@@ -25,6 +25,26 @@ def test_graph_runs_all_nodes():
     assert list(result["done"]) == list(NODES)
 
 
+def test_fetch_signals_skipped_for_scan_runs():
+    """Per-run executions skip the news poll: the orchestrator tick owns it.
+
+    Re-running model-backed classification ahead of every scan only
+    delays the run's first log line; the node still reports done.
+    (Calls the node directly: a full graph invoke with repo_id would
+    run a real scan through the later stages.)
+    """
+    from security_agent.worker.graph import _fetch_signals
+
+    with (
+        mock.patch("security_agent.worker.news.poll_news") as poll,
+        mock.patch("security_agent.worker.news_intel.process_news") as process,
+    ):
+        result = _fetch_signals({"repo_id": 1, "run_id": 2})
+    poll.assert_not_called()
+    process.assert_not_called()
+    assert result == {"done": ["fetch_signals"]}
+
+
 def test_fetch_signals_isolated_from_news_outage():
     """Tier-2 failures must never gate Tier-1 scanning."""
     with (

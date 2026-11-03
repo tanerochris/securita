@@ -148,13 +148,13 @@ def test_scan_now_redirects_to_run_and_shows_scanning():
     assert r.status_code == 303
     with session_scope() as db:
         manual = db.scalar(
-            select(ScanRun).where(ScanRun.repo_id == repo.id, ScanRun.status == RunStatus.RUNNING)
+            select(ScanRun).where(ScanRun.repo_id == repo.id, ScanRun.status == RunStatus.QUEUED)
         )
         assert manual is not None
         run_id = manual.id
     assert r.headers["location"] == f"/repos/{repo.id}/runs/{run_id}"
     detail = client.get(f"/repos/{repo.id}").text
-    assert "Scanning" in detail
+    assert "Queued" in detail
     assert f"/repos/{repo.id}/runs/{run_id}" in detail
     assert "Trigger manual scan" not in detail
 

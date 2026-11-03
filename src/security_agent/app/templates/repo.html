@@ -48,15 +48,15 @@
 
 {% if can_scan %}
 {% set ns = namespace(running=None) %}
-{% for r in runs %}{% if r.status.value == "running" and ns.running is none %}{% set ns.running = r %}{% endif %}{% endfor %}
+{% for r in runs %}{% if r.status.value in ("running", "queued") and ns.running is none %}{% set ns.running = r %}{% endif %}{% endfor %}
 <section class="mt-7 rounded-xl bg-brand-navy p-5 text-white shadow-card" aria-labelledby="scan-heading">
   <h2 id="scan-heading" class="text-lg !text-white">Scan now</h2>
   {% if ns.running %}
-  <p class="mt-1.5 text-sm leading-relaxed text-brand-mist">A scan is already running. Results land in Findings when it finishes.</p>
+  <p class="mt-1.5 text-sm leading-relaxed text-brand-mist">A scan is already {{ ns.running.status.value }}. Results land in Findings when it finishes.</p>
   <div class="mt-4 flex flex-wrap items-center gap-2.5">
     <button type="button" disabled aria-busy="true">
       <span class="btn-spinner" aria-hidden="true"></span>
-      Scanning…
+      {% if ns.running.status.value == "queued" %}Queued…{% else %}Scanning…{% endif %}
     </button>
     <a class="btn-secondary" href="/repos/{{ repo.id }}/runs/{{ ns.running.id }}">View run #{{ ns.running.id }}</a>
   </div>
@@ -218,6 +218,7 @@
             <td>{{ r.trigger.value }}</td>
             <td>
               {% if r.status.value == "running" %}<span class="inline-flex items-center gap-1.5 rounded-full bg-brand-primary px-2.5 py-0.5 text-xs font-bold text-white"><span class="h-1.5 w-1.5 rounded-full bg-white" aria-hidden="true"></span>running</span>
+              {% elif r.status.value == "queued" %}<span class="inline-flex items-center gap-1.5 rounded-full bg-brand-mist px-2.5 py-0.5 text-xs font-bold text-brand-deep"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-primary" aria-hidden="true"></span>queued</span>
               {% elif r.status.value == "done" %}<span class="inline-flex rounded-full bg-brand-mist px-2.5 py-0.5 text-xs font-bold text-brand-deep">done</span>
               {% else %}<span class="inline-flex rounded-full bg-brand-navy px-2.5 py-0.5 text-xs font-bold text-white">{{ r.status.value }}</span>{% endif %}
             </td>

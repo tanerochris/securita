@@ -16,7 +16,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from sqlalchemy import String, func, literal, select, update
+from sqlalchemy import String, and_, func, literal, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 
@@ -39,10 +39,13 @@ def _is_sqlite(db) -> bool:
     return bind is not None and bind.dialect.name == "sqlite"
 
 
-def _running_run(db, repo_id: int) -> ScanRun | None:
+_INFLIGHT = (RunStatus.QUEUED, RunStatus.RUNNING)
+
+
+def _inflight_run(db, repo_id: int) -> ScanRun | None:
     return db.scalar(
         select(ScanRun)
-        .where(ScanRun.repo_id == repo_id, ScanRun.status == RunStatus.RUNNING)
+        .where(ScanRun.repo_id == repo_id, ScanRun.status.in_(_INFLIGHT))
         .order_by(ScanRun.id.desc())
     )
 
@@ -69,12 +72,12 @@ def _due_predicate(db, now: datetime):
 
 
 def due_repos(now: datetime | None = None) -> list[Repo]:
-    """Repos due for a scan, in one query: no RUNNING run + interval elapsed."""
+    """Repos due for a scan, in one query: no in-flight run + interval elapsed."""
     now = now or datetime.now(UTC)
     with session_scope() as db:
         running = (
             select(ScanRun.id)
-            .where(ScanRun.repo_id == Repo.id, ScanRun.status == RunStatus.RUNNING)
+            .where(ScanRun.repo_id == Repo.id, ScanRun.status.in_(_INFLIGHT))
             .exists()
         )
         rows = list(db.scalars(select(Repo).where(~running, _due_predicate(db, now))))
@@ -89,7 +92,7 @@ def enqueue_scan(repo_id: int, trigger: RunTrigger, *, notes: str = "") -> ScanR
         repo = db.get(Repo, repo_id)
         if repo is None:
             raise ValueError(f"Unknown repo {repo_id}.")
-        existing = _running_run(db, repo_id)
+        existing = _inflight_run(db, repo_id)
         if existing is not None:
             db.expunge(existing)
             return existing
@@ -101,7 +104,7 @@ def enqueue_scan(repo_id: int, trigger: RunTrigger, *, notes: str = "") -> ScanR
         except IntegrityError:
             # Lost a cross-process race: return the winner.
             db.rollback()
-            winner = _running_run(db, repo_id)
+            winner = _inflight_run(db, repo_id)
             if winner is None:
                 raise
             db.expunge(winner)
@@ -123,24 +126,27 @@ def claim_pending_runs(
 ) -> list[ScanRun]:
     """Atomically claim owned runs, oldest first; losers get nothing.
 
-    Each candidate is taken with a single guarded UPDATE
-    (`claimed_at IS NULL OR expired`); `rowcount == 1` means this
-    worker won. Parked runs (NFR-8 hard stop) are never claimed — only
-    an explicit resume re-queues them. Without a worker_id the call
-    stays a read-only peek (tooling/tests); the worker always passes one.
+    Each candidate is taken with a single guarded UPDATE; `rowcount == 1`
+    means this worker won, and the win flips QUEUED to RUNNING in the
+    same statement. Fresh QUEUED rows and lease-expired RUNNING rows
+    (dead worker) are claimable; parked runs (NFR-8 hard stop) are never
+    claimed — only an explicit resume re-queues them. Without a
+    worker_id the call stays a read-only peek (tooling/tests); the
+    worker always passes one.
     """
     now = now or datetime.now(UTC)
     with session_scope() as db:
         sql_now = now.replace(tzinfo=None) if _is_sqlite(db) else now
         lease_cutoff = sql_now - timedelta(minutes=lease_minutes)
+        expired = (ScanRun.claimed_at.is_(None)) | (ScanRun.claimed_at < lease_cutoff)
+        claimable = or_(
+            and_(ScanRun.status == RunStatus.QUEUED, ScanRun.claimed_at.is_(None)),
+            and_(ScanRun.status == RunStatus.RUNNING, expired),
+        )
         candidates = list(
             db.scalars(
                 select(ScanRun)
-                .where(
-                    ScanRun.status == RunStatus.RUNNING,
-                    ScanRun.parked.is_(False),
-                    (ScanRun.claimed_at.is_(None)) | (ScanRun.claimed_at < lease_cutoff),
-                )
+                .where(claimable, ScanRun.parked.is_(False))
                 .order_by(ScanRun.id)
                 .limit(limit)
             )
@@ -153,17 +159,15 @@ def claim_pending_runs(
         for candidate in candidates:
             result = db.execute(
                 update(ScanRun)
-                .where(
-                    ScanRun.id == candidate.id,
-                    ScanRun.status == RunStatus.RUNNING,
-                    ScanRun.parked.is_(False),
-                    (ScanRun.claimed_at.is_(None)) | (ScanRun.claimed_at < lease_cutoff),
+                .where(ScanRun.id == candidate.id, claimable, ScanRun.parked.is_(False))
+                .values(
+                    status=RunStatus.RUNNING, claimed_by=worker_id, claimed_at=sql_now
                 )
-                .values(claimed_by=worker_id, claimed_at=sql_now)
             )
             updated = cast("CursorResult[Any]", result).rowcount
             if updated == 1:
                 db.expunge(candidate)
+                candidate.status = RunStatus.RUNNING
                 candidate.claimed_by = worker_id
                 owned.append(candidate)
             else:
@@ -198,13 +202,14 @@ def reap_stale_runs(
     lease_minutes: float = CLAIM_LEASE_MINUTES,
     now: datetime | None = None,
 ) -> int:
-    """Fail in-flight runs older than the horizon (dead worker, wedged queue).
+    """Fail stale RUNNING runs older than the horizon (dead worker).
 
     One UPDATE ... RETURNING id (SQLite and Postgres both support
     RETURNING); the returned ids are the count. Parked runs are exempt
-    (their RUNNING row is the resume handle, not a wedged worker), and
-    so are runs holding a fresh claim lease — reap never kills a live
-    worker. Only unclaimed or lease-expired runs reap.
+    (their in-flight row is the resume handle, not a wedged worker),
+    and so are runs holding a fresh claim lease — reap never kills a
+    live worker. QUEUED rows are never reaped: a live worker claims
+    them instead, and the boot reap (horizon zero) must spare them.
     """
     now = now or datetime.now(UTC)
     with session_scope() as db:

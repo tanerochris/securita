@@ -141,6 +141,7 @@
             <td>{{ c.trigger.value }}</td>
             <td>
               {% if c.status.value == "running" %}<span class="inline-flex items-center gap-1.5 rounded-full bg-brand-primary px-2.5 py-0.5 text-xs font-bold text-white"><span class="h-1.5 w-1.5 rounded-full bg-white" aria-hidden="true"></span>running</span>
+              {% elif c.status.value == "queued" %}<span class="inline-flex items-center gap-1.5 rounded-full bg-brand-mist px-2.5 py-0.5 text-xs font-bold text-brand-deep"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-primary" aria-hidden="true"></span>queued</span>
               {% elif c.status.value == "done" %}<span class="inline-flex rounded-full bg-brand-mist px-2.5 py-0.5 text-xs font-bold text-brand-deep">done</span>
               {% else %}<span class="inline-flex rounded-full bg-brand-navy px-2.5 py-0.5 text-xs font-bold text-white">{{ c.status.value }}</span>{% endif %}
             </td>

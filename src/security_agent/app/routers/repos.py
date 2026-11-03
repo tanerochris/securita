@@ -536,3 +536,38 @@ def run_events(repo_id: int, run_id: int, _user: User = Depends(get_current_user
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get("/{repo_id}/runs/{run_id}/summary")
+def run_summary(repo_id: int, run_id: int, _user: User = Depends(get_current_user)):
+    """Live findings + cost for a run (fetched on SSE updates)."""
+    _repo_or_404(repo_id)
+    run = lifecycle.get_run(run_id)
+    if run is None or run.repo_id != repo_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown run.")
+    reachable, verdicts = lifecycle.count_run_verdicts(run_id)
+    usage = lifecycle.list_run_usage(run_id)
+    return {
+        "findings": [
+            {
+                "package": f.package,
+                "advisory_id": f.advisory_id,
+                "status": f.status.value,
+            }
+            for f in lifecycle.list_run_findings(run_id)
+        ],
+        "secrets": len(lifecycle.list_run_secrets(run_id)),
+        "reachable": reachable,
+        "verdicts": verdicts,
+        "usage": [
+            {
+                "task": u.task,
+                "total_tokens": u.total_tokens,
+                "cost_usd": u.cost_usd,
+                "estimated": u.estimated,
+            }
+            for u in usage
+        ],
+        "usage_tokens": sum(u.total_tokens for u in usage),
+        "usage_cost": sum(u.cost_usd for u in usage),
+    }

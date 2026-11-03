@@ -31,13 +31,44 @@ services:
         - action: rebuild
           path: uv.lock
 
-  worker:
+  # Exactly one orchestrator: it ticks housekeeping and enqueues due
+  # scans/checks. It never executes, so it gets no docker socket.
+  orchestrator:
     build: .
-    # Single replica by default; scale-out is safe (atomic claim/lease, H6 #31).
     command: uv run python -m security_agent.worker.main
     env_file:
       - .env
     environment:
+      WORKER_ROLE: orchestrator
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
+      EMBEDDING_LOCAL_CACHE_DIR: /app/.fastembed-cache
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - embed-cache:/app/.fastembed-cache
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./src
+          target: /app/src
+        - action: sync+restart
+          path: ./migrations
+          target: /app/migrations
+        - action: rebuild
+          path: pyproject.toml
+        - action: rebuild
+          path: uv.lock
+
+  # Executors claim and run the queue (atomic claim/lease, H6 #31), so
+  # scale-out is safe: docker compose up --scale executor=3
+  executor:
+    build: .
+    command: uv run python -m security_agent.worker.main
+    env_file:
+      - .env
+    environment:
+      WORKER_ROLE: executor
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local}
       EMBEDDING_LOCAL_CACHE_DIR: /app/.fastembed-cache
       SANDBOX_BACKEND: ${SANDBOX_BACKEND:-docker}
@@ -48,11 +79,12 @@ services:
       db:
         condition: service_healthy
     volumes:
-      # Docker socket lets the worker spawn fresh per-tool sandbox
-      # containers (follow-up #1). Only the worker gets it; the app
-      # never executes tools. The work volume is shared by NAME so
-      # sibling sandbox containers mount per-run subpaths from it;
-      # container paths must never be passed as daemon bind sources.
+      # Docker socket lets executors spawn fresh per-tool sandbox
+      # containers (follow-up #1). Only executors get it; the app and
+      # the orchestrator never execute tools. The work volume is shared
+      # by NAME so sibling sandbox containers mount per-run subpaths
+      # from it; container paths must never be passed as daemon bind
+      # sources.
       - /var/run/docker.sock:/var/run/docker.sock
       - sandbox-work:/sandbox-work
       - embed-cache:/app/.fastembed-cache

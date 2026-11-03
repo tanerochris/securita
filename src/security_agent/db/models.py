@@ -164,7 +164,8 @@ class RepoKind(enum.StrEnum):
 
 
 class RunStatus(enum.StrEnum):
-    RUNNING = "running"
+    QUEUED = "queued"  # enqueued, no worker claimed it yet
+    RUNNING = "running"  # claimed by a worker, executing
     DONE = "done"
     FAILED = "failed"
 
@@ -258,11 +259,11 @@ class ScanRun(Base):
         # Single-flight invariant: at most one in-flight run per repo,
         # enforced atomically so concurrent enqueues coalesce.
         Index(
-            "uq_scan_runs_one_running",
+            "uq_scan_runs_one_inflight",
             "repo_id",
             unique=True,
-            sqlite_where=text("status = 'running'"),
-            postgresql_where=text("status = 'running'"),
+            sqlite_where=text("status IN ('queued', 'running')"),
+            postgresql_where=text("status IN ('queued', 'running')"),
         ),
         # H6 #14: reap/claim scan RUNNING rows by age.
         Index("ix_scan_runs_status_started", "status", "started_at"),
@@ -271,14 +272,14 @@ class ScanRun(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     repo_id: Mapped[int] = mapped_column(ForeignKey("repos.id"), index=True)
     status: Mapped[RunStatus] = mapped_column(
-        _stored(RunStatus, "run_status"), default=RunStatus.RUNNING
+        _stored(RunStatus, "run_status"), default=RunStatus.QUEUED
     )
     trigger: Mapped[RunTrigger] = mapped_column(_stored(RunTrigger, "run_trigger"))
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # H6: atomic claim/lease (#31) + cost park (NFR-8 D5). Parked runs stay
-    # RUNNING (single-flight slot held) but are never claimed or reaped.
+    # in-flight (single-flight slot held) but are never claimed or reaped.
     claimed_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     parked: Mapped[bool] = mapped_column(default=False)
@@ -851,11 +852,11 @@ class DependencyCheck(Base):
         # Single-flight invariant, mirroring scan_runs: at most one
         # in-flight check per repo, enforced atomically.
         Index(
-            "uq_dependency_checks_one_running",
+            "uq_dependency_checks_one_inflight",
             "repo_id",
             unique=True,
-            sqlite_where=text("status = 'running'"),
-            postgresql_where=text("status = 'running'"),
+            sqlite_where=text("status IN ('queued', 'running')"),
+            postgresql_where=text("status IN ('queued', 'running')"),
         ),
         Index("ix_dependency_checks_status_started", "status", "started_at"),
     )
@@ -863,7 +864,7 @@ class DependencyCheck(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     repo_id: Mapped[int] = mapped_column(ForeignKey("repos.id"), index=True)
     status: Mapped[RunStatus] = mapped_column(
-        _stored(RunStatus, "run_status"), default=RunStatus.RUNNING
+        _stored(RunStatus, "run_status"), default=RunStatus.QUEUED
     )
     trigger: Mapped[RunTrigger] = mapped_column(_stored(RunTrigger, "run_trigger"))
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)

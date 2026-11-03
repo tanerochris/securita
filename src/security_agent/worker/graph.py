@@ -46,7 +46,12 @@ def _fetch_signals(state: AgentState) -> dict:
 
     Tier-2 signals must never gate Tier-1 scanning: each half is isolated
     so a news outage still lets the pipeline reach the sandbox scan.
+    Per-run executions skip the poll entirely — the orchestrator tick
+    already polls/processes every 60s, and re-running model-backed
+    classification ahead of every scan only delays its first log line.
     """
+    if state.get("repo_id") is not None:
+        return {"done": ["fetch_signals"]}
     import logging
 
     from security_agent.worker.news import poll_news

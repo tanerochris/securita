@@ -1,14 +1,19 @@
-"""Worker entrypoint: schedule, then execute claimed runs through the graph.
+"""Worker entrypoint: the orchestrator schedules, executors run the graph.
 
-One loop iteration enqueues due scans and runs every claimed run to
-completion. Claims are atomic with a 10-minute lease (H6 #31), so a
-second worker only picks up expired leases instead of double-executing.
-A crash mid-run leaves a RUNNING row that the next boot reaps (or a
-stale lease another worker steals), so the queue never wedges.
+Roles (WORKER_ROLE): "orchestrator" ticks housekeeping/enqueues only,
+"executor" claims and executes runs only, "all" does both (dev and
+single-process deploys). Deploy exactly one orchestrator — duplicate
+ticks would repeat digests and news work — and scale executors freely:
+claims are atomic with a 10-minute lease (H6 #31), so executors split
+the queue without double-executing. Executors poll faster than the
+orchestrator tick because claim checks are cheap and pickup latency
+is user-visible.
 
-Boot reaps stale runs but spares fresh claim leases, so after a
-single-replica restart the new process may idle up to one lease
-(10 minutes) before it can re-claim the previous incarnation's runs.
+A crash mid-run leaves a RUNNING row that the next orchestrator boot
+reaps (or a stale lease another executor steals), so the queue never
+wedges. Boot reaps spare fresh claim leases, so after a restart an
+executor may idle up to one lease (10 minutes) before it can re-claim
+the previous incarnation's runs.
 """
 
 import logging
@@ -35,6 +40,11 @@ log = logging.getLogger(__name__)
 WORKER_ID = new_worker_id()
 
 HEARTBEAT_SECONDS = 4 * 60
+
+ORCHESTRATE_SECONDS = 60
+EXECUTOR_POLL_SECONDS = 10
+
+WORKER_ROLES = ("all", "orchestrator", "executor")
 
 _MIGRATE_ATTEMPTS = 5
 _MIGRATE_RETRY_SECONDS = 5
@@ -151,14 +161,39 @@ def _claim_heartbeat(run_id: int, worker_id: str, stop: threading.Event) -> None
             log.warning("run %d: claim heartbeat failed", run_id)
 
 
-def run_once(*, max_runs: int = 100) -> dict:
-    """One iteration: tick the scheduler, drain claimed runs oldest-first."""
-    from security_agent.worker import build_graph
-    from security_agent.worker.deps_check import drain_dep_checks, drain_dep_patches
+def resolve_role() -> str:
+    """Active worker role from WORKER_ROLE; fail fast on a bad value."""
+    from security_agent.config import get_settings
+
+    role = (get_settings().worker_role or "all").strip().lower()
+    if role not in WORKER_ROLES:
+        raise ValueError(f"Unknown WORKER_ROLE {role!r}: want one of {WORKER_ROLES}.")
+    return role
+
+
+def orchestrate_once() -> dict:
+    """One scheduling pass: housekeeping plus due scan/check enqueues.
+
+    Never executes: enqueued rows sit QUEUED until an executor claims
+    them. The orchestrator owns this half (and the boot reaps).
+    """
     from security_agent.worker.scheduler import dep_tick
 
     enqueued = tick()
     dep_enqueued = dep_tick()
+    return {"enqueued": len(enqueued), "dep_enqueued": len(dep_enqueued)}
+
+
+def execute_once(*, max_runs: int = 100) -> dict:
+    """One execution pass: drain claimed scans, dep checks, dep patches.
+
+    Never schedules: no tick, no new enqueues. Executors own this half
+    and split the queue via atomic claims (H6 #31).
+    """
+    from security_agent.control.lifecycle import append_run_note
+    from security_agent.worker import build_graph
+    from security_agent.worker.deps_check import drain_dep_checks, drain_dep_patches
+
     dep_drain: dict = {"executed": 0, "failed": 0}
     dep_patches: dict = {"proposal_ids": [], "errors": []}
     graph = build_graph()
@@ -168,6 +203,9 @@ def run_once(*, max_runs: int = 100) -> dict:
         if not pending:
             break
         for run in pending:
+            # First log line within seconds of the claim, before the
+            # pipeline's own stages write anything.
+            append_run_note(run.id, f"claimed by {WORKER_ID}; pipeline starting")
             stop = threading.Event()
             beat = threading.Thread(
                 target=_claim_heartbeat,
@@ -204,15 +242,31 @@ def run_once(*, max_runs: int = 100) -> dict:
     except Exception:  # noqa: BLE001 - dep patches never kill the worker loop
         log.exception("dependency patch drain failed")
     return {
-        "enqueued": len(enqueued),
         "executed": executed,
         "failed": failed,
         "parked": parked,
-        "dep_enqueued": len(dep_enqueued),
         "dep_executed": dep_drain.get("executed", 0),
         "dep_failed": dep_drain.get("failed", 0),
         "dep_proposals": dep_patches.get("proposal_ids", []),
     }
+
+
+def run_once(*, max_runs: int = 100) -> dict:
+    """One iteration: tick the scheduler, drain claimed runs oldest-first."""
+    summary = orchestrate_once()
+    summary.update(execute_once(max_runs=max_runs))
+    return summary
+
+
+def run_role_once(role: str, *, max_runs: int = 100) -> dict:
+    """One loop iteration for `role` (see resolve_role)."""
+    if role == "orchestrator":
+        return orchestrate_once()
+    if role == "executor":
+        return execute_once(max_runs=max_runs)
+    if role == "all":
+        return run_once(max_runs=max_runs)
+    raise ValueError(f"Unknown worker role {role!r}: want one of {WORKER_ROLES}.")
 
 
 def main() -> None:
@@ -220,19 +274,23 @@ def main() -> None:
     from security_agent.worker import build_graph
     from security_agent.worker.deps_check import reap_stale_dep_checks
 
+    role = resolve_role()  # fail fast on a bad WORKER_ROLE
     ensure_schema()  # schema before any query (this worker migrates itself)
-    assert_sandbox_image()  # image before any scan (fail loud, not per-run)
-    build_graph()  # fail fast when the pipeline does not compile
-    reap_stale_runs(older_than_hours=0)  # boot: prior incarnation is dead by definition
-    reap_stale_dep_checks(older_than_hours=0)  # same for dependency checks (D5)
-    log.warning("worker ready")
+    if role in ("orchestrator", "all"):
+        reap_stale_runs(older_than_hours=0)  # boot: prior incarnation is dead
+        reap_stale_dep_checks(older_than_hours=0)  # same for dep checks (D5)
+    if role in ("executor", "all"):
+        assert_sandbox_image()  # image before any scan (fail loud, not per-run)
+        build_graph()  # fail fast when the pipeline does not compile
+    sleep = ORCHESTRATE_SECONDS if role != "executor" else EXECUTOR_POLL_SECONDS
+    log.warning("worker ready (role=%s)", role)
     while True:
         try:
-            summary = run_once()
+            summary = run_role_once(role)
             log.info("tick: %r", summary)
-        except Exception:  # noqa: BLE001 - scheduler must not kill the worker
-            log.exception("scheduler tick failed")
-        time.sleep(60)
+        except Exception:  # noqa: BLE001 - one bad iteration must not kill the worker
+            log.exception("%s iteration failed", role)
+        time.sleep(sleep)
 
 
 if __name__ == "__main__":

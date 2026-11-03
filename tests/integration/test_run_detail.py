@@ -89,3 +89,22 @@ def test_repo_runs_link_to_detail():
     resp = client.get(f"/repos/{repo_id}")
     assert resp.status_code == 200
     assert f"/repos/{repo_id}/runs/{run_id}" in resp.text
+
+
+def test_run_summary_json_feeds_live_tables():
+    _login()
+    repo_id, run_id = _seed_failed_run()
+    resp = client.get(f"/repos/{repo_id}/runs/{run_id}/summary")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["findings"] == [
+        {"package": "left-pad", "advisory_id": "CVE-RUN", "status": "open"}
+    ]
+    assert data["secrets"] == 0
+    assert data["reachable"] == 0 and data["verdicts"] == 0
+    assert data["usage"] == [
+        {"task": "adapt", "total_tokens": 120, "cost_usd": 0.5, "estimated": False}
+    ]
+    assert data["usage_tokens"] == 120 and data["usage_cost"] == 0.5
+    assert client.get(f"/repos/{repo_id}/runs/999999/summary").status_code == 404
+    assert client.get("/repos/999999/runs/1/summary").status_code == 404

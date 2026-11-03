@@ -26,7 +26,7 @@ from sqlalchemy.exc import IntegrityError
 
 from security_agent.audit import get_shared_log
 from security_agent.config import get_settings
-from security_agent.db.models import ModelUsage, NotifyState, Role, ScanRun, User
+from security_agent.db.models import ModelUsage, NotifyState, Role, RunStatus, ScanRun, User
 from security_agent.db.session import session_scope
 
 log = logging.getLogger(__name__)
@@ -650,6 +650,7 @@ def resume_run(run_id: int, user: User, *, new_cap: float | None = None) -> dict
         run.cost_warned = False
         run.claimed_by = None
         run.claimed_at = None
+        run.status = RunStatus.QUEUED  # no worker holds it; next pass claims it
         prior = f"{run.notes}\n" if run.notes else ""
         run.notes = prior + f"resumed by user {user.id} under cap {format_usd(cap)}"
     audit.append(

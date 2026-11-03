@@ -7,6 +7,7 @@
 
 <div class="mt-4 flex flex-wrap gap-2 text-xs font-semibold">
   {% if check.status.value == "running" %}<span id="runStatus" class="inline-flex items-center gap-1.5 rounded-full bg-brand-primary px-2.5 py-1 text-white"><span class="h-1.5 w-1.5 rounded-full bg-white" aria-hidden="true"></span>running</span>
+  {% elif check.status.value == "queued" %}<span id="runStatus" class="inline-flex items-center gap-1.5 rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-primary" aria-hidden="true"></span>queued</span>
   {% elif check.status.value == "done" %}<span id="runStatus" class="inline-flex rounded-full bg-brand-mist px-2.5 py-1 text-brand-deep">done</span>
   {% else %}<span id="runStatus" class="inline-flex rounded-full bg-brand-navy px-2.5 py-1 text-white">{{ check.status.value }}</span>{% endif %}
   <span class="inline-flex rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-[inset_0_0_0_1px_#E0F2FE]">trigger: {{ check.trigger.value }}</span>
@@ -20,7 +21,7 @@
 <section class="mt-7" aria-labelledby="log-heading" id="liveLog" data-status="{{ check.status.value }}" data-events-url="/repos/{{ repo.id }}/dependencies/checks/{{ check.id }}/events">
   <div class="flex flex-wrap items-center gap-3">
     <h2 id="log-heading" class="text-lg">Worker log</h2>
-    {% if check.status.value == "running" %}
+    {% if check.status.value in ("running", "queued") %}
     <span class="inline-flex items-center gap-1.5 rounded-full bg-brand-mist px-2.5 py-1 text-xs font-bold text-brand-deep"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-primary" aria-hidden="true"></span>Live</span>
     {% endif %}
     <button class="btn-secondary ml-auto" id="copyLog" type="button"{% if not check.notes %} style="display:none"{% endif %}>

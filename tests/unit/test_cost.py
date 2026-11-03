@@ -280,7 +280,7 @@ def test_worker_never_fails_parked_runs():
     _fail_run(run.id, "pipeline crashed: boom")
     with session_scope() as db:
         row = db.get(ScanRun, run.id)
-        assert row.status.value == "running"  # still resumable, not failed
+        assert row.status.value == "queued"  # still resumable, not failed
     with session_scope() as db:
         db.get(ScanRun, run.id).parked = False
 

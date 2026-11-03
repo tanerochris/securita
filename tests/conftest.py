@@ -27,6 +27,11 @@ os.environ.setdefault("DEPS_REPORT_MODEL_ENABLED", "false")
 # a customized BOT_NAME/BOT_EMAIL in the workspace .env must not leak in.
 os.environ.setdefault("BOT_NAME", "security-agent-bot")
 os.environ.setdefault("BOT_EMAIL", "security-agent@localhost")
+# Worker role: role-dispatch tests pin their own role, but every other
+# test assumes the default combined worker; a WORKER_ROLE in the
+# workspace .env must not leak in (it sends main() down a path whose
+# loop body the boot test mocks away, spinning forever).
+os.environ.setdefault("WORKER_ROLE", "all")
 
 import security_agent.db.session as sess_mod  # noqa: E402
 from security_agent.db.models import Base  # noqa: E402

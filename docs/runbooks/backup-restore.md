@@ -56,7 +56,7 @@ docker compose run --rm app security-agent-restore \
   /app/backups/agent-<utc>.manifest.json
 
 # 4. Boot and verify.
-docker compose up -d app worker
+docker compose up -d app orchestrator executor
 # - log in as Owner at $PUBLIC_URL/dashboard
 # - open a repo: findings + approvals read correctly
 # - rotate/check any repo token view: decrypt fires a `crypto/decrypt`

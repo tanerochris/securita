@@ -116,7 +116,7 @@ def test_check_now_enqueues_and_report_decides_with_exclusion():
                 DependencyCheck.id.desc()
             )
         )
-        assert check is not None and check.status == RunStatus.RUNNING
+        assert check is not None and check.status == RunStatus.QUEUED
         check.status = RunStatus.DONE  # settle: other tests enumerate checks
     resp = client.get(f"/repos/{repo_id}/dependencies/report/{report_id}")
     assert resp.status_code == 200

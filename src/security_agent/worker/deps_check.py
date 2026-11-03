@@ -62,12 +62,15 @@ class DependencyCheckError(RuntimeError):
 # --- Enqueue / due (D5/D14/D15) ---
 
 
-def _running_check(db, repo_id: int) -> DependencyCheck | None:
+_DEP_INFLIGHT = (RunStatus.QUEUED, RunStatus.RUNNING)
+
+
+def _inflight_check(db, repo_id: int) -> DependencyCheck | None:
     return db.scalar(
         select(DependencyCheck)
         .where(
             DependencyCheck.repo_id == repo_id,
-            DependencyCheck.status == RunStatus.RUNNING,
+            DependencyCheck.status.in_(_DEP_INFLIGHT),
         )
         .order_by(DependencyCheck.id.desc())
     )
@@ -81,7 +84,7 @@ def enqueue_dependency_check(
         repo = db.get(Repo, repo_id)
         if repo is None:
             raise ValueError(f"Unknown repo {repo_id}.")
-        existing = _running_check(db, repo_id)
+        existing = _inflight_check(db, repo_id)
         if existing is not None:
             db.expunge(existing)
             return existing
@@ -92,7 +95,7 @@ def enqueue_dependency_check(
             db.flush()
         except IntegrityError:
             db.rollback()
-            winner = _running_check(db, repo_id)
+            winner = _inflight_check(db, repo_id)
             if winner is None:
                 raise
             db.expunge(winner)
@@ -102,7 +105,7 @@ def enqueue_dependency_check(
 
 
 def dep_due_repos(now: datetime | None = None) -> list[Repo]:
-    """Repos due for a dependency check: no RUNNING check + interval elapsed.
+    """Repos due for a dependency check: no in-flight check + interval elapsed.
 
     Per-repo override wins (NULL inherits the install setting, 0 never);
     the per-row interval math mirrors the scan scheduler per dialect.
@@ -119,7 +122,7 @@ def dep_due_repos(now: datetime | None = None) -> list[Repo]:
             select(DependencyCheck.id)
             .where(
                 DependencyCheck.repo_id == Repo.id,
-                DependencyCheck.status == RunStatus.RUNNING,
+                DependencyCheck.status.in_(_DEP_INFLIGHT),
             )
             .exists()
         )
@@ -418,15 +421,17 @@ def touch_dep_claim(check_id: int, worker_id: str) -> bool:
 def claim_dep_checks(worker_id: str | None = None, limit: int = 20) -> list[DependencyCheck]:
     """Atomically claim owned checks, oldest first (H6 #31 shape, no parking).
 
-    Dependency checks never park: the tooling half is unbudgeted and the
-    report half degrades to `report_pending_cap` rows instead of a stuck
-    RUNNING row (D23). Without a worker_id the call stays a read-only
-    peek (tooling/tests).
+    The win flips QUEUED to RUNNING in the same guarded UPDATE. Fresh
+    QUEUED rows and lease-expired RUNNING rows (dead worker) are
+    claimable. Dependency checks never park: the tooling half is
+    unbudgeted and the report half degrades to `report_pending_cap`
+    rows instead of a stuck in-flight row (D23). Without a worker_id
+    the call stays a read-only peek (tooling/tests).
     """
     from datetime import timedelta
     from typing import Any, cast
 
-    from sqlalchemy import update
+    from sqlalchemy import and_, or_, update
     from sqlalchemy.engine import CursorResult
 
     from security_agent.worker.scheduler import CLAIM_LEASE_MINUTES
@@ -436,14 +441,20 @@ def claim_dep_checks(worker_id: str | None = None, limit: int = 20) -> list[Depe
         bind = db.get_bind()
         sql_now = now.replace(tzinfo=None) if bind and bind.dialect.name == "sqlite" else now
         lease_cutoff = sql_now - timedelta(minutes=CLAIM_LEASE_MINUTES)
+        expired = (DependencyCheck.claimed_at.is_(None)) | (
+            DependencyCheck.claimed_at < lease_cutoff
+        )
+        claimable = or_(
+            and_(
+                DependencyCheck.status == RunStatus.QUEUED,
+                DependencyCheck.claimed_at.is_(None),
+            ),
+            and_(DependencyCheck.status == RunStatus.RUNNING, expired),
+        )
         candidates = list(
             db.scalars(
                 select(DependencyCheck)
-                .where(
-                    DependencyCheck.status == RunStatus.RUNNING,
-                    (DependencyCheck.claimed_at.is_(None))
-                    | (DependencyCheck.claimed_at < lease_cutoff),
-                )
+                .where(claimable)
                 .order_by(DependencyCheck.id)
                 .limit(limit)
             )
@@ -456,16 +467,14 @@ def claim_dep_checks(worker_id: str | None = None, limit: int = 20) -> list[Depe
         for candidate in candidates:
             result = db.execute(
                 update(DependencyCheck)
-                .where(
-                    DependencyCheck.id == candidate.id,
-                    DependencyCheck.status == RunStatus.RUNNING,
-                    (DependencyCheck.claimed_at.is_(None))
-                    | (DependencyCheck.claimed_at < lease_cutoff),
+                .where(DependencyCheck.id == candidate.id, claimable)
+                .values(
+                    status=RunStatus.RUNNING, claimed_by=worker_id, claimed_at=sql_now
                 )
-                .values(claimed_by=worker_id, claimed_at=sql_now)
             )
             if cast("CursorResult[Any]", result).rowcount == 1:
                 db.expunge(candidate)
+                candidate.status = RunStatus.RUNNING
                 candidate.claimed_by = worker_id
                 owned.append(candidate)
             else:
@@ -474,7 +483,11 @@ def claim_dep_checks(worker_id: str | None = None, limit: int = 20) -> list[Depe
 
 
 def reap_stale_dep_checks(*, older_than_hours: float = 24) -> int:
-    """Fail in-flight checks older than the horizon (dead worker, wedged queue)."""
+    """Fail stale RUNNING checks older than the horizon (dead worker).
+
+    QUEUED rows are never reaped: a live worker claims them instead,
+    and the boot reap (horizon zero) must spare them.
+    """
     from datetime import timedelta
 
     from sqlalchemy import func, literal, update

@@ -24,13 +24,13 @@ Scheduler/Triggers -> Worker (LangGraph) -> Sandbox Runner -> App (FastAPI) -> D
 
 ## Top-level deployment (NFR-10)
 
-Compose services on the operator network: `app`, `worker`, `db`, `sandbox runner`.
+Compose services on the operator network: `app`, `orchestrator`, `executor`, `db`, `sandbox runner`.
 
 Six logical planes mapped onto those services:
 
 | Plane | Compose home | Plans |
 |---|---|---|
-| Orchestration (scheduler, pipeline, brain) | worker | FR-2, FR-3, FR-4, FR-8, FR-15 |
+| Orchestration (scheduler, pipeline, brain) | orchestrator + executor | FR-2, FR-3, FR-4, FR-8, FR-15 |
 | Execution (sandbox lifecycle, tools) | sandbox runner | FR-14, NFR-1, NFR-2 |
 | Control (findings, delivery, approvals) | app | FR-5, FR-9, FR-12 D1 |
 | Presentation + Identity | app | FR-10, FR-11, FR-12 |

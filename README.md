@@ -24,6 +24,8 @@ docker compose up --watch
 
 Open http://localhost:8000/dashboard in a browser (first signup becomes Owner). Health: http://localhost:8000/health
 
+For demos, the login page offers **Continue as guest** — one click, no password, full Owner access to explore the live install.
+
 > TLS everywhere in production; plain HTTP on localhost only (NFR-3).
 > Terminate TLS at your reverse proxy and set `PUBLIC_URL=https://…`; the app
 > refuses prod boot on plain-http `PUBLIC_URL`.
@@ -32,7 +34,7 @@ Open http://localhost:8000/dashboard in a browser (first signup becomes Owner). 
 
 - The app runs Alembic migrations on startup (`alembic upgrade head`).
 - The first `up --build` also builds the sandbox image (`sandbox-runner`
-  service, exits 0 after a scanner smoke check) — the worker refuses to
+  service, exits 0 after a scanner smoke check) — executors refuse to
   boot without that image. Rebuild just it with
   `docker compose build sandbox-runner`.
 - With no `MASTER_KEY` set, it generates one and prints it **once** — store it

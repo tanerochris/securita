@@ -1,6 +1,6 @@
 """Worker entrypoint: run_once executes claimed runs and isolates crashes."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest import mock
 
 from sqlalchemy import select
@@ -23,7 +23,11 @@ def _settle_others() -> None:
     """Finish runs left by earlier tests: run_once drains oldest-first with
     a cap, so without this the test's own run may never be claimed."""
     with session_scope() as db:
-        for row in db.scalars(select(ScanRun).where(ScanRun.status == RunStatus.RUNNING)):
+        for row in db.scalars(
+            select(ScanRun).where(
+                ScanRun.status.in_([RunStatus.QUEUED, RunStatus.RUNNING])
+            )
+        ):
             row.status = RunStatus.DONE
             row.finished_at = datetime.now(UTC)
 
@@ -138,6 +142,7 @@ def test_ensure_schema_gives_up_after_attempts(monkeypatch):
 def test_main_migrates_before_any_query():
     calls: list[str] = []
     with (
+        mock.patch.object(worker_main, "resolve_role", return_value="all"),
         mock.patch.object(worker_main, "ensure_schema", side_effect=lambda: calls.append("schema")),
         mock.patch(
             "security_agent.sandbox.assert_sandbox_image",
@@ -154,4 +159,100 @@ def test_main_migrates_before_any_query():
             worker_main.main()
         except KeyboardInterrupt:
             pass
-    assert calls == ["schema", "sandbox", "graph", "reap"]
+    assert calls == ["schema", "reap", "sandbox", "graph"]
+
+
+def test_orchestrate_once_enqueues_without_executing():
+    _settle_others()
+    repo = repos.connect_repo("orc-r", RepoKind.GIT, url="https://example.com/o.git")
+    with session_scope() as db:
+        row = db.scalar(select(ScanRun).where(ScanRun.repo_id == repo.id))
+        row.status = RunStatus.DONE
+        row.finished_at = datetime.now(UTC)
+        db.get(type(repo), repo.id).last_scan_at = datetime.now(UTC) - timedelta(hours=7)
+    with (
+        mock.patch("security_agent.worker.news.poll_news", return_value={}),
+        mock.patch(
+            "security_agent.worker.news_intel.process_news",
+            return_value={"classified": 0, "major": 0, "minted": 0, "linked": 0},
+        ),
+        mock.patch("security_agent.worker.scheduler.dep_tick", return_value=[]),
+        mock.patch(
+            "security_agent.worker.build_graph",
+            side_effect=AssertionError("orchestrator must not execute"),
+        ),
+    ):
+        summary = worker_main.orchestrate_once()
+    assert summary["enqueued"] >= 1
+    with session_scope() as db:
+        fresh = db.scalar(
+            select(ScanRun)
+            .where(ScanRun.repo_id == repo.id, ScanRun.status == RunStatus.QUEUED)
+            .order_by(ScanRun.id.desc())
+        )
+        assert fresh is not None and fresh.claimed_by is None
+        fresh.status = RunStatus.DONE  # settle: leave no queued rows behind
+        fresh.finished_at = datetime.now(UTC)
+
+
+def test_execute_once_skips_scheduling():
+    _settle_others()
+    repo = repos.connect_repo("exe-r", RepoKind.GIT, url="https://example.com/x.git")
+    graph = mock.Mock()
+    with (
+        mock.patch(
+            "security_agent.worker.scheduler.tick",
+            side_effect=AssertionError("executor must not tick"),
+        ),
+        mock.patch(
+            "security_agent.worker.scheduler.dep_tick",
+            side_effect=AssertionError("executor must not tick"),
+        ),
+        mock.patch("security_agent.worker.build_graph", return_value=graph),
+        mock.patch(
+            "security_agent.worker.deps_check.drain_dep_checks",
+            return_value={"executed": 0, "failed": 0},
+        ),
+        mock.patch(
+            "security_agent.worker.deps_check.drain_dep_patches",
+            return_value={"proposal_ids": [], "errors": []},
+        ),
+    ):
+        summary = worker_main.execute_once()
+    graph.invoke.assert_any_call({"repo_id": repo.id, "run_id": _run(repo.id).id})
+    assert summary["executed"] >= 1
+    assert _run(repo.id).status == RunStatus.DONE
+    assert "claimed by worker-" in (_run(repo.id).notes or "")
+
+
+def test_run_role_once_dispatches():
+    with (
+        mock.patch.object(worker_main, "orchestrate_once", return_value={"o": 1}) as orch,
+        mock.patch.object(worker_main, "execute_once", return_value={"e": 1}) as exe,
+        mock.patch.object(worker_main, "run_once", return_value={"a": 1}) as all_,
+    ):
+        assert worker_main.run_role_once("orchestrator") == {"o": 1}
+        assert worker_main.run_role_once("executor") == {"e": 1}
+        assert worker_main.run_role_once("all") == {"a": 1}
+        assert orch.call_count == 1 and exe.call_count == 1 and all_.call_count == 1
+    try:
+        worker_main.run_role_once("janitor")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unknown role must fail fast")
+
+
+def test_resolve_role_defaults_and_validates(monkeypatch):
+    from security_agent.config import get_settings
+
+    assert worker_main.resolve_role() == "all"
+    monkeypatch.setattr(get_settings(), "worker_role", " Executor ")
+    assert worker_main.resolve_role() == "executor"
+    monkeypatch.setattr(get_settings(), "worker_role", "janitor")
+    try:
+        worker_main.resolve_role()
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unknown WORKER_ROLE must fail fast")
