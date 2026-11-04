@@ -45,6 +45,8 @@ dashboard, the second runs scans.
 **Terminal 1 — boot the dashboard:**
 
 ```bash
+git clone https://github.com/tanerochris/securita.git
+cd securita
 cp .env.example .env
 # Edit .env and set MODEL_API_KEY to a Meta Model API key
 # (create one at https://dev.meta.ai — Start building — then paste the key).
@@ -82,6 +84,8 @@ checksum-verified release assets into `~/.local/bin`.
 Prerequisites: Docker + Docker Compose only.
 
 ```bash
+git clone https://github.com/tanerochris/securita.git
+cd securita
 cp .env.example .env
 # Edit .env and set MODEL_API_KEY as above. Keep the Postgres DATABASE_URL
 # from .env.example (Compose service "db"). MASTER_KEY may be left blank.
