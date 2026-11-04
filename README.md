@@ -8,6 +8,30 @@
 >
 > **Demo video (≤ 3:00):** ([Scurita DEMO](https://www.youtube.com/watch?v=IkJMa8_Lq8o))
 
+Scurita is a self-hosted AI security agent that finds, triages, and fixes
+vulnerabilities before attackers can exploit them.
+
+The problem is that every project depends on hundreds of open-source packages,
+ships fast, and leaks secrets by accident. Developers get CVE alerts with no
+context, fear breaking changes so they freeze updates, drown in irrelevant
+security news, and use scanners that report problems but never fix them. As a
+result, known vulnerabilities stay open for months.
+
+Scurita solves this by connecting to any git repo and working continuously. It
+scans code and dependencies against vulnerability databases including OSV, GHSA,
+KEV, and NVD. It tracks security updates for every dependency, showing what
+each patch fixes and what might break. It hunts for exposed secrets in code and
+history. It filters global threat news down to what is actionable for your
+specific tech stack. It then combines all of these signals and uses Muse Spark
+to draft real pull requests and patches with clear titles, explanations, and
+impact summaries, while sending prompt alerts to your channels with the fix
+attached where possible. You stay in control through natural-language policies
+that customize agent behavior, defining what to auto-fix and what needs
+approval, with every action reviewable and auditable in the dashboard. It is
+fully self-hosted, running locally or in Docker with your code and keys never
+leaving your infrastructure, works with GitHub, GitLab, any git URL, or local
+repos, and is powered at runtime entirely by Meta models.
+
 ## What existed before vs. built during the event
 
 Nothing pre-existed. The project was designed and built entirely during the hackathon window:
