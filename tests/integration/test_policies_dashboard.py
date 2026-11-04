@@ -361,3 +361,59 @@ def test_preview_shows_matching_chunks():
     assert resp.status_code == 200 and "Unicorn" in resp.text
     resp = client.get("/policies/preview", params={"q": "zzz-no-such-term-zzz"})
     assert resp.status_code == 200 and "no policy" in resp.text
+
+
+def test_platform_page_groups_repo_policies_with_platform():
+    _login_as(Role.OWNER)
+    stamp = datetime.now(UTC).timestamp()
+    repo_id = _repo(f"group-repo-{stamp}")
+    repo_rule_reason = f"group repo rule {stamp}"
+    client.post(
+        "/policies/rules",
+        data={
+            "csrf": _csrf(),
+            "scope": "repo",
+            "repo_id": str(repo_id),
+            "effect": "block",
+            "package": "group-lib",
+            "reason": repo_rule_reason,
+        },
+    )
+    repo_doc_title = f"Group repo doc {stamp}"
+    client.post(
+        "/policies/editor",
+        data={
+            "csrf": _csrf(),
+            "scope": "repo",
+            "repo_id": str(repo_id),
+            "title": repo_doc_title,
+            "text": "Repo grouping guidance words.",
+        },
+    )
+    platform_reason = f"group platform rule {stamp}"
+    client.post(
+        "/policies/rules",
+        data={
+            "csrf": _csrf(),
+            "scope": "platform",
+            "effect": "block",
+            "package": "group-platform-lib",
+            "reason": platform_reason,
+        },
+    )
+    rule = [r for r in list_rules() if r.reason == repo_rule_reason][-1]
+    page = client.get("/policies").text
+    assert platform_reason in page
+    assert repo_rule_reason in page
+    assert repo_doc_title in page
+    assert f"/repos/{repo_id}/policies" in page
+    assert "Repo policies by repository" in page
+    confirm_tag = _form_tag(page, f"/policies/rules/{rule.rule_key}/confirm")
+    assert "data-inline" in confirm_tag
+    resp = client.post(
+        f"/policies/rules/{rule.rule_key}/confirm",
+        data={"csrf": _csrf(), "next": "/policies"},
+        follow_redirects=True,
+    )
+    assert resp.status_code == 200 and "confirmed" in resp.text
+    assert "Repo policies by repository" in resp.text

@@ -164,6 +164,8 @@
   .chat-send { display: grid; place-items: center; width: 2.25rem; height: 2.25rem; flex: none; border-radius: 9999px; background: var(--color-primary); color: #fff; border: none; cursor: pointer; transition: background-color 200ms ease; }
   .chat-send:hover { background: var(--color-deep); }
   .chat-send:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+  /* Icon-only chat buttons show the spinner INSTEAD of their icon while busy. */
+  .chat-send[aria-busy="true"] > svg, .chat-icon-btn[aria-busy="true"] > svg { display: none; }
   .chat-files { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0 0.9rem 0.6rem; font-size: 0.75rem; }
   #chat-history-view { min-height: 20rem; max-height: 32rem; overflow-y: auto; background: #fff; }
   .chat-history-top { display: flex; align-items: center; gap: 0.4rem; padding: 0.5rem; border-bottom: 1px solid #E0F2FE; }
@@ -664,7 +666,7 @@
        notice banner; grids are destroyed before the swap and re-booted
        after, all inside one task so the browser paints once. Any
        failure falls back to a normal submit. */
-    var SECTION_HEADS = ["pending-heading", "confirmed-heading", "docs-heading"];
+    var SECTION_HEADS = ["pending-heading", "confirmed-heading", "docs-heading", "repo-policies-heading"];
     function sectionFor(doc, headId) {
       var h = doc.getElementById(headId);
       return h && h.closest ? h.closest("section") : null;
@@ -952,7 +954,17 @@
     var box = form.parentElement ? form.parentElement.querySelector(".chat-typing") : null;
     if (box) box.hidden = false;
   });
+  window.chatResetSendButton = function (form) {
+    if (!form || !form.querySelector) { return; }
+    var btn = form.querySelector('button[type="submit"]');
+    if (!btn) { return; }
+    var spin = btn.querySelector(".btn-spinner");
+    if (spin && spin.parentNode) { spin.parentNode.removeChild(spin); }
+    btn.removeAttribute("aria-busy");
+    btn.disabled = false;
+  };
   window.chatFormSent = function (form) {
+    window.chatResetSendButton(form);
     var scope = form.parentElement || document;
     var box = scope.querySelector ? scope.querySelector(".chat-typing") : null;
     if (box) box.hidden = true;

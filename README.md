@@ -1,11 +1,12 @@
-# AI Security Agent
+# Scurita – AI Security Agent
 
 > **Meta Global AI Developer Hackathon submission** (Meta + Cerebral Valley, Oct 26 – Nov 4, 2026).
+> **Track:** Indie Developer · **Category:** Build For Your World.
 > Self-hosted security agent (runs locally or in Docker): own LangGraph + LangChain harness
 > with Muse Spark as the hosted API brain. Repo-agnostic (GitHub, GitLab, any git URL,
-> local). Dashboard with Owner-managed accounts plus Google and Microsoft SSO.
+> local).
 >
-> **Demo video (≤ 3:00):** TODO — add public watch link (YouTube/Loom, no login required)
+> **Demo video (≤ 3:00):** ([Scurita DEMO](https://www.youtube.com/watch?v=IkJMa8_Lq8o))
 
 ## What existed before vs. built during the event
 
@@ -35,6 +36,8 @@ keyword retrieval, parked runs) when no key is configured.
 There are two ways to run the project from this repo. Both need no accounts, no SSO
 registration, and no API keys except the Meta Model API key below (and both boot keyless —
 see notes).
+
+> **Note:** Running with Docker (Option 2) will guarantee full functionality.
 
 ### Option 1 — Local, no Docker
 
@@ -134,14 +137,6 @@ No browser/OS voices, no text-to-speech, no third-party LLM APIs. Non-model thir
   Chat Completions + native tool calls only), SQLite (local default) or Postgres (Docker),
   Jinja + HTMX dashboard.
 
-## Recorded outputs / sample runs
-
-- `sample-policy.md` and `sample-policy-strict.md` (repo root): sample repo security policies to
-  upload and exercise the policy RAG + guardrail flow end to end.
-- `security-agent-probe` prints a pass/fail gate per configured model (auth, chat, tool-call
-  round-trip) — pasteable run evidence without needing repo credentials.
-- In-app evidence: every scan run keeps findings, verdicts, proposals, approvals, and audit
-  entries in the dashboard, with JSON/CSV report export and scheduled digests.
 
 ---
 

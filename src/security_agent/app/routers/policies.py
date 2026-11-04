@@ -33,6 +33,12 @@ def _back_to(scope: str, repo_id: int | None) -> str:
     return "/policies"
 
 
+def _redirect_back(scope: str, repo_id: int | None, next: str, notice: str) -> RedirectResponse:
+    if next == "/policies":
+        return _redirect("/policies", notice)
+    return _redirect(_back_to(scope, repo_id), notice)
+
+
 def _tasks_form(tasks: list[str]) -> list[str] | None:
     picked = [t for t in tasks if t in POLICY_TASKS]
     return picked or None
@@ -57,17 +63,59 @@ def _match_form(package: str, advisory: str, ecosystem: str, max_severity: str) 
 
 
 def _page_context(request: Request, user: User, *, notice: str = "") -> dict:
+    from types import SimpleNamespace
+
+    from security_agent.control.repos import list_repos
     from security_agent.policy.rules import list_rules
     from security_agent.policy.service import list_documents
 
-    docs = list_documents(scope="platform")
-    rules = [r for r in list_rules() if r.scope == "platform"]
+    all_rules = list_rules()
+    rules = [r for r in all_rules if r.scope == "platform"]
+    repo_rules = [r for r in all_rules if r.scope == "repo"]
+    all_docs = list_documents()
+    docs = [d for d in all_docs if d.scope == "platform"]
+    repo_docs = [d for d in all_docs if d.scope == "repo"]
+    repos = list_repos()
+    repo_by_id = {r.id: r for r in repos}
+    repo_groups: list[dict] = []
+    for repo in repos:
+        pending = [r for r in repo_rules if r.repo_id == repo.id and r.status == "pending"]
+        confirmed = [r for r in repo_rules if r.repo_id == repo.id and r.status == "confirmed"]
+        rdocs = [d for d in repo_docs if d.repo_id == repo.id]
+        if pending or confirmed or rdocs:
+            repo_groups.append(
+                {
+                    "repo": repo,
+                    "missing": False,
+                    "pending": pending,
+                    "confirmed": confirmed,
+                    "docs": rdocs,
+                }
+            )
+    orphan_ids = sorted(
+        {r.repo_id for r in repo_rules if r.repo_id is not None and r.repo_id not in repo_by_id}
+        | {d.repo_id for d in repo_docs if d.repo_id is not None and d.repo_id not in repo_by_id}
+    )
+    for rid in orphan_ids:
+        repo_groups.append(
+            {
+                "repo": SimpleNamespace(id=rid, name=f"Repo #{rid} (removed)"),
+                "missing": True,
+                "pending": [r for r in repo_rules if r.repo_id == rid and r.status == "pending"],
+                "confirmed": [
+                    r for r in repo_rules if r.repo_id == rid and r.status == "confirmed"
+                ],
+                "docs": [d for d in repo_docs if d.repo_id == rid],
+            }
+        )
     return {
         "docs": docs,
         "rules": rules,
         "pending": [r for r in rules if r.status == "pending"],
         "confirmed": [r for r in rules if r.status == "confirmed"],
         "disabled_rules": [r for r in rules if r.status == "disabled"],
+        "repo_groups": repo_groups,
+        "repo_pending_total": len([r for r in repo_rules if r.status == "pending"]),
         "effects": [e for e in EFFECTS if e != "allow"],
         "tasks": POLICY_TASKS,
         "notice": notice,
@@ -131,6 +179,7 @@ async def upload(
     title: str = Form(""),
     tasks: list[str] = Form(default=[]),
     file: UploadFile = File(...),
+    next: str = Form(""),
     manager: User = Depends(require_approver),
 ):
     from security_agent.config import get_settings
@@ -173,8 +222,8 @@ async def upload(
         )
     except (PolicyError, ValueError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    return _redirect(
-        _back_to(scope, rid), f"Policy {doc.title!r} ingested; draft guardrails when ready."
+    return _redirect_back(
+        scope, rid, next, f"Policy {doc.title!r} ingested; draft guardrails when ready."
     )
 
 
@@ -185,6 +234,7 @@ def editor(
     title: str = Form(...),
     text: str = Form(...),
     tasks: list[str] = Form(default=[]),
+    next: str = Form(""),
     manager: User = Depends(require_approver),
 ):
     from security_agent.policy.service import PolicyError, create_document
@@ -202,7 +252,7 @@ def editor(
         )
     except (PolicyError, ValueError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    return _redirect(_back_to(scope, rid), f"Policy {doc.title!r} saved.")
+    return _redirect_back(scope, rid, next, f"Policy {doc.title!r} saved.")
 
 
 @router.post("/policies/docs/{doc_key}/edit", dependencies=[Depends(require_csrf)])
@@ -211,6 +261,7 @@ def edit_doc(
     title: str = Form(""),
     text: str = Form(""),
     tasks: list[str] = Form(default=[]),
+    next: str = Form(""),
     manager: User = Depends(require_approver),
 ):
     from security_agent.policy.service import PolicyError, get_document, update_document
@@ -230,11 +281,13 @@ def edit_doc(
         )
     except (PolicyError, ValueError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    return _redirect(_back_to(doc.scope, doc.repo_id), "Policy updated (new version).")
+    return _redirect_back(doc.scope, doc.repo_id, next, "Policy updated (new version).")
 
 
 @router.post("/policies/docs/{doc_key}/disable", dependencies=[Depends(require_csrf)])
-def disable_doc(doc_key: str, _manager: User = Depends(require_approver)):
+def disable_doc(
+    doc_key: str, next: str = Form(""), _manager: User = Depends(require_approver)
+):
     from security_agent.policy.service import PolicyError, get_document, set_document_status
 
     doc = get_document(doc_key)
@@ -244,11 +297,13 @@ def disable_doc(doc_key: str, _manager: User = Depends(require_approver)):
         set_document_status(doc_key, disabled=True)
     except PolicyError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    return _redirect(_back_to(doc.scope, doc.repo_id), "Policy disabled.")
+    return _redirect_back(doc.scope, doc.repo_id, next, "Policy disabled.")
 
 
 @router.post("/policies/docs/{doc_key}/enable", dependencies=[Depends(require_csrf)])
-def enable_doc(doc_key: str, _manager: User = Depends(require_approver)):
+def enable_doc(
+    doc_key: str, next: str = Form(""), _manager: User = Depends(require_approver)
+):
     from security_agent.policy.service import PolicyError, get_document, set_document_status
 
     doc = get_document(doc_key)
@@ -258,11 +313,11 @@ def enable_doc(doc_key: str, _manager: User = Depends(require_approver)):
         set_document_status(doc_key, disabled=False)
     except PolicyError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    return _redirect(_back_to(doc.scope, doc.repo_id), "Policy enabled.")
+    return _redirect_back(doc.scope, doc.repo_id, next, "Policy enabled.")
 
 
 @router.post("/policies/docs/{doc_key}/extract", dependencies=[Depends(require_csrf)])
-def extract(doc_key: str, _manager: User = Depends(require_approver)):
+def extract(doc_key: str, next: str = Form(""), _manager: User = Depends(require_approver)):
     from security_agent.policy.extract import draft_candidates
     from security_agent.policy.service import PolicyError, get_document
 
@@ -279,7 +334,7 @@ def extract(doc_key: str, _manager: User = Depends(require_approver)):
         notice = "The model returned unusable output; retry extraction."
     else:
         notice = "Extraction unavailable (model unreachable); retry later."
-    return _redirect(_back_to(doc.scope, doc.repo_id), notice)
+    return _redirect_back(doc.scope, doc.repo_id, next, notice)
 
 
 @router.post("/policies/rules", dependencies=[Depends(require_csrf)])
@@ -295,6 +350,7 @@ def create_rule(
     tasks: list[str] = Form(default=[]),
     overridable: str = Form(""),
     override_of: str = Form(""),
+    next: str = Form(""),
     manager: User = Depends(require_approver),
 ):
     from security_agent.policy.rules import create_rule as _create
@@ -315,11 +371,11 @@ def create_rule(
         )
     except (PolicyError, ValueError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    return _redirect(_back_to(scope, rid), f"Rule {rule.rule_key} drafted; confirm to enforce.")
+    return _redirect_back(scope, rid, next, f"Rule {rule.rule_key} drafted; confirm to enforce.")
 
 
 @router.post("/policies/rules/{rule_key}/confirm", dependencies=[Depends(require_csrf)])
-def confirm(rule_key: str, manager: User = Depends(require_approver)):
+def confirm(rule_key: str, next: str = Form(""), manager: User = Depends(require_approver)):
     from security_agent.policy.rules import confirm_rule, get_rule
     from security_agent.policy.service import PolicyError
 
@@ -330,11 +386,13 @@ def confirm(rule_key: str, manager: User = Depends(require_approver)):
         confirm_rule(rule_key, user_id=manager.id)
     except (PolicyError, ValueError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    return _redirect(_back_to(rule.scope, rule.repo_id), f"Rule {rule_key} confirmed.")
+    return _redirect_back(rule.scope, rule.repo_id, next, f"Rule {rule_key} confirmed.")
 
 
 @router.post("/policies/rules/{rule_key}/disable", dependencies=[Depends(require_csrf)])
-def disable_rule(rule_key: str, _manager: User = Depends(require_approver)):
+def disable_rule(
+    rule_key: str, next: str = Form(""), _manager: User = Depends(require_approver)
+):
     from security_agent.policy.rules import get_rule, set_rule_status
     from security_agent.policy.service import PolicyError
 
@@ -345,11 +403,13 @@ def disable_rule(rule_key: str, _manager: User = Depends(require_approver)):
         set_rule_status(rule_key, disabled=True)
     except PolicyError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    return _redirect(_back_to(rule.scope, rule.repo_id), f"Rule {rule_key} disabled.")
+    return _redirect_back(rule.scope, rule.repo_id, next, f"Rule {rule_key} disabled.")
 
 
 @router.post("/policies/rules/{rule_key}/enable", dependencies=[Depends(require_csrf)])
-def enable_rule(rule_key: str, _manager: User = Depends(require_approver)):
+def enable_rule(
+    rule_key: str, next: str = Form(""), _manager: User = Depends(require_approver)
+):
     from security_agent.policy.rules import get_rule, set_rule_status
     from security_agent.policy.service import PolicyError
 
@@ -360,7 +420,7 @@ def enable_rule(rule_key: str, _manager: User = Depends(require_approver)):
         set_rule_status(rule_key, disabled=False)
     except PolicyError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    return _redirect(_back_to(rule.scope, rule.repo_id), f"Rule {rule_key} enabled.")
+    return _redirect_back(rule.scope, rule.repo_id, next, f"Rule {rule_key} enabled.")
 
 
 @router.post("/policies/rules/{rule_key}/edit", dependencies=[Depends(require_csrf)])
@@ -375,6 +435,7 @@ def edit_rule(
     tasks: list[str] = Form(default=[]),
     overridable: str = Form(""),
     full_match: str = Form(""),
+    next: str = Form(""),
     manager: User = Depends(require_approver),
 ):
     from security_agent.policy.rules import edit_rule as _edit
@@ -418,7 +479,7 @@ def edit_rule(
         )
     except (PolicyError, ValueError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-    return _redirect(_back_to(rule.scope, rule.repo_id), f"Rule {rule_key} updated.")
+    return _redirect_back(rule.scope, rule.repo_id, next, f"Rule {rule_key} updated.")
 
 
 @router.get("/policies/preview", response_class=HTMLResponse)

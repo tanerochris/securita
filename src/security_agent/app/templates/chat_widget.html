@@ -8,7 +8,7 @@
       <span class="chat-brand" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10z"/><path d="m9 11.5 2 2 4-4.5"/></svg></span>
       <span class="chat-title">Security Chat</span>
       <span class="chat-head-btns">
-        <form hx-post="/chat/new" hx-target="#widget-thread" hx-swap="innerHTML" hx-on::after-request="chatShowThread()">
+        <form hx-post="/chat/new" hx-target="#widget-thread" hx-swap="innerHTML" hx-on::after-request="chatShowThread(); chatResetSendButton(this)">
           <input type="hidden" name="csrf" value="{{ csrf }}">
           <button type="submit" class="chat-icon-btn" data-chat-new title="New chat" aria-label="New chat"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
         </form>
