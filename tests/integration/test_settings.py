@@ -51,7 +51,6 @@ def test_add_route_test_and_delete_webhook_channel():
             "/settings/channels",
             data={
                 "csrf": csrf,
-                "kind": "webhook",
                 "name": "ops-hook",
                 "url": "https://hooks.example.com/secret-path",
                 "signing_key": "k",
@@ -93,10 +92,41 @@ def test_add_channel_rejects_bad_shapes():
     try:
         resp = client.post(
             "/settings/channels",
-            data={"csrf": _csrf(), "kind": "email", "name": "bad", "host": ""},
+            data={"csrf": _csrf(), "name": "bad", "host": ""},
         )
         assert resp.status_code == 400
         assert {c["id"] for c in list_channels()} == before
+    finally:
+        _cleanup(before)
+
+
+def test_add_channel_infers_kind_and_rejects_ambiguous():
+    _login_as(Role.OWNER)
+    before = {c["id"] for c in list_channels()}
+    try:
+        resp = client.post(
+            "/settings/channels",
+            data={
+                "csrf": _csrf(),
+                "name": "team-slack",
+                "url": "https://hooks.slack.com/services/T/B/X",
+            },
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200 and "created" in resp.text
+        added = [c for c in list_channels() if c["id"] not in before]
+        assert len(added) == 1 and added[0]["kind"] == "slack"
+        resp = client.post(
+            "/settings/channels",
+            data={
+                "csrf": _csrf(),
+                "name": "mixed",
+                "host": "smtp.example.com",
+                "url": "https://hooks.example.com/x",
+            },
+        )
+        assert resp.status_code == 400
+        assert len([c for c in list_channels() if c["id"] not in before]) == 1
     finally:
         _cleanup(before)
 

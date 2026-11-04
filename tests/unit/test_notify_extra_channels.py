@@ -231,14 +231,14 @@ def test_settings_add_new_kinds_and_hide_secrets():
         ):
             resp = client.post(
                 "/settings/channels",
-                data={"csrf": _csrf(), "kind": kind, "name": f"ui-{kind}", **data},
+                data={"csrf": _csrf(), "name": f"ui-{kind}", **data},
                 follow_redirects=True,
             )
             assert resp.status_code == 200 and "created" in resp.text, resp.text[:500]
         page = client.get("/settings").text
-        assert 'value="discord"' in page
-        assert 'value="telegram"' in page
-        assert 'value="pagerduty"' in page
+        assert ">discord<" in page
+        assert ">telegram<" in page
+        assert ">pagerduty<" in page
         assert "abcdefgh-token" not in page
         assert TG_TOKEN not in page
         assert PD_KEY not in page
@@ -249,7 +249,6 @@ def test_settings_add_new_kinds_and_hide_secrets():
             "/settings/channels",
             data={
                 "csrf": _csrf(),
-                "kind": "telegram",
                 "name": "bad",
                 "bot_token": "x",
                 "chat_id": TG_CHAT,

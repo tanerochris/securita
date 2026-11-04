@@ -102,9 +102,53 @@ def _validate_email(config: dict) -> dict:
 
 
 _DISCORD_HOSTS = {"discord.com", "discordapp.com", "ptb.discord.com", "canary.discord.com"}
+_SLACK_HOSTS = {"hooks.slack.com"}
 _TG_TOKEN_RE = re.compile(r"^\d+:[A-Za-z0-9_-]{20,}$")
 _TG_CHAT_RE = re.compile(r"^(-?\d{1,20}|@[A-Za-z0-9_]{1,63})$")
 _PD_KEY_RE = re.compile(r"^[0-9a-fA-F]{32}$")
+
+
+def _classify_hook_url(url: str) -> str:
+    """slack/discord/webhook from the webhook URL host (validation later)."""
+    try:
+        parts = urlparse(url.strip())
+    except ValueError:
+        return "webhook"
+    host = (parts.hostname or "").lower()
+    if host in _DISCORD_HOSTS and parts.path.startswith("/api/webhooks/"):
+        return "discord"
+    if host in _SLACK_HOSTS:
+        return "slack"
+    return "webhook"
+
+
+def infer_channel_kind(fields: dict[str, str]) -> str:
+    """Infer an Add-channel kind from the one filled section.
+
+    email: host/username/password/from_addr/to (port is prefilled, never
+    counts). Hook kinds share url and split by host (see
+    _classify_hook_url). telegram: bot_token/chat_id. pagerduty:
+    routing_key. Zero or several filled sections raise ValueError;
+    shape validation stays with the per-kind validators.
+    """
+    filled = {key for key, value in fields.items() if str(value or "").strip()}
+    sections = set()
+    if filled & {"host", "username", "password", "from_addr", "to"}:
+        sections.add("email")
+    if "url" in filled:
+        sections.add("hook")
+    if filled & {"bot_token", "chat_id"}:
+        sections.add("telegram")
+    if "routing_key" in filled:
+        sections.add("pagerduty")
+    if not sections:
+        raise ValueError("Fill in one section below to add a channel.")
+    if len(sections) > 1:
+        raise ValueError("Fill exactly one section per channel.")
+    only = next(iter(sections))
+    if only != "hook":
+        return only
+    return _classify_hook_url(str(fields.get("url", "")))
 
 
 def _validate_hook_secret(channel_kind: ChannelKind, secret: dict) -> tuple[dict, dict]:

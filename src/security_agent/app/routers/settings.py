@@ -129,7 +129,6 @@ def _redirect(notice: str) -> RedirectResponse:
 
 @router.post("/channels", dependencies=[Depends(require_csrf)])
 def add_channel(
-    kind: str = Form(...),
     name: str = Form(...),
     host: str = Form(""),
     port: str = Form("587"),
@@ -144,9 +143,23 @@ def add_channel(
     routing_key: str = Form(""),
     _owner: User = Depends(require_owner),
 ):
-    from security_agent.notify import create_channel
+    """Owner-only channel create; kind is inferred from the filled section."""
+    from security_agent.notify import create_channel, infer_channel_kind
 
+    fields = {
+        "host": host,
+        "username": username,
+        "from_addr": from_addr,
+        "to": to,
+        "password": password,
+        "url": url,
+        "signing_key": signing_key,
+        "bot_token": bot_token,
+        "chat_id": chat_id,
+        "routing_key": routing_key,
+    }
     try:
+        kind = infer_channel_kind(fields)
         if kind == "email":
             config = {
                 "host": host,

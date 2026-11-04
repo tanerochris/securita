@@ -274,7 +274,7 @@ def test_maintainer_sees_resume_but_not_channel_forms():
 
         resp = client.post(
             "/settings/channels",
-            data={"csrf": _csrf(), "kind": "webhook", "name": "nope", "url": "https://x.example/"},
+            data={"csrf": _csrf(), "name": "nope", "url": "https://x.example/"},
         )
         assert resp.status_code == 403
 

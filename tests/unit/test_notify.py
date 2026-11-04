@@ -204,3 +204,29 @@ def test_secret_alert_fans_out_critical():
             assert fake.call_count == 1
     finally:
         delete_channel(ch.id)
+
+
+def test_infer_kind_from_filled_section():
+    from security_agent.notify import infer_channel_kind
+
+    assert infer_channel_kind({"host": "smtp.example.com"}) == "email"
+    assert infer_channel_kind({"url": "https://hooks.example.com/x"}) == "webhook"
+    assert infer_channel_kind({"url": "https://discord.com/api/webhooks/1/t"}) == "discord"
+    assert infer_channel_kind({"url": "https://hooks.slack.com/x"}) == "slack"
+    assert infer_channel_kind({"bot_token": "1:abc", "chat_id": "42"}) == "telegram"
+    assert infer_channel_kind({"routing_key": "k"}) == "pagerduty"
+
+
+def test_infer_kind_rejects_empty_and_ambiguous():
+    from security_agent.notify import infer_channel_kind
+
+    with pytest.raises(ValueError, match="one section"):
+        infer_channel_kind({})
+    with pytest.raises(ValueError, match="one section"):
+        infer_channel_kind({"port": "587"})  # prefilled default is not a section
+    with pytest.raises(ValueError, match="one section"):
+        infer_channel_kind({"signing_key": "k"})  # optional hook field alone
+    with pytest.raises(ValueError, match="exactly one"):
+        infer_channel_kind({"host": "smtp.example.com", "url": "https://x.example/"})
+    with pytest.raises(ValueError, match="exactly one"):
+        infer_channel_kind({"chat_id": "42", "routing_key": "k"})

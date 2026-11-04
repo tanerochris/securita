@@ -20,7 +20,7 @@
   {% if channels %}
   <div class="brand-table mt-3 overflow-x-auto rounded-xl">
     <table data-grid data-per-page="50">
-      <thead><tr><th>ID</th><th>Kind</th><th>Name</th><th>Target</th><th>Enabled</th><th>Secret</th>{% if is_owner %}<th>Actions</th><th>Edit</th>{% endif %}</tr></thead>
+      <thead><tr><th>ID</th><th>Kind</th><th>Name</th><th>Target</th><th>Enabled</th><th>Secret</th>{% if is_owner %}<th>Actions</th>{% endif %}</tr></thead>
       <tbody>
       {% for c in channels %}
         <tr>
@@ -32,37 +32,12 @@
           <td>{% if c.has_secret %}<span class="inline-flex rounded-full bg-brand-navy px-2 py-0.5 text-xs font-bold text-white">set</span>{% else %}<span class="text-slate-400">—</span>{% endif %}</td>
           {% if is_owner %}
           <td>
-            <span class="flex flex-wrap gap-1.5">
+            <span class="flex flex-wrap items-center gap-1.5">
               <form method="post" action="/settings/channels/{{ c.id }}/test"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Test-send</button></form>
               <form method="post" action="/settings/channels/{{ c.id }}/toggle"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-secondary" type="submit">{{ "Disable" if c.enabled else "Enable" }}</button></form>
               <form method="post" action="/settings/channels/{{ c.id }}/delete" data-confirm data-confirm-title="Delete this channel?" data-confirm-message="The notification channel and its stored credential will be permanently deleted. Severity routes pointing at it stop delivering." data-confirm-action="Delete channel"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-danger" type="submit">Delete</button></form>
+              <a class="text-[13px] font-bold text-brand-primary hover:text-brand-deep" href="#edit-channel-{{ c.id }}" data-edit-panel="edit-channel-{{ c.id }}">Edit</a>
             </span>
-          </td>
-          <td>
-            <details>
-              <summary class="cursor-pointer text-[13px] font-bold text-brand-primary hover:text-brand-deep">Edit channel</summary>
-              <form class="mt-2.5 grid min-w-[240px] grid-cols-1 gap-2.5" method="post" action="/settings/channels/{{ c.id }}">
-                <input type="hidden" name="csrf" value="{{ csrf }}">
-                <label class="text-xs font-bold text-slate-600">Name<input class="mt-1 block w-full" name="name" value="{{ c.name }}" required></label>
-                {% if c.kind == "email" %}
-                <label class="text-xs font-bold text-slate-600">Host<input class="mt-1 block w-full" name="host" value="{{ c.config.host }}"></label>
-                <label class="text-xs font-bold text-slate-600">Port<input class="mt-1 block w-full" name="port" value="{{ c.config.port }}"></label>
-                <label class="text-xs font-bold text-slate-600">Username<input class="mt-1 block w-full" name="username" value="{{ c.config.username }}"></label>
-                <label class="text-xs font-bold text-slate-600">Password<input class="mt-1 block w-full" name="password" type="password" placeholder="(unchanged)"></label>
-                <label class="text-xs font-bold text-slate-600">From<input class="mt-1 block w-full" name="from_addr" value="{{ c.config.from_addr }}"></label>
-                <label class="text-xs font-bold text-slate-600">To<input class="mt-1 block w-full" name="to" value="{{ c.config.to|join(", ") }}"></label>
-                {% elif c.kind == "telegram" %}
-                <label class="text-xs font-bold text-slate-600">Chat ID<input class="mt-1 block w-full" name="chat_id" value="{{ c.config.chat_id }}"></label>
-                <label class="text-xs font-bold text-slate-600">Bot token<input class="mt-1 block w-full" name="bot_token" type="password" placeholder="(unchanged)"></label>
-                {% elif c.kind == "pagerduty" %}
-                <label class="text-xs font-bold text-slate-600">Routing key<input class="mt-1 block w-full" name="routing_key" type="password" placeholder="(unchanged)"></label>
-                {% else %}
-                <label class="text-xs font-bold text-slate-600">Webhook URL<input class="mt-1 block w-full" name="url" placeholder="(unchanged)"></label>
-                <label class="text-xs font-bold text-slate-600">Signing key<input class="mt-1 block w-full" name="signing_key" placeholder="(unchanged)"></label>
-                {% endif %}
-                <span><button type="submit">Update</button></span>
-              </form>
-            </details>
           </td>
           {% endif %}
         </tr>
@@ -70,6 +45,37 @@
       </tbody>
     </table>
   </div>
+  {% if is_owner %}
+  {% for c in channels %}
+  <div id="edit-channel-{{ c.id }}" class="edit-panel mt-3 rounded-xl bg-white p-5 shadow-card">
+    <div class="flex flex-wrap items-center gap-3">
+      <h3 class="text-base font-bold text-brand-navy">Edit channel #{{ c.id }} ({{ c.kind }})</h3>
+      <a class="ml-auto text-[13px] font-bold text-brand-primary hover:text-brand-deep" href="#channels-heading" data-edit-close>Close</a>
+    </div>
+    <form class="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-3" method="post" action="/settings/channels/{{ c.id }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="text-xs font-bold text-slate-600">Name<input class="mt-1 block w-full" name="name" value="{{ c.name }}" required></label>
+      {% if c.kind == "email" %}
+      <label class="text-xs font-bold text-slate-600">Host<input class="mt-1 block w-full" name="host" value="{{ c.config.host }}"></label>
+      <label class="text-xs font-bold text-slate-600">Port<input class="mt-1 block w-full" name="port" value="{{ c.config.port }}"></label>
+      <label class="text-xs font-bold text-slate-600">Username<input class="mt-1 block w-full" name="username" value="{{ c.config.username }}"></label>
+      <label class="text-xs font-bold text-slate-600">Password<input class="mt-1 block w-full" name="password" type="password" placeholder="(unchanged)"></label>
+      <label class="text-xs font-bold text-slate-600">From<input class="mt-1 block w-full" name="from_addr" value="{{ c.config.from_addr }}"></label>
+      <label class="text-xs font-bold text-slate-600">To<input class="mt-1 block w-full" name="to" value="{{ c.config.to|join(", ") }}"></label>
+      {% elif c.kind == "telegram" %}
+      <label class="text-xs font-bold text-slate-600">Chat ID<input class="mt-1 block w-full" name="chat_id" value="{{ c.config.chat_id }}"></label>
+      <label class="text-xs font-bold text-slate-600">Bot token<input class="mt-1 block w-full" name="bot_token" type="password" placeholder="(unchanged)"></label>
+      {% elif c.kind == "pagerduty" %}
+      <label class="text-xs font-bold text-slate-600">Routing key<input class="mt-1 block w-full" name="routing_key" type="password" placeholder="(unchanged)"></label>
+      {% else %}
+      <label class="text-xs font-bold text-slate-600">Webhook URL<input class="mt-1 block w-full" name="url" placeholder="(unchanged)"></label>
+      <label class="text-xs font-bold text-slate-600">Signing key<input class="mt-1 block w-full" name="signing_key" placeholder="(unchanged)"></label>
+      {% endif %}
+      <span class="md:col-span-3"><button type="submit">Update</button></span>
+    </form>
+  </div>
+  {% endfor %}
+  {% endif %}
   {% else %}
   <div class="mt-3 rounded-xl bg-white px-5 py-6 text-center shadow-card">
     <p class="text-sm font-bold text-brand-navy">No channels yet</p>
@@ -84,16 +90,11 @@
   <p class="mt-1 text-sm text-slate-600">Secrets are encrypted on save and never displayed again.</p>
   <form class="mt-4" method="post" action="/settings/channels">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-      <div>
-        <label class="text-sm font-bold text-brand-deep" for="chKind">Kind</label>
-        <select class="mt-1.5 w-full" id="chKind" name="kind"><option value="email">email</option><option value="slack">slack</option><option value="discord">discord</option><option value="telegram">telegram</option><option value="pagerduty">pagerduty</option><option value="webhook">webhook</option></select>
-      </div>
-      <div>
-        <label class="text-sm font-bold text-brand-deep" for="chName">Name</label>
-        <input class="mt-1.5 w-full" id="chName" name="name" required autocomplete="off" placeholder="e.g. team-email">
-      </div>
+    <div class="max-w-md">
+      <label class="text-sm font-bold text-brand-deep" for="chName">Name</label>
+      <input class="mt-1.5 w-full" id="chName" name="name" required autocomplete="off" placeholder="e.g. team-email">
     </div>
+    <p class="mt-3 text-[13px] text-slate-600">Fill exactly one section below — the channel kind is inferred from it.</p>
     <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
       <fieldset class="rounded-xl bg-[#F6FBFF] p-4 ring-1 ring-brand-mist">
         <legend class="px-1 text-sm font-bold text-brand-deep">Email (SMTP)</legend>
