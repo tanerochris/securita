@@ -1,7 +1,11 @@
 """Typed settings via pydantic-settings (env-driven, no secrets in code)."""
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: Zero-config local database (also the `.env.example` default). A blank
+#: `DATABASE_URL` behaves as unset (this default), not as "".
+SQLITE_DEFAULT_URL = "sqlite:///./agent.db"
 
 
 class Settings(BaseSettings):
@@ -14,9 +18,17 @@ class Settings(BaseSettings):
     # config. Docker Compose keeps Postgres via .env (DATABASE_URL
     # there overrides this); local Postgres just needs the URL set.
     database_url: str = Field(
-        default="sqlite:///./agent.db",
+        default=SQLITE_DEFAULT_URL,
         alias="DATABASE_URL",
     )
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _blank_database_url_means_default(cls, value):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return SQLITE_DEFAULT_URL
+        return value
+
     master_key: str = Field(default="", alias="MASTER_KEY")
     model_base_url: str = Field(default="https://api.meta.ai/v1", alias="MODEL_BASE_URL")
     model_api_key: str = Field(default="", alias="MODEL_API_KEY")

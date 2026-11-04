@@ -13,6 +13,13 @@ def test_database_url_defaults_to_sqlite():
     assert default.startswith("sqlite:///")
 
 
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_database_url_means_sqlite_default(monkeypatch, blank):
+    """A blank `DATABASE_URL` must behave as unset (sqlite default)."""
+    monkeypatch.setenv("DATABASE_URL", blank)
+    assert Settings().database_url == Settings.model_fields["database_url"].default
+
+
 def test_checks_cover_core_and_optional():
     checks = {c.name: c for c in doctor.run_checks()}
     for name in ("python", "database", "git", "ripgrep", "osv-scanner", "betterleaks"):
