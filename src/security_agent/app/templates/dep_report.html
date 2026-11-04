@@ -27,6 +27,11 @@
 {% if report.status == 'pending' and can_decide %}
 <form method="post" action="/repos/{{ repo.id }}/dependencies/report/{{ report.id }}/decide">
   <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="mt-6 flex flex-wrap items-center gap-2.5" role="group" aria-label="Bulk select updates">
+    <button type="button" class="btn-secondary" id="selAll">Select all</button>
+    <button type="button" class="btn-secondary" id="selNone">Deselect all</button>
+    <span id="selCount" class="text-[13px] font-semibold text-slate-600" aria-live="polite"></span>
+  </div>
 {% endif %}
 {% for s in report.sections %}
 <section id="{{ s.anchor or ('pkg-' ~ loop.index) }}" class="mt-6 rounded-xl bg-white p-5 shadow-card" aria-labelledby="pkg-{{ loop.index }}-heading">
@@ -83,5 +88,24 @@
   <p class="mt-2 font-mono text-[13px] text-slate-600">Excluded: {{ report.excluded_keys|join(", ") }}</p>
   {% endif %}
 </section>
+{% endif %}
+{% if report.status == 'pending' and can_decide %}
+<script type="text/javascript">
+(function () {
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('input[name="included"]'));
+  var count = document.getElementById("selCount");
+  function paint() {
+    if (!count) { return; }
+    var n = boxes.filter(function (b) { return b.checked; }).length;
+    count.textContent = n + " of " + boxes.length + " selected";
+  }
+  boxes.forEach(function (b) { b.addEventListener("change", paint); });
+  var all = document.getElementById("selAll");
+  if (all) { all.addEventListener("click", function () { boxes.forEach(function (b) { b.checked = true; }); paint(); }); }
+  var none = document.getElementById("selNone");
+  if (none) { none.addEventListener("click", function () { boxes.forEach(function (b) { b.checked = false; }); paint(); }); }
+  paint();
+})();
+</script>
 {% endif %}
 {% endblock %}

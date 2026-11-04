@@ -122,6 +122,8 @@ def test_check_now_enqueues_and_report_decides_with_exclusion():
     assert resp.status_code == 200
     assert "summary text" in resp.text and "index.js:1" in resp.text
     assert "UNDETERMINED" in resp.text
+    assert 'id="selAll"' in resp.text and 'id="selNone"' in resp.text
+    assert 'id="selCount"' in resp.text
     resp = client.post(
         f"/repos/{repo_id}/dependencies/report/{report_id}/decide",
         data={"csrf": csrf, "included": ["npm|package.json|left-pad"], "reason": "ship"},
