@@ -84,22 +84,8 @@
 
   <section aria-labelledby="cost-heading" id="runCost">
     <h2 id="cost-heading" class="text-lg">Model cost</h2>
-    <div class="brand-table mt-3 overflow-x-auto rounded-xl" id="costWrap"{% if not usage %} style="display:none"{% endif %}>
-      <table data-grid data-per-page="10" id="costTable">
-        <thead><tr><th>Task</th><th>Tokens</th><th>USD</th></tr></thead>
-        <tbody id="costBody">
-        {% for u in usage %}
-          <tr>
-            <td class="font-semibold text-brand-navy">{{ u.task }}{% if u.estimated %} (est.){% endif %}</td>
-            <td>{{ u.total_tokens|compact("—", "grouped") }}</td>
-            <td>{{ u.cost_usd|usd }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
     <p class="mt-3 rounded-xl bg-white px-5 py-4 text-[13px] text-slate-600 shadow-card" id="costEmpty"{% if usage %} style="display:none"{% endif %}>This run spent no model calls.</p>
-    <p class="mt-2 text-[13px] text-slate-600" id="costTotal"{% if not usage %} style="display:none"{% endif %}>Total: {{ usage_tokens|compact }} tokens · {{ usage_cost|usd }}.</p>
+    <p class="mt-3 rounded-xl bg-white px-5 py-4 text-sm shadow-card" id="costTotal"{% if not usage %} style="display:none"{% endif %}><span class="font-bold text-brand-navy">{{ usage_tokens|compact }} tokens</span> <span class="text-slate-600">· {{ usage_cost|usd }}</span></p>
   </section>
 </div>
 {% endblock %}

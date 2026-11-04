@@ -82,6 +82,13 @@
   main button.btn-danger { background: var(--color-navy); border-color: var(--color-navy); box-shadow: 0 1px 3px rgba(8,47,73,0.35); }
   main button.btn-danger:hover { background: #041E33; border-color: #041E33; }
   .brand-table { box-shadow: 0 1px 3px rgba(8,47,73,0.08); }
+  /* Row edit panels are server-rendered below their table; without JS
+     only the :target panel shows. With JS the panel moves into a
+     colspan row directly below its row (.edit-open) instead. */
+  .edit-panel { display: none; }
+  .edit-panel:target { display: block; }
+  .edit-panel.edit-open { display: block; }
+  .edit-row > td { padding-top: 0; padding-left: 0; padding-right: 0; }
   .nav-link { display: flex; align-items: center; gap: 0.65rem; padding: 0.6rem 0.8rem; border-radius: 8px; font-size: 0.875rem; font-weight: 500; color: #E0F2FE; cursor: pointer; transition: background-color 200ms ease, color 200ms ease; }
   .nav-link:hover { background: rgba(125,211,252,0.16); color: #FFFFFF; }
   .nav-link-active { background: rgba(125,211,252,0.24); color: #FFFFFF; font-weight: 700; }
@@ -408,10 +415,10 @@
       reveal();
       if (log) { log.textContent += text; }
     }
-    /* Findings + cost tables: refresh from the summary JSON endpoint
+    /* Findings + cost totals: refresh from the summary JSON endpoint
        on every stream event so rows land without a page reload. Rows
-       go through textContent only; each grid is destroyed and re-booted
-       around a rebuild so search/sort/pagination keep working. */
+       go through textContent only; the findings grid is destroyed and
+       re-booted around a rebuild so search/sort/pagination keep working. */
     var summaryBox = document.getElementById("runFindings");
     var summarySig = null;
     var summaryBusy = false;
@@ -475,49 +482,28 @@
     }
     function renderCost(data) {
       var list = data.usage || [];
-      var tableWrap = document.getElementById("costWrap");
       var empty = document.getElementById("costEmpty");
       var total = document.getElementById("costTotal");
-      if (!tableWrap) { return; }
-      var table = document.getElementById("costTable");
-      if (table && table._datatable) {
-        try { table._datatable.destroy(); } catch (e) { /* re-boot below anyway */ }
-        table = document.getElementById("costTable");
-      }
+      if (!total) { return; }
       if (!list.length) {
-        tableWrap.style.display = "none";
         if (empty) { empty.style.display = ""; }
-        if (total) { total.style.display = "none"; }
+        total.style.display = "none";
         return;
       }
-      var body = table ? table.querySelector("tbody") : null;
-      if (!table || !body) { return; }
-      while (body.firstChild) { body.removeChild(body.firstChild); }
-      list.forEach(function (u) {
-        var tr = document.createElement("tr");
-        var task = document.createElement("td");
-        task.className = "font-semibold text-brand-navy";
-        task.textContent = (u.task || "") + (u.estimated ? " (est.)" : "");
-        var tokens = document.createElement("td");
-        tokens.appendChild(numSpan(u.total_tokens || 0, "grouped"));
-        var usd = document.createElement("td");
-        usd.textContent = formatUsd(u.cost_usd);
-        tr.appendChild(task);
-        tr.appendChild(tokens);
-        tr.appendChild(usd);
-        body.appendChild(tr);
-      });
-      tableWrap.style.display = "";
+      while (total.firstChild) { total.removeChild(total.firstChild); }
+      var tokens = document.createElement("span");
+      tokens.className = "font-bold text-brand-navy";
+      tokens.appendChild(numSpan(data.usage_tokens || 0, "compact"));
+      tokens.appendChild(document.createTextNode(" tokens"));
+      var cost = document.createElement("span");
+      cost.className = "text-slate-600";
+      cost.textContent = " · " + formatUsd(data.usage_cost);
+      total.appendChild(tokens);
+      total.appendChild(document.createTextNode(" "));
+      total.appendChild(cost);
+      total.style.display = "";
       if (empty) { empty.style.display = "none"; }
-      if (total) {
-        while (total.firstChild) { total.removeChild(total.firstChild); }
-        total.appendChild(document.createTextNode("Total: "));
-        total.appendChild(numSpan(data.usage_tokens || 0, "compact"));
-        total.appendChild(document.createTextNode(" tokens · " + formatUsd(data.usage_cost) + "."));
-        total.style.display = "";
-      }
-      if (typeof window.__renderNums === "function") { window.__renderNums(tableWrap.parentElement); }
-      if (typeof window.__bootGridTable === "function") { window.__bootGridTable(table); }
+      if (typeof window.__renderNums === "function") { window.__renderNums(total); }
     }
     function renderSummary(data) {
       renderFindings(data);
@@ -598,6 +584,144 @@
     } else {
       bootTables();
     }
+  })();
+</script>
+<script type="text/javascript">
+  (function () {
+    /* Row editors open directly below their table row. The panel node
+       moves into a colspan row under the clicked row; closing moves it
+       back below the table. The grid rebuilds rows on sort/search/page,
+       so any interaction outside the editor removes the extra row first
+       (capture phase, before the grid library handles the event), and
+       the grid never sees it. Without JS the plain :target fallback
+       below the table still works. */
+    var openPanel = null;
+    var openRow = null;
+    var homeParent = null;
+    var homeNext = null;
+    function closeEditor() {
+      if (!openPanel || !openRow) { return; }
+      openPanel.classList.remove("edit-open");
+      if (homeParent) { homeParent.insertBefore(openPanel, homeNext); }
+      if (openRow.parentNode) { openRow.parentNode.removeChild(openRow); }
+      openPanel = null;
+      openRow = null;
+      homeParent = null;
+      homeNext = null;
+    }
+    document.addEventListener("click", function (event) {
+      var t = event.target;
+      if (!t || !t.closest) { return; }
+      if (t.closest("a[data-edit-close]")) {
+        event.preventDefault();
+        closeEditor();
+        return;
+      }
+      var edit = t.closest("a[data-edit-panel]");
+      if (!edit) { return; }
+      event.preventDefault();
+      var panel = document.getElementById(edit.getAttribute("data-edit-panel"));
+      if (!panel) { return; }
+      if (openPanel === panel) {
+        closeEditor();
+        return;
+      }
+      closeEditor();
+      var tr = edit.closest("tr");
+      var table = edit.closest("table");
+      if (!tr || !tr.parentNode || !table) { return; }
+      var head = table.querySelector("thead tr");
+      var row = document.createElement("tr");
+      row.className = "edit-row";
+      var td = document.createElement("td");
+      td.setAttribute("colspan", String(head ? head.children.length : 6));
+      homeParent = panel.parentNode;
+      homeNext = panel.nextSibling;
+      td.appendChild(panel);
+      row.appendChild(td);
+      tr.parentNode.insertBefore(row, tr.nextSibling);
+      panel.classList.add("edit-open");
+      openPanel = panel;
+      openRow = row;
+    });
+    ["click", "input", "change"].forEach(function (type) {
+      document.addEventListener(type, function (event) {
+        if (!openPanel) { return; }
+        var t = event.target;
+        if (t && t.closest && (t.closest(".edit-row") || t.closest("a[data-edit-panel]") || t.closest("a[data-edit-close]"))) { return; }
+        closeEditor();
+      }, true);
+    });
+    window.__closeRowEditor = closeEditor;
+  })();
+</script>
+<script type="text/javascript">
+  (function () {
+    /* Inline policy actions (confirm / disable / enable): POST via fetch
+       and swap the refreshed sections in place instead of reloading the
+       page, so the action never flashes or loses scroll. The POST
+       follows its usual redirect, so the fresh page HTML carries the
+       notice banner; grids are destroyed before the swap and re-booted
+       after, all inside one task so the browser paints once. Any
+       failure falls back to a normal submit. */
+    var SECTION_HEADS = ["pending-heading", "confirmed-heading", "docs-heading"];
+    function sectionFor(doc, headId) {
+      var h = doc.getElementById(headId);
+      return h && h.closest ? h.closest("section") : null;
+    }
+    function destroyGrids(root) {
+      root.querySelectorAll("table[data-grid]").forEach(function (t) {
+        if (t._datatable) {
+          try { t._datatable.destroy(); } catch (e) { /* swapped out anyway */ }
+          t._datatable = null;
+        }
+      });
+    }
+    function bootGrids(root) {
+      if (typeof window.__bootGridTable !== "function") { return; }
+      root.querySelectorAll("table[data-grid]").forEach(function (t) {
+        window.__bootGridTable(t);
+      });
+    }
+    document.addEventListener("submit", function (event) {
+      var form = event.target;
+      if (!(form instanceof HTMLFormElement) || !form.hasAttribute("data-inline")) { return; }
+      event.preventDefault();
+      if (typeof window.__closeRowEditor === "function") { window.__closeRowEditor(); }
+      fetch(form.action, { method: "POST", body: new FormData(form) }).then(function (resp) {
+        if (!resp.ok) { throw new Error("inline action failed"); }
+        return resp.text();
+      }).then(function (html) {
+        var fresh = new DOMParser().parseFromString(html, "text/html");
+        var swapped = false;
+        SECTION_HEADS.forEach(function (headId) {
+          var oldSec = sectionFor(document, headId);
+          var newSec = sectionFor(fresh, headId);
+          if (!oldSec || !newSec || !oldSec.parentNode) { return; }
+          destroyGrids(oldSec);
+          oldSec.parentNode.replaceChild(document.importNode(newSec, true), oldSec);
+          swapped = true;
+        });
+        if (!swapped) { throw new Error("no sections swapped"); }
+        var oldNotice = document.querySelector("main [role=\"status\"]");
+        var newNotice = fresh.querySelector("main [role=\"status\"]");
+        if (newNotice) {
+          var adopted = document.importNode(newNotice, true);
+          if (oldNotice && oldNotice.parentNode) {
+            oldNotice.parentNode.replaceChild(adopted, oldNotice);
+          } else {
+            var main = document.querySelector("main");
+            var firstSec = main ? main.querySelector("section") : null;
+            if (main && firstSec) { main.insertBefore(adopted, firstSec); }
+          }
+        } else if (oldNotice && oldNotice.parentNode) {
+          oldNotice.parentNode.removeChild(oldNotice);
+        }
+        bootGrids(document);
+      }).catch(function () {
+        HTMLFormElement.prototype.submit.call(form);
+      });
+    });
   })();
 </script>
 <script type="text/javascript">

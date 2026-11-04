@@ -208,6 +208,144 @@ def test_repo_policies_page_and_readme_toggle():
     assert resp.status_code == 200 and "Repo doc" in resp.text
 
 
+def test_edit_panels_render_below_tables():
+    _login_as(Role.OWNER)
+    stamp = datetime.now(UTC).timestamp()
+    client.post(
+        "/policies/editor",
+        data={
+            "csrf": _csrf(),
+            "scope": "platform",
+            "title": f"Panel doc {stamp}",
+            "text": "Panel guidance words.",
+        },
+    )
+    client.post(
+        "/policies/rules",
+        data={
+            "csrf": _csrf(),
+            "scope": "platform",
+            "effect": "block",
+            "package": "panel-lib",
+            "reason": f"panel rule {stamp}",
+        },
+    )
+    doc = [d for d in list_documents(scope="platform") if d.title == f"Panel doc {stamp}"][-1]
+    rule = [r for r in list_rules() if r.reason == f"panel rule {stamp}"][-1]
+    resp = client.get("/policies")
+    assert resp.status_code == 200
+    for anchor in (
+        f'href="#edit-rule-{rule.rule_key}"',
+        f'id="edit-rule-{rule.rule_key}"',
+        f'data-edit-panel="edit-rule-{rule.rule_key}"',
+        f'href="#edit-doc-{doc.doc_key}"',
+        f'id="edit-doc-{doc.doc_key}"',
+        f'data-edit-panel="edit-doc-{doc.doc_key}"',
+        "data-edit-close",
+    ):
+        assert anchor in resp.text
+    assert "<details" not in resp.text
+    repo_id = _repo(f"panel-repo-{stamp}")
+    client.post(
+        "/policies/editor",
+        data={
+            "csrf": _csrf(),
+            "scope": "repo",
+            "repo_id": str(repo_id),
+            "title": f"Repo panel {stamp}",
+            "text": "Repo panel words.",
+        },
+    )
+    client.post(
+        "/policies/rules",
+        data={
+            "csrf": _csrf(),
+            "scope": "repo",
+            "repo_id": str(repo_id),
+            "effect": "silence",
+            "package": "panel-repo-lib",
+            "reason": f"repo panel rule {stamp}",
+        },
+    )
+    rdoc = [
+        d
+        for d in list_documents(scope="repo", repo_id=repo_id)
+        if d.title == f"Repo panel {stamp}"
+    ][-1]
+    rrule = [r for r in list_rules() if r.reason == f"repo panel rule {stamp}"][-1]
+    resp = client.get(f"/repos/{repo_id}/policies")
+    assert resp.status_code == 200
+    for anchor in (
+        f'href="#edit-rule-{rrule.rule_key}"',
+        f'id="edit-rule-{rrule.rule_key}"',
+        f'data-edit-panel="edit-rule-{rrule.rule_key}"',
+        f'href="#edit-doc-{rdoc.doc_key}"',
+        f'id="edit-doc-{rdoc.doc_key}"',
+        f'data-edit-panel="edit-doc-{rdoc.doc_key}"',
+        "data-edit-close",
+    ):
+        assert anchor in resp.text
+    assert "<details" not in resp.text
+
+
+def _form_tag(html: str, action: str) -> str:
+    match = re.search(rf'<form [^>]*action="{re.escape(action)}"[^>]*>', html)
+    assert match, f"no form posts to {action}"
+    return match.group(0)
+
+
+def test_inline_actions_marked_and_redirect_to_fresh_sections():
+    _login_as(Role.OWNER)
+    stamp = datetime.now(UTC).timestamp()
+    client.post(
+        "/policies/editor",
+        data={
+            "csrf": _csrf(),
+            "scope": "platform",
+            "title": f"Inline doc {stamp}",
+            "text": "Inline guidance words.",
+        },
+    )
+    client.post(
+        "/policies/rules",
+        data={
+            "csrf": _csrf(),
+            "scope": "platform",
+            "effect": "block",
+            "package": "inline-lib",
+            "reason": f"inline rule {stamp}",
+        },
+    )
+    doc = [d for d in list_documents(scope="platform") if d.title == f"Inline doc {stamp}"][-1]
+    rule = [r for r in list_rules() if r.reason == f"inline rule {stamp}"][-1]
+    page = client.get("/policies").text
+    for action in (
+        f"/policies/rules/{rule.rule_key}/confirm",
+        f"/policies/rules/{rule.rule_key}/disable",
+        f"/policies/docs/{doc.doc_key}/disable",
+    ):
+        assert "data-inline" in _form_tag(page, action), action
+    for action in (
+        f"/policies/rules/{rule.rule_key}/edit",
+        f"/policies/docs/{doc.doc_key}/edit",
+        f"/policies/docs/{doc.doc_key}/extract",
+        "/policies/upload",
+        "/policies/editor",
+        "/policies/rules",
+    ):
+        assert "data-inline" not in _form_tag(page, action), action
+    # The fetch flow follows the redirect and swaps its sections in.
+    resp = client.post(
+        f"/policies/rules/{rule.rule_key}/confirm",
+        data={"csrf": _csrf()},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303 and "notice=" in resp.headers["location"]
+    fresh = client.get(resp.headers["location"])
+    assert fresh.status_code == 200 and "confirmed" in fresh.text
+    assert rule.rule_key in fresh.text.split("Enforced rules")[1]
+
+
 def test_preview_shows_matching_chunks():
     _login_as(Role.OWNER)
     client.post(

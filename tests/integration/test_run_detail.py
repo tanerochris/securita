@@ -64,7 +64,8 @@ def test_run_detail_shows_worker_log_findings_and_cost():
     assert "failed: clone timed out after 300s" in resp.text
     assert "worker-1" in resp.text
     assert "left-pad" in resp.text
-    assert "adapt" in resp.text and "120" in resp.text
+    assert "120" in resp.text and "$0.50" in resp.text
+    assert 'id="costTable"' not in resp.text and "adapt" not in resp.text
     assert "reachable of" in resp.text
     assert 'id="copyLog"' in resp.text and 'id="workerLog"' in resp.text
 
