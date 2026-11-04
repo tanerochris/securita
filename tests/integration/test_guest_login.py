@@ -23,6 +23,7 @@ def test_login_page_offers_guest():
     assert resp.status_code == 200
     assert "/guest-login" in resp.text
     assert "guest" in resp.text.lower()
+    assert resp.text.index("/guest-login") < resp.text.index('action="/login"')
 
 
 def test_guest_login_creates_owner_session():
