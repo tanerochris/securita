@@ -40,6 +40,8 @@ dependencies = [
 security-agent-probe = "security_agent.brain.probe:main"
 security-agent-backup = "security_agent.ops.backup:backup_main"
 security-agent-restore = "security_agent.ops.backup:restore_main"
+security-agent-doctor = "security_agent.ops.doctor:doctor_main"
+security-agent-install-tools = "security_agent.ops.install_tools:install_tools_main"
 
 [dependency-groups]
 dev = [

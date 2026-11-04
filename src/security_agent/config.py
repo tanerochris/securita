@@ -10,8 +10,11 @@ class Settings(BaseSettings):
     app_env: str = Field(default="dev", alias="APP_ENV")
     app_host: str = Field(default="0.0.0.0", alias="APP_HOST")  # noqa: S104 container bind
     app_port: int = Field(default=8000, alias="APP_PORT")
+    # SQLite by default: a stock local checkout boots with zero
+    # config. Docker Compose keeps Postgres via .env (DATABASE_URL
+    # there overrides this); local Postgres just needs the URL set.
     database_url: str = Field(
-        default="postgresql+psycopg://agent:agent@db:5432/agent",
+        default="sqlite:///./agent.db",
         alias="DATABASE_URL",
     )
     master_key: str = Field(default="", alias="MASTER_KEY")
