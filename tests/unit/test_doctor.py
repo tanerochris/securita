@@ -24,7 +24,7 @@ def test_checks_cover_core_and_optional():
     checks = {c.name: c for c in doctor.run_checks()}
     for name in ("python", "database", "git", "ripgrep", "osv-scanner", "betterleaks"):
         assert checks[name].required is True
-    assert checks["model-api-key"].required is False
+    assert checks["brain"].required is False
     assert checks["node"].required is False
 
 

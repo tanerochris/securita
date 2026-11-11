@@ -14,8 +14,6 @@ def _settings(**overrides):
         "embedding_api_key": "k",
         "embedding_model": "emb-test",
         "embedding_timeout_seconds": 5.0,
-        "model_base_url": "https://model.example.com/v1",
-        "model_api_key": "m",
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -152,8 +150,7 @@ def test_ollama_provider_posts_to_ollama_base():
 
 
 def test_missing_credentials_degrades_to_none():
-    settings = _settings(embedding_base_url="", embedding_api_key="", model_api_key="")
-    settings.model_base_url = ""
+    settings = _settings(embedding_base_url="", embedding_api_key="")
     with mock.patch.object(emb_mod, "get_settings", return_value=settings):
         with mock.patch("httpx.post") as post:
             assert emb_mod.embed_texts(["hello"]) is None

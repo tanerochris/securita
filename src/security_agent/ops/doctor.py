@@ -51,16 +51,27 @@ def _database() -> Check:
 
 
 def _model_key() -> Check:
-    from security_agent.config import get_settings
+    from security_agent.control.brain_settings import brain_status
 
-    if get_settings().model_api_key:
-        return Check("model-api-key", True, "set", False, "")
+    status = brain_status(migrate=False)
+    if status.get("configured"):
+        entry = status.get("label") or status.get("strategy") or "brain"
+        model = status.get("model") or ""
+        if status.get("needs_key") and not status.get("has_key"):
+            return Check(
+                "brain",
+                False,
+                f"{entry} selected but no API key stored",
+                False,
+                "paste the provider key in Settings → Brain",
+            )
+        return Check("brain", True, f"{entry} / {model}".rstrip(" /"), False, "")
     return Check(
-        "model-api-key",
+        "brain",
         False,
-        "unset: AI-written patches/summaries fall back to templates",
+        "unset: AI steps fail loud and runs park until configured",
         False,
-        "set MODEL_API_KEY in .env for full AI function",
+        "pick a provider + model in Settings → Brain",
     )
 
 

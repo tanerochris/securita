@@ -205,6 +205,7 @@ def _render_pr_text(
     repo_id: int | None = None,
 ) -> tuple[str, str]:
     """Model-written PR copy with the deterministic template as fallback."""
+    from security_agent.brain import BrainError
     from security_agent.brain.pr_text import generate_pr_text
     from security_agent.control.cost import CostCapExceeded
 
@@ -222,7 +223,7 @@ def _render_pr_text(
             template=template,
             repo_id=repo_id,
         )
-    except CostCapExceeded:
+    except (CostCapExceeded, BrainError):
         raise
     except Exception:  # noqa: BLE001 - PR copy never breaks delivery
         generated = None

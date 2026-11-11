@@ -221,6 +221,15 @@ def execute_once(*, max_runs: int = 100) -> dict:
                     parked += 1
                     log.warning("run %d parked: cost cap", run.id)
                     continue
+                from security_agent.brain import BrainError
+
+                if isinstance(exc, BrainError):
+                    from security_agent.control.cost import park_run_for_brain
+
+                    park_run_for_brain(run.id, str(exc))
+                    parked += 1
+                    log.warning("run %d parked: brain error: %s", run.id, exc)
+                    continue
                 failed += 1
                 _fail_run(run.id, f"pipeline crashed: {exc}", WORKER_ID)
                 log.exception("run %d crashed", run.id)

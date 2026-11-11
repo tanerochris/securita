@@ -215,6 +215,7 @@ _probe_cache: bool | None = None
 def select_adapt():
     """Graph wiring: model adapt only when enabled AND the probe passes."""
     global _probe_cache
+    from security_agent.brain import BrainError
     from security_agent.config import get_settings
     from security_agent.worker.patch import null_adapt
 
@@ -227,6 +228,9 @@ def select_adapt():
             from security_agent.brain.probe import run_probe
 
             _probe_cache = bool(run_probe())
+        except BrainError as exc:
+            log.warning("model adapt disabled, staying on null adapt: %s", exc)
+            _probe_cache = False
         except Exception as exc:  # noqa: BLE001 - probe failure keeps the null hook
             log.warning("model adapt probe failed, staying on null adapt: %s", exc)
             _probe_cache = False

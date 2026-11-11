@@ -4,10 +4,11 @@
 module asks the chat model for a short human-readable summary first, so
 a 33-advisory bump reads as one line instead of a pasted CVE list.
 
-Fail-closed: a disabled flag, a missing API key, model errors,
-unparseable output, and validation failures all return None and the
-caller keeps the template. Only CostCapExceeded propagates (the run is
-parked and must abort, never silently keep delivering).
+Fail-loud on provider errors, template otherwise: a disabled flag,
+unparseable output, and validation failures return None and the caller
+keeps the template. A missing or broken brain raises BrainError (the
+run parks, never silently keeps delivering); CostCapExceeded propagates
+as before.
 """
 
 import json
@@ -114,17 +115,17 @@ def generate_pr_text(
 ) -> tuple[str, str] | None:
     """Model-written (title, body); None when the template should win.
 
-    An explicitly injected model skips the enabled/key gate so tests can
-    drive this deterministically; the live path needs both the flag and
-    a configured API key, otherwise no request is attempted.
+    An explicitly injected model skips the enabled gate so tests can
+    drive this deterministically; the live path needs the flag,
+    otherwise no request is attempted. Provider failures raise
+    BrainError past the template (loud: the run parks).
     """
-    from security_agent.brain import get_chat_model, tracked_invoke
+    from security_agent.brain import BrainError, get_chat_model, tracked_invoke
     from security_agent.config import get_settings
     from security_agent.control.cost import CostCapExceeded
 
     if model is None:
-        settings = get_settings()
-        if not settings.pr_text_model_enabled or not settings.model_api_key:
+        if not get_settings().pr_text_model_enabled:
             return None
         bound = get_chat_model()
     else:
@@ -161,7 +162,7 @@ def generate_pr_text(
     try:
         result = tracked_invoke(bound, prompt, task="pr-text")
         parsed = _parse_pr_text(str(getattr(result, "content", "") or ""), dashboard, template)
-    except CostCapExceeded:
+    except (CostCapExceeded, BrainError):
         raise
     except Exception as exc:  # noqa: BLE001 - PR copy never breaks delivery
         log.warning("PR copy generation failed for %s: %s", package, exc)

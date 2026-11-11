@@ -19,7 +19,13 @@ router = APIRouter(prefix="/settings")
 
 def _page(request: Request, *, notice: str = "", is_owner: bool = True):
     from security_agent.app.main import templates
+    from security_agent.brain.providers import (
+        NATIVE_PRICE_TABLE_VERSION,
+        STRATEGIES,
+        STRATEGY_ORDER,
+    )
     from security_agent.config import get_settings
+    from security_agent.control.brain_settings import brain_status, list_models
     from security_agent.control.cost import (
         chat_spend_today,
         effective_chat_cap,
@@ -43,10 +49,16 @@ def _page(request: Request, *, notice: str = "", is_owner: bool = True):
         for sev in SEVERITIES
     }
     settings = get_settings()
+    brain = brain_status()
+    brain_models = list_models(brain["strategy"], base_url=brain["base_url"], refresh=False)
     return templates.TemplateResponse(
         request,
         "settings.html",
         {
+            "brain": brain,
+            "brain_models": brain_models,
+            "brain_strategies": [STRATEGIES[k] for k in STRATEGY_ORDER],
+            "native_price_version": NATIVE_PRICE_TABLE_VERSION,
             "channels": channels,
             "routes": routes,
             "route_ids": route_ids,
@@ -373,3 +385,70 @@ def save_dep_notify(enabled: str = Form(""), _owner: User = Depends(require_owne
     except (ValueError, PermissionError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     return _redirect("Dependency notification delivery saved.")
+
+
+@router.get("/brain/models")
+def brain_models(strategy: str = "", base_url: str = "", _user: User = Depends(require_approver)):
+    """Model options for one strategy (live, cached, or curated + free text)."""
+    from security_agent.control.brain_settings import list_models
+
+    return JSONResponse(list_models(strategy, base_url=base_url))
+
+
+@router.post("/brain", dependencies=[Depends(require_csrf)])
+def save_brain(
+    strategy: str = Form(...),
+    model: str = Form(...),
+    base_url: str = Form(""),
+    price_override: str = Form(""),
+    api_key: str = Form(""),
+    owner: User = Depends(require_owner),
+):
+    """Owner-only brain save. Stores as-is (D5): no probe on save — use Test."""
+    from security_agent.control.brain_settings import save_brain_config
+
+    try:
+        cfg = save_brain_config(
+            strategy=strategy,
+            model=model,
+            base_url=base_url,
+            price_override=price_override,
+            api_key=api_key,
+            user=owner,
+        )
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    label = cfg["strategy"] or "unconfigured"
+    return _redirect(f"Brain saved: {label} / {cfg['model'] or '—'}.")
+
+
+@router.post("/brain/key/delete", dependencies=[Depends(require_csrf)])
+def delete_brain_key(strategy: str = Form(...), owner: User = Depends(require_owner)):
+    from security_agent.control.brain_settings import delete_brain_key as _delete
+
+    try:
+        removed = _delete(strategy, owner)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    if not removed:
+        return _redirect(f"No stored key for {strategy or 'that strategy'}.")
+    return _redirect(f"Brain key for {strategy} deleted.")
+
+
+@router.post("/brain/test", dependencies=[Depends(require_csrf)])
+def test_brain(_owner: User = Depends(require_owner)):
+    """Manual probe against the saved brain config (D5: the only check)."""
+    from security_agent.brain import BrainError
+    from security_agent.brain.probe import run_probe
+    from security_agent.control.brain_settings import brain_status
+
+    try:
+        ok = run_probe()
+    except BrainError as exc:
+        return _redirect(f"Brain test failed: {exc}")
+    except Exception as exc:  # noqa: BLE001 - test outcome is the notice
+        return _redirect(f"Brain test failed: {exc}")
+    status = brain_status()
+    if not ok:
+        return _redirect("Brain test failed: no native tool call came back.")
+    return _redirect(f"Brain test passed: {status['label']} / {status['model']}.")

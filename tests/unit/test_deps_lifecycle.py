@@ -36,10 +36,10 @@ def _reset_deps_budget():
 
 
 def _usd(tokens: int) -> float:
-    """Budget dollars for a token count at the configured model price."""
-    from security_agent.config import get_settings
+    """Budget dollars for a token count at the resolved model price."""
+    from security_agent.control.brain_settings import price_per_token_usd
 
-    return tokens * max(0.0, get_settings().model_price_per_mtok_usd) / 1_000_000
+    return tokens * price_per_token_usd()
 
 
 def _repo():

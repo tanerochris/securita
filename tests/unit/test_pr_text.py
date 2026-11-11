@@ -117,8 +117,10 @@ def test_generate_rejects_bad_output():
         )
 
 
-def test_generate_model_error_returns_none():
-    assert (
+def test_generate_model_error_raises_brain_error():
+    from security_agent.brain import BrainError
+
+    with pytest.raises(BrainError, match="Brain call failed"):
         generate_pr_text(
             "p",
             "1",
@@ -131,8 +133,6 @@ def test_generate_model_error_returns_none():
             "d",
             model=_FakeModel(exc=RuntimeError("provider down")),
         )
-        is None
-    )
 
 
 def test_generate_cost_cap_propagates():
@@ -154,8 +154,8 @@ def test_generate_cost_cap_propagates():
             )
 
 
-def test_generate_live_path_needs_flag_and_key():
-    settings = mock.Mock(pr_text_model_enabled=False, model_api_key="k")
+def test_generate_live_path_needs_flag():
+    settings = mock.Mock(pr_text_model_enabled=False)
     with (
         mock.patch("security_agent.config.get_settings", return_value=settings),
         mock.patch("security_agent.brain.get_chat_model") as fake,

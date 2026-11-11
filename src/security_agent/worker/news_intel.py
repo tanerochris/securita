@@ -99,12 +99,16 @@ def classify_item(item_id: int, *, model=None) -> str | None:
         with session_scope() as db:
             item = db.get(NewsItem, item_id)
             excerpt = item.body_excerpt if item is not None else None
+    from security_agent.brain import BrainError
+
     try:
         bound = model if model is not None else get_chat_model()
         result = tracked_invoke(
             bound, _classify_prompt(title, summary, excerpt), task="news-classify"
         )
         parsed = _parse_verdict(str(getattr(result, "content", "") or ""))
+    except BrainError:
+        raise
     except Exception as exc:  # noqa: BLE001 - classification never breaks the poll
         log.warning("news classification failed for item %d: %s", item_id, exc)
         return None
@@ -134,12 +138,17 @@ def classify_pending(limit: int | None = None) -> dict[str, int]:
                 select(NewsItem.id).where(NewsItem.verdict.is_(None)).order_by(NewsItem.id)
             ).all()[:limit]
         ]
+    from security_agent.brain import BrainError
+
     counts = {"classified": 0, "major": 0}
     for item_id in ids:
         try:
             verdict = classify_item(item_id)
         except CostCapExceeded:
             log.warning("news classification stopped: cost cap reached")
+            break
+        except BrainError as exc:
+            log.warning("news classification stopped: %s", exc)
             break
         if verdict is None:
             continue
@@ -354,6 +363,8 @@ def assess_relevance(item_id: int, repo_id: int, *, model=None) -> str | None:
         )
     except Exception as exc:  # noqa: BLE001 - guidance never breaks relevance
         log.warning("policy guidance for relevance failed: %s", exc)
+    from security_agent.brain import BrainError
+
     try:
         bound = model if model is not None else get_chat_model()
         prompt = _relevance_prompt(profile["summary"], story)
@@ -361,6 +372,8 @@ def assess_relevance(item_id: int, repo_id: int, *, model=None) -> str | None:
             prompt += f"\n\n{policy_block}"
         result = tracked_invoke(bound, prompt, task="news-relevance")
         parsed = _parse_relevance(str(getattr(result, "content", "") or ""))
+    except BrainError:
+        raise
     except Exception as exc:  # noqa: BLE001 - relevance never breaks the poll
         log.warning("news relevance failed for item %d repo %d: %s", item_id, repo_id, exc)
         return None
@@ -416,6 +429,7 @@ def assess_pending_relevance(limit: int | None = None, *, model=None) -> dict[st
     pairs += [p for p in linked_pairs if p not in set(pairs)]
     pairs = [p for p in pairs if p not in assessed][:limit]
     counts = {"assessed": 0, "direct": 0, "platform": 0, "irrelevant": 0}
+    from security_agent.brain import BrainError
     from security_agent.control.cost import CostCapExceeded
 
     for item_id, repo_id in pairs:
@@ -423,6 +437,9 @@ def assess_pending_relevance(limit: int | None = None, *, model=None) -> dict[st
             relevance = assess_relevance(item_id, repo_id, model=model)
         except CostCapExceeded:
             log.warning("news relevance stopped: cost cap reached")
+            break
+        except BrainError as exc:
+            log.warning("news relevance stopped: %s", exc)
             break
         if relevance is None:
             continue
@@ -828,6 +845,7 @@ def process_news() -> dict[str, int]:
     minting degrades per CVE, so a bad model day or an OSV outage
     still leaves the poll stored and the feed serving.
     """
+    from security_agent.brain import BrainError
     from security_agent.control.cost import CostCapExceeded
 
     settings = get_settings()
@@ -854,6 +872,8 @@ def process_news() -> dict[str, int]:
             log.info("news relevance assessed: %s", relevance_counts)
     except CostCapExceeded:
         log.warning("news intel stopped: cost cap reached")
+    except BrainError as exc:
+        log.warning("news intel stopped: %s", exc)
     except Exception as exc:  # noqa: BLE001 - intel never breaks the poll
         log.warning("news intel failed: %s", exc)
     return counts

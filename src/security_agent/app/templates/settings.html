@@ -12,6 +12,133 @@
 </div>
 {% endif %}
 
+<section class="mt-6" aria-labelledby="brain-heading">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 id="brain-heading" class="text-lg">Brain provider</h2>
+    {% if brain.configured %}
+    <span class="inline-flex rounded-full bg-brand-primary px-2 py-0.5 text-xs font-bold text-white">{{ brain.label }} · {{ brain.model }}</span>
+    {% else %}
+    <span class="inline-flex rounded-full bg-white px-2 py-0.5 text-xs font-bold text-slate-500 shadow-[inset_0_0_0_1px_#E0F2FE]">not configured</span>
+    {% endif %}
+  </div>
+  <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+    <div class="rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">Ledger price</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">{% if brain.price_per_mtok_usd is not none %}${{ "%.2f"|format(brain.price_per_mtok_usd) }}<span class="text-sm font-semibold text-slate-500"> / MTok</span>{% else %}default<span class="text-sm font-semibold text-slate-500"> $2.00 / MTok</span>{% endif %}</p></div>
+    <div class="rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">API key</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">{% if brain.has_key %}stored{% elif brain.needs_key %}missing{% else %}not needed{% endif %}</p></div>
+    <div class="rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">Model list</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy" id="brainListSource">{% if brain_models.source == "live" %}live{% elif brain_models.source == "curated" %}curated{% elif brain_models.source == "cache" %}cached{% else %}free text{% endif %}</p></div>
+  </div>
+  {% if not brain.configured %}
+  <div class="mt-3 rounded-xl bg-white px-5 py-4 text-[13px] text-slate-600 shadow-card">No brain provider yet. AI steps fail loud and runs park until one is configured{% if is_owner %} below{% endif %}; non-AI scanning is unaffected.</div>
+  {% endif %}
+  {% if is_owner %}
+  <form class="mt-3 rounded-xl bg-white p-5 shadow-card" method="post" action="/settings/brain">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <div>
+        <label class="text-sm font-bold text-brand-deep" for="brainStrategy">Strategy</label>
+        <select class="mt-1.5 w-full" id="brainStrategy" name="strategy">
+          {% for s in brain_strategies %}
+          <option value="{{ s.key }}" data-blurb="{{ s.blurb }}" data-needs-key="{{ 1 if s.needs_key else 0 }}" data-default-base="{{ s.default_base_url }}"{% if s.key == brain.strategy %} selected{% endif %}>{{ s.label }}</option>
+          {% endfor %}
+        </select>
+        <p class="mt-1 text-[13px] text-slate-600" id="brainBlurb"></p>
+      </div>
+      <div>
+        <label class="text-sm font-bold text-brand-deep" for="brainModel">Model</label>
+        <input class="mt-1.5 w-full" id="brainModel" name="model" list="brainModelList" value="{{ brain.model }}" required autocomplete="off" placeholder="e.g. anthropic/claude-sonnet-4-5">
+        <datalist id="brainModelList">
+          {% for m in brain_models.models %}
+          <option value="{{ m.id }}">{% if m.price is not none %}${{ "%.2f"|format(m.price) }}/MTok{% endif %}</option>
+          {% endfor %}
+        </datalist>
+        <p class="mt-1 text-[13px] text-slate-600" id="brainListNote">{% if brain_models.source == "cache" %}Last live list {{ brain_models.fetched_at }}. {% elif brain_models.source == "curated" %}Curated list, native prices v{{ native_price_version }}. {% endif %}Any id saves — the list never blocks a save.</p>
+      </div>
+      <div>
+        <label class="text-sm font-bold text-brand-deep" for="brainBaseUrl">Base URL <span class="font-semibold text-slate-500" id="brainBaseHint"></span></label>
+        <input class="mt-1.5 w-full" id="brainBaseUrl" name="base_url" value="{{ brain.base_url }}" autocomplete="off">
+      </div>
+      <div>
+        <label class="text-sm font-bold text-brand-deep" for="brainKey">API key <span class="font-semibold text-slate-500">(blank keeps the stored key)</span></label>
+        <input class="mt-1.5 w-full" id="brainKey" name="api_key" type="password" autocomplete="new-password" placeholder="{% if brain.has_key %}•••••••• (stored){% else %}paste once — never shown again{% endif %}">
+      </div>
+      <div>
+        <label class="text-sm font-bold text-brand-deep" for="brainPrice">Price override, USD / MTok <span class="font-semibold text-slate-500">(blank = list/native price)</span></label>
+        <input class="mt-1.5 w-full" id="brainPrice" name="price_override" value="{{ brain.price_override if brain.price_override is not none else '' }}" autocomplete="off" placeholder="e.g. 0 for free local models">
+      </div>
+    </div>
+    <p class="mt-3 text-[13px] text-slate-600">Saves as-is — nothing is probed on save. Keys are encrypted on save and never displayed again.</p>
+    <div class="mt-3 flex flex-wrap gap-2.5">
+      <button type="submit">Save brain</button>
+    </div>
+  </form>
+  <div class="mt-3 flex flex-wrap gap-2.5">
+    <form method="post" action="/settings/brain/test"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-secondary" type="submit">Test saved brain</button></form>
+    {% if brain.has_key %}
+    <form method="post" action="/settings/brain/key/delete" data-confirm data-confirm-title="Delete this brain key?" data-confirm-message="The stored provider key will be permanently deleted. AI steps will fail until a new key is pasted." data-confirm-action="Delete key"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="strategy" value="{{ brain.strategy }}"><button class="btn-danger" type="submit">Delete key</button></form>
+    {% endif %}
+  </div>
+  <script>
+  (function () {
+    var sel = document.getElementById("brainStrategy");
+    var blurb = document.getElementById("brainBlurb");
+    var base = document.getElementById("brainBaseUrl");
+    var baseHint = document.getElementById("brainBaseHint");
+    var list = document.getElementById("brainModelList");
+    var note = document.getElementById("brainListNote");
+    var source = document.getElementById("brainListSource");
+    if (!sel) return;
+    function current() { return sel.options[sel.selectedIndex]; }
+    function paint() {
+      var opt = current();
+      blurb.textContent = opt.getAttribute("data-blurb") || "";
+      var def = opt.getAttribute("data-default-base") || "";
+      base.placeholder = def || "(not used by this strategy)";
+      var custom = sel.value === "custom";
+      baseHint.textContent = custom ? "(required)" : (def ? "(blank = default)" : "");
+      base.required = custom;
+      var key = document.getElementById("brainKey");
+      if (key) key.required = false;
+    }
+    var timer = null;
+    function refresh() {
+      paint();
+      var url = "/settings/brain/models?strategy=" + encodeURIComponent(sel.value)
+        + "&base_url=" + encodeURIComponent(base.value || "");
+      fetch(url, {headers: {"Accept": "application/json"}}).then(function (r) {
+        return r.ok ? r.json() : null;
+      }).then(function (data) {
+        if (!data || !Array.isArray(data.models)) return;
+        list.innerHTML = "";
+        data.models.forEach(function (m) {
+          var o = document.createElement("option");
+          o.value = m.id;
+          o.textContent = (m.price === null || m.price === undefined)
+            ? "" : ("$" + Number(m.price).toFixed(2) + "/MTok");
+          list.appendChild(o);
+        });
+        var label = {live: "live", cache: "cached", curated: "curated", none: "free text"}[data.source] || "free text";
+        if (source) source.textContent = label;
+        var extra = "";
+        if (data.source === "cache" && data.fetched_at) extra = "Last live list " + data.fetched_at + ". ";
+        else if (data.source === "curated") extra = "Curated list. ";
+        else if (data.source === "none") extra = "No list available — type any id. ";
+        if (note) note.textContent = extra + "Any id saves — the list never blocks a save.";
+      }).catch(function () {});
+    }
+    sel.addEventListener("change", refresh);
+    base.addEventListener("input", function () {
+      if (sel.value !== "ollama" && sel.value !== "custom") return;
+      clearTimeout(timer);
+      timer = setTimeout(refresh, 600);
+    });
+    paint();
+    if (sel.value === "openrouter" || sel.value === "vercel" || sel.value === "ollama") {
+      refresh();  // page renders from cache; live list fills in async
+    }
+  })();
+  </script>
+  {% endif %}
+</section>
+
 <section class="mt-6" aria-labelledby="channels-heading">
   <div class="flex flex-wrap items-baseline gap-3">
     <h2 id="channels-heading" class="text-lg">Channels</h2>

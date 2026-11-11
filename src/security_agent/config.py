@@ -30,11 +30,9 @@ class Settings(BaseSettings):
         return value
 
     master_key: str = Field(default="", alias="MASTER_KEY")
-    model_base_url: str = Field(default="https://api.meta.ai/v1", alias="MODEL_BASE_URL")
-    model_api_key: str = Field(default="", alias="MODEL_API_KEY")
-    model_name: str = Field(default="muse-spark", alias="MODEL_NAME")
-    # Chat agent model override (task "chat"); empty falls back to MODEL_NAME.
-    model_chat_name: str = Field(default="", alias="MODEL_CHAT_NAME")
+    # Brain provider: configured in Settings → Brain (Owner-managed org
+    # keys), never env. Legacy MODEL_* env imports once on upgrade, then
+    # is ignored (see control/brain_settings.maybe_migrate_env).
     # Chat agent daily spend cap in USD (install-wide, Owner/Maintainer
     # adjustable from Settings; 0 disables the cap).
     chat_spend_cap_daily_usd: float = Field(default=5.0, alias="CHAT_SPEND_CAP_DAILY_USD")
@@ -89,9 +87,10 @@ class Settings(BaseSettings):
     # "local" (default) runs a small ONNX model in-process via fastembed
     # — no extra service. "ollama" talks to an Ollama server's
     # OpenAI-compatible /v1/embeddings (compose profile "ollama").
-    # "hosted" is any OpenAI-compatible API (empty base/key fall back to
-    # MODEL_*). "off" is keyword retrieval only. Vectors are optional:
-    # chunks without embeddings still serve, never a hard failure.
+    # "hosted" is any OpenAI-compatible API (set EMBEDDING_BASE_URL +
+    # EMBEDDING_API_KEY; the brain provider is separate). "off" is
+    # keyword retrieval only. Vectors are optional: chunks without
+    # embeddings still serve, never a hard failure.
     embedding_provider: str = Field(default="local", alias="EMBEDDING_PROVIDER")
     embedding_base_url: str = Field(default="", alias="EMBEDDING_BASE_URL")
     embedding_api_key: str = Field(default="", alias="EMBEDDING_API_KEY")
@@ -109,7 +108,7 @@ class Settings(BaseSettings):
     policy_readme_max_bytes: int = Field(default=200_000, alias="POLICY_README_MAX_BYTES")
     # H6 cost control (NFR-8 D4/D5): per-run spend cap + daily spend alerts.
     # RUN_SPEND_CAP_USD is the cap; legacy RUN_TOKEN_CAP (tokens) still
-    # converts at the model price when the USD var is unset.
+    # converts at the default model price when the USD var is unset.
     run_token_cap: int = Field(default=1_000_000, alias="RUN_TOKEN_CAP")
     run_spend_cap_usd: float | None = Field(default=None, alias="RUN_SPEND_CAP_USD")
     run_spend_warn_fraction: float = Field(
@@ -118,7 +117,8 @@ class Settings(BaseSettings):
     )
     spend_warn_daily_usd: float = Field(default=25.0, alias="SPEND_WARN_DAILY_USD")
     spend_critical_daily_usd: float = Field(default=100.0, alias="SPEND_CRITICAL_DAILY_USD")
-    model_price_per_mtok_usd: float = Field(default=2.0, alias="MODEL_PRICE_PER_MTOK_USD")
+    # Per-model ledger pricing lives in Settings → Brain (cached gateway
+    # prices, native table, operator override). No env price remains.
     # Overall AI budget: monthly spend cap in USD across every ledgered
     # model call (security pipeline, dependencies, embeddings, probe).
     # Alert-only: warn at 80%, exceeded at 100%, once per level per
@@ -139,13 +139,15 @@ class Settings(BaseSettings):
         """Default per-run cap in USD (0 disables the cap).
 
         RUN_SPEND_CAP_USD wins when set; otherwise the legacy
-        RUN_TOKEN_CAP converts at the current model price, so
-        pre-USD installs keep their tuned limit.
+        RUN_TOKEN_CAP converts at the default model price, so
+        pre-USD installs keep their tuned limit. The config layer
+        stays DB-free, so this uses the same $2/MTok fallback the
+        ledger uses when no model price resolves (see
+        brain.providers.DEFAULT_PRICE_PER_MTOK_USD).
         """
         if self.run_spend_cap_usd is not None:
             return max(0.0, self.run_spend_cap_usd)
-        price = max(0.0, self.model_price_per_mtok_usd) / 1_000_000
-        return max(0, self.run_token_cap) * price
+        return max(0, self.run_token_cap) * 2.0 / 1_000_000
 
     @property
     def is_prod(self) -> bool:

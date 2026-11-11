@@ -380,25 +380,28 @@ def generate_summary(
 ) -> tuple[str, bool]:
     """Model-written summary (D6.3) or the deterministic fallback.
 
-    Disabled/keyless/empty output falls back to the evidence template
-    (model_backed=False) and the report still ships. A model outage
-    (invoke raising) raises ReportError instead: the report step fails,
-    the error is recorded, the table still updates, and the next check
-    retries because the update set remains unreported (D23). Usage
-    ledgers to the separate dependency budget; a hit raises
-    DepsBudgetExceeded past the fallback so the caller parks the report.
+    Disabled/empty output falls back to the evidence template
+    (model_backed=False) and the report still ships. A missing or broken
+    brain, like a model outage (invoke raising), raises ReportError
+    instead: the report step fails, the error is recorded, the table
+    still updates, and the next check retries because the update set
+    remains unreported (D23). Usage ledgers to the separate dependency
+    budget; a hit raises DepsBudgetExceeded past the fallback so the
+    caller parks the report.
 
-    An explicitly injected model skips the enabled/key gate so tests can
+    An explicitly injected model skips the enabled gate so tests can
     drive this deterministically.
     """
-    from security_agent.brain import get_chat_model
+    from security_agent.brain import BrainError, get_chat_model
     from security_agent.config import get_settings
 
     if model is None:
-        settings = get_settings()
-        if not settings.deps_report_model_enabled or not settings.model_api_key:
+        if not get_settings().deps_report_model_enabled:
             return fallback_summary(sections), False
-        bound = get_chat_model()
+        try:
+            bound = get_chat_model()
+        except BrainError as exc:
+            raise ReportError(f"brain unavailable: {exc}") from exc
     else:
         bound = model
     # Pre-check: never pay for a call the budget will only park (D23).

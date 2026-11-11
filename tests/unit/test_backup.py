@@ -80,6 +80,9 @@ def test_scratch_stack_restore_proof(tmp_path):
     blob = json.dumps(settings)
     for leaked in ("MASTER_KEY", "MODEL_API_KEY", "PASSWORD", "SECRET", "BEGIN "):
         assert leaked not in blob.upper()
+    # Brain selection + keys live in the DB (NotifyState + EncryptedToken
+    # as-stored), never in the config snapshot.
+    assert not [k for k in settings if "model" in k or "brain" in k]
     src.unlink()  # the disaster
     restored = tmp_path / "restored.db"
     assert restore(manifest_file, dest=restored)["status"] == "restored"

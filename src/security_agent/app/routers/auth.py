@@ -472,6 +472,7 @@ def _dashboard_context() -> dict:
     def _pct(part: int) -> int:
         return round(100 * part / open_findings) if open_findings else 0
 
+    from security_agent.control.brain_settings import brain_status
     from security_agent.control.cost import (
         effective_run_cap,
         list_parked_runs,
@@ -497,6 +498,7 @@ def _dashboard_context() -> dict:
         "failed_runs": failed_runs,
         "spend_today": spend_today(),
         "run_spend_cap": effective_run_cap(),
+        "brain": brain_status(),
         "ai_usage": usage_summary(),
         "spend_cap": spend_cap_state(),
         "parked_runs": list_parked_runs(),

@@ -5,6 +5,7 @@ import uuid
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
 from sqlalchemy import select
 
 from security_agent.control import repos
@@ -121,11 +122,14 @@ def test_classify_item_stores_verdict_and_category():
         assert row.classified_at is not None
 
 
-def test_classify_item_fails_closed_on_model_error_and_garbage():
+def test_classify_item_raises_brain_error_but_garbage_stays_closed():
+    from security_agent.brain import BrainError
+
     bad_model = mock.Mock()
     bad_model.invoke.side_effect = RuntimeError("model down")
     item = _seed_item(title="x", body_excerpt="y")
-    assert classify_item(item, model=bad_model) is None
+    with pytest.raises(BrainError, match="Brain call failed"):
+        classify_item(item, model=bad_model)
     garbage = _seed_item(title="x", body_excerpt="y")
     assert classify_item(garbage, model=_FakeModel("not json")) is None
     with session_scope() as db:

@@ -25,8 +25,15 @@ SYSTEM_PROMPT = """You operate the security dashboard through tools. Rules:
 - Keep answers short; cite repo/scan/run/gate ids."""
 
 
-class ChatNotConfigured(Exception):
-    pass
+def _brain_failed(conversation_id: int, exc: Exception):
+    """Loud brain failure as an assistant message (never a bare 500)."""
+    from security_agent.chat import append_message
+
+    return append_message(
+        conversation_id,
+        ChatRole.ASSISTANT,
+        f"Brain call failed: {exc} An Owner can check Settings → Brain.",
+    )
 
 
 def _ledger(result, prompt_text: str, content_text: str) -> None:
@@ -162,7 +169,6 @@ def answer_turn(
         store_attachments,
         validate_upload,
     )
-    from security_agent.config import get_settings
 
     for name, data in uploads or []:
         validate_upload(name, data)
@@ -182,16 +188,12 @@ def answer_turn(
     if doc_blocks:
         turn_text = f"{text}\n\n" + "\n\n".join(doc_blocks) if text else "\n\n".join(doc_blocks)
     if model is None:
-        if not get_settings().model_api_key:
-            return append_message(
-                conversation.id,
-                ChatRole.ASSISTANT,
-                "Chat needs a configured model brain (MODEL_API_KEY). "
-                "Ask an Owner to configure it in Settings.",
-            )
-        from security_agent.brain import get_chat_model
+        from security_agent.brain import BrainError, get_chat_model
 
-        model = get_chat_model(task=CHAT_TASK)
+        try:
+            model = get_chat_model()
+        except BrainError as exc:
+            return append_message(conversation.id, ChatRole.ASSISTANT, str(exc))
     from security_agent.control.cost import ChatCapExceeded, check_chat_cap
 
     try:
@@ -227,12 +229,15 @@ def answer_turn(
     for _ in range(MAX_TOOL_ROUNDS):
         try:
             result = bound.invoke(messages)
-        except Exception:
+        except Exception as exc:
             if not image_parts or vision_failed:
-                raise
+                return _brain_failed(conversation.id, exc)
             vision_failed = True
             messages[-1] = HumanMessage(content=turn_text)
-            result = bound.invoke(messages)
+            try:
+                result = bound.invoke(messages)
+            except Exception as exc2:
+                return _brain_failed(conversation.id, exc2)
         content = str(getattr(result, "content", "") or "")
         _ledger(result, turn_text, content)
         calls = list(getattr(result, "tool_calls", None) or [])

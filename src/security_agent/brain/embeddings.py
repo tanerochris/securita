@@ -100,8 +100,8 @@ def _embed_http(texts: list[str], provider: str) -> list[list[float]] | None:
         base = (s.embedding_base_url or _OLLAMA_DEFAULT_BASE).rstrip("/")
         key = s.embedding_api_key or "ollama"
     else:
-        base = (s.embedding_base_url or s.model_base_url or "").rstrip("/")
-        key = s.embedding_api_key or s.model_api_key or ""
+        base = (s.embedding_base_url or "").rstrip("/")
+        key = s.embedding_api_key or ""
     if not base:
         return None
     model = _model_name(provider)

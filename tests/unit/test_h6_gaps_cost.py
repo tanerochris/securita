@@ -47,9 +47,10 @@ def _reset_cost_state():
 
 
 def _usd(tokens: int) -> float:
-    """Cap dollars for a token count at the configured model price."""
-    price = max(0.0, get_settings().model_price_per_mtok_usd) / 1_000_000
-    return tokens * price
+    """Cap dollars for a token count at the resolved model price."""
+    from security_agent.control.brain_settings import price_per_token_usd
+
+    return tokens * price_per_token_usd()
 
 
 def _kinds(fake):

@@ -18,6 +18,14 @@
   </div>
 </div>
 
+{% if brain is defined and not brain.configured %}
+<div class="mt-5 flex flex-wrap items-center gap-3 rounded-xl bg-brand-mist px-4 py-3" role="status">
+  <svg class="text-brand-primary" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+  <p class="text-sm text-brand-deep"><strong class="font-bold text-brand-navy">Brain not configured.</strong> AI steps fail loud and runs park until an Owner picks a provider in Settings. Non-AI scanning is unaffected.</p>
+  <a class="ml-auto text-sm font-bold text-brand-primary hover:text-brand-deep" href="/settings">Configure brain &rarr;</a>
+</div>
+{% endif %}
+
 {% if pending_approvals %}
 <div class="mt-5 flex flex-wrap items-center gap-3 rounded-xl bg-brand-mist px-4 py-3" role="status">
   <svg class="text-brand-primary" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>

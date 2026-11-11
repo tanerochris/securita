@@ -295,17 +295,26 @@ def test_answer_turn_cap_reached_posts_notice():
         _cleanup_chat_cap()
 
 
-def test_answer_turn_keyless_posts_notice(monkeypatch):
+def test_answer_turn_unconfigured_brain_posts_notice():
+    from sqlalchemy import delete
+
     from security_agent.chat import get_conversation
     from security_agent.chat.agent import answer_turn
+    from security_agent.db.models import EncryptedToken, NotifyState
+    from security_agent.db.session import session_scope
 
     owner = _user("turn-k", Role.OWNER)
     conv = get_conversation(owner.id)
-    fake_settings = mock.Mock()
-    fake_settings.model_api_key = ""
-    monkeypatch.setattr("security_agent.config.get_settings", lambda: fake_settings)
-    reply = answer_turn(owner, conv, "hi")
-    assert "MODEL_API_KEY" in reply.content
+    with session_scope() as db:  # no brain selection, no legacy env import
+        db.execute(delete(NotifyState).where(NotifyState.key.like("brain.%")))
+        db.execute(delete(EncryptedToken).where(EncryptedToken.owner.like("brain:%")))
+    try:
+        reply = answer_turn(owner, conv, "hi")
+        assert "Settings → Brain" in reply.content
+    finally:
+        with session_scope() as db:
+            db.execute(delete(NotifyState).where(NotifyState.key.like("brain.%")))
+            db.execute(delete(EncryptedToken).where(EncryptedToken.owner.like("brain:%")))
 
 
 def test_gate_decision_intent_carries_context():

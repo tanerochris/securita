@@ -30,8 +30,8 @@ _CONFIG_FIELDS = (
     "app_env",
     "app_port",
     "public_url",
-    "model_base_url",
-    "model_name",
+    # Brain provider selection + encrypted keys live in the database
+    # (NotifyState + EncryptedToken as-stored), never in this snapshot.
     "bot_name",
     "bot_email",
     "news_hn_query",

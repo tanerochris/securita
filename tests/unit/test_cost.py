@@ -70,10 +70,10 @@ def _run():
 
 
 def _usd(tokens: int) -> float:
-    """Cap dollars for a token count at the configured model price."""
-    from security_agent.config import get_settings
+    """Cap dollars for a token count at the resolved model price."""
+    from security_agent.control.brain_settings import price_per_token_usd
 
-    return tokens * max(0.0, get_settings().model_price_per_mtok_usd) / 1_000_000
+    return tokens * price_per_token_usd()
 
 
 def test_disconnect_repo_removes_cost_ledger_rows():
@@ -465,12 +465,13 @@ def test_record_usage_checks_monthly_cap():
 
 def test_deps_usage_counts_toward_monthly_cap():
     """Overall means overall: deps ledger rows add to the monthly total."""
-    from security_agent.config import get_settings
     from security_agent.control.cost import month_spend
     from security_agent.control.deps import record_deps_usage
 
     base = month_spend()
-    price = max(0.0, get_settings().model_price_per_mtok_usd) / 1_000_000
+    from security_agent.control.brain_settings import price_per_token_usd
+
+    price = price_per_token_usd()
     task = f"cap-{datetime.now(UTC).timestamp()}"
     with mock.patch("security_agent.notify.notify_event"):
         record_deps_usage(task, 100, 50)
@@ -536,7 +537,7 @@ def test_run_cap_env_usd_wins_legacy_tokens_convert(monkeypatch, tmp_path):
     monkeypatch.delenv("RUN_SPEND_CAP_USD", raising=False)
     monkeypatch.delenv("RUN_TOKEN_CAP", raising=False)
     fresh = Settings()
-    price = max(0.0, fresh.model_price_per_mtok_usd) / 1_000_000
+    price = 2.0 / 1_000_000  # legacy tokens convert at the default model price
     assert fresh.run_cap_default_usd == pytest.approx(1_000_000 * price)
     monkeypatch.setenv("RUN_TOKEN_CAP", "500000")
     assert Settings().run_cap_default_usd == pytest.approx(500000 * price)

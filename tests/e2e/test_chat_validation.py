@@ -20,8 +20,10 @@ from security_agent.control import repos as repo_svc
 from security_agent.db.models import (
     Approval,
     ChatRole,
+    EncryptedToken,
     GateAction,
     GateStatus,
+    NotifyState,
     RepoKind,
     Role,
     RunTrigger,
@@ -271,11 +273,11 @@ def test_mentions_endpoint_scopes_users_to_owner():
     assert resp.status_code == 200
 
 
-def test_message_with_upload_shows_chips_and_rejects_bad_file(monkeypatch):
-    from security_agent.config import get_settings
-
+def test_message_with_upload_shows_chips_and_rejects_bad_file():
     _login(Role.OWNER)
-    monkeypatch.setattr(get_settings(), "model_api_key", "")
+    with session_scope() as db:  # unconfigured brain posts a notice
+        db.execute(delete(NotifyState).where(NotifyState.key.like("brain.%")))
+        db.execute(delete(EncryptedToken).where(EncryptedToken.owner.like("brain:%")))
     csrf = make_csrf()
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
     resp = client.post(
@@ -283,10 +285,10 @@ def test_message_with_upload_shows_chips_and_rejects_bad_file(monkeypatch):
         data={"csrf": csrf, "text": "look", "thread": "thread"},
         files={"files": ("shot.png", png, "image/png")},
     )
-    # Keyless brain posts a notice, but validate/store/chips run first.
+    # Unconfigured brain posts a notice, but validate/store/chips run first.
     assert resp.status_code == 200, resp.text[:300]
     assert "shot.png" in resp.text
-    assert "MODEL_API_KEY" in resp.text
+    assert "Settings → Brain" in resp.text
     resp = client.post(
         "/chat/message",
         data={"csrf": csrf, "text": "x", "thread": "thread"},
