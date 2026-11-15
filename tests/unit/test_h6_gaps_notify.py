@@ -40,9 +40,9 @@ def _login_as(role: Role) -> None:
 
 
 def _csrf() -> str:
-    resp = client.get("/settings")
+    resp = client.get("/settings/cost")
     match = re.search(r'name="csrf" value="([^"]+)"', resp.text)
-    assert match, "no csrf token on /settings"
+    assert match, "no csrf token on /settings/cost"
     return match.group(1)
 
 
@@ -263,14 +263,16 @@ def test_maintainer_sees_resume_but_not_channel_forms():
         run.park_reason = "test park"
     try:
         _login_as(Role.MAINTAINER)
-        page = client.get("/settings")
-        assert page.status_code == 200
-        assert "Resume" in page.text and str(run_id) in page.text
-        assert 'action="/settings/channels"' not in page.text
-        assert "Test-send" not in page.text
-        assert 'action="/settings/routes"' not in page.text
-        assert 'action="/settings/cost/cap"' not in page.text
-        assert 'action="/settings/digest"' not in page.text
+        cost = client.get("/settings/cost")
+        assert cost.status_code == 200
+        assert "Resume" in cost.text and str(run_id) in cost.text
+        assert 'action="/settings/cost/cap"' not in cost.text
+        notify = client.get("/settings/notifications")
+        assert notify.status_code == 200
+        assert 'action="/settings/channels"' not in notify.text
+        assert "Test-send" not in notify.text
+        assert 'action="/settings/routes"' not in notify.text
+        assert 'action="/settings/digest"' not in notify.text
 
         resp = client.post(
             "/settings/channels",

@@ -6,7 +6,7 @@ from unittest import mock
 
 import pytest
 
-from security_agent.brain.pr_text import generate_pr_text
+from security_agent.agent.pr_text import generate_pr_text
 from security_agent.worker.deliver import _find_pr_template, _render_pr_text, render_pr
 
 
@@ -117,10 +117,10 @@ def test_generate_rejects_bad_output():
         )
 
 
-def test_generate_model_error_raises_brain_error():
-    from security_agent.brain import BrainError
+def test_generate_model_error_raises_agent_error():
+    from security_agent.agent import AgentError
 
-    with pytest.raises(BrainError, match="Brain call failed"):
+    with pytest.raises(AgentError, match="Agent call failed"):
         generate_pr_text(
             "p",
             "1",
@@ -138,7 +138,7 @@ def test_generate_model_error_raises_brain_error():
 def test_generate_cost_cap_propagates():
     from security_agent.control.cost import CostCapExceeded
 
-    with mock.patch("security_agent.brain.tracked_invoke", side_effect=CostCapExceeded("cap")):
+    with mock.patch("security_agent.agent.tracked_invoke", side_effect=CostCapExceeded("cap")):
         with pytest.raises(CostCapExceeded):
             generate_pr_text(
                 "p",
@@ -158,7 +158,7 @@ def test_generate_live_path_needs_flag():
     settings = mock.Mock(pr_text_model_enabled=False)
     with (
         mock.patch("security_agent.config.get_settings", return_value=settings),
-        mock.patch("security_agent.brain.get_chat_model") as fake,
+        mock.patch("security_agent.agent.get_chat_model") as fake,
     ):
         assert generate_pr_text("p", "1", "2", ["CVE-1"], [], ["v"], "g", [], "d") is None
         fake.assert_not_called()
@@ -230,7 +230,7 @@ def test_find_pr_template_dir_keyword_pick(tmp_path):
 
 
 def test_render_pr_text_forwards_template():
-    with mock.patch("security_agent.brain.pr_text.generate_pr_text", return_value=None) as fake:
+    with mock.patch("security_agent.agent.pr_text.generate_pr_text", return_value=None) as fake:
         _render_pr_text(
             "p",
             "1",
@@ -301,14 +301,14 @@ def test_generate_policy_failure_still_returns_model_output():
 
 def test_render_pr_text_prefers_model_then_template():
     with mock.patch(
-        "security_agent.brain.pr_text.generate_pr_text",
+        "security_agent.agent.pr_text.generate_pr_text",
         return_value=("[security] p 1→2 fixes 1 advisory", "b\nDashboard: d"),
     ):
         assert _render_pr_text("p", "1", "2", ["CVE-1"], [], ["v"], "g", [], "d")[0] == (
             "[security] p 1→2 fixes 1 advisory"
         )
     with mock.patch(
-        "security_agent.brain.pr_text.generate_pr_text", side_effect=RuntimeError("down")
+        "security_agent.agent.pr_text.generate_pr_text", side_effect=RuntimeError("down")
     ):
         title, _ = _render_pr_text("p", "1", "2", ["CVE-1"], [], ["v"], "g", [], "d")
         assert title == "[security] p 1→2 (CVE-1)"

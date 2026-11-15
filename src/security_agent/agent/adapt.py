@@ -110,14 +110,14 @@ def _resolve_inside(workdir: Path, file_path: str) -> Path:
 
 def make_model_adapt(model=None, *, probe_ok: bool | None = None):
     """Build an AdaptHook backed by a native-tool-calls chat model."""
-    from security_agent.brain import get_chat_model
+    from security_agent.agent import get_chat_model
     from security_agent.worker.patch import AdaptResult, PatchError
 
     if probe_ok is False:
         raise PatchError("model adapt refused: native tool_calls probe has not passed")
 
     def adapt(workdir: Path, finding, target: str, failures: list[str]) -> AdaptResult:
-        from security_agent.brain import tracked_invoke
+        from security_agent.agent import tracked_invoke
         from security_agent.control.cost import CostCapExceeded, current_run_id
 
         bound = model if model is not None else get_chat_model()
@@ -215,7 +215,7 @@ _probe_cache: bool | None = None
 def select_adapt():
     """Graph wiring: model adapt only when enabled AND the probe passes."""
     global _probe_cache
-    from security_agent.brain import BrainError
+    from security_agent.agent import AgentError
     from security_agent.config import get_settings
     from security_agent.worker.patch import null_adapt
 
@@ -225,10 +225,10 @@ def select_adapt():
         return null_adapt
     if _probe_cache is None:
         try:
-            from security_agent.brain.probe import run_probe
+            from security_agent.agent.probe import run_probe
 
             _probe_cache = bool(run_probe())
-        except BrainError as exc:
+        except AgentError as exc:
             log.warning("model adapt disabled, staying on null adapt: %s", exc)
             _probe_cache = False
         except Exception as exc:  # noqa: BLE001 - probe failure keeps the null hook

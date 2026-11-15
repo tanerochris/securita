@@ -6,14 +6,14 @@ from unittest import mock
 
 import pytest
 
-from security_agent.brain.adapt import _run_policy_search, _search_scope, make_model_adapt
+from security_agent.agent.adapt import _run_policy_search, _search_scope, make_model_adapt
 from security_agent.db.models import POLICY_EMBEDDING_DIM
 from security_agent.policy.service import create_document
 
 
 @pytest.fixture(autouse=True)
 def _no_embeddings():
-    with mock.patch("security_agent.brain.embeddings.embed_texts", return_value=None):
+    with mock.patch("security_agent.agent.embeddings.embed_texts", return_value=None):
         yield
 
 
@@ -125,7 +125,7 @@ def test_backfill_fills_null_embeddings():
     assert chunks and all(c.embedding is None for c in chunks)
     filled_vec = [0.1] * POLICY_EMBEDDING_DIM
     with mock.patch(
-        "security_agent.brain.embeddings.embed_texts",
+        "security_agent.agent.embeddings.embed_texts",
         side_effect=lambda texts, **kw: [filled_vec] * len(texts),
     ) as stub:
         # service imports embed_texts at call time from the same module.

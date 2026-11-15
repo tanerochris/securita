@@ -37,7 +37,7 @@ def _reset_deps_budget():
 
 def _usd(tokens: int) -> float:
     """Budget dollars for a token count at the resolved model price."""
-    from security_agent.control.brain_settings import price_per_token_usd
+    from security_agent.control.agent_settings import price_per_token_usd
 
     return tokens * price_per_token_usd()
 

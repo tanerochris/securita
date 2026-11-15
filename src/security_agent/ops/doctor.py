@@ -51,27 +51,27 @@ def _database() -> Check:
 
 
 def _model_key() -> Check:
-    from security_agent.control.brain_settings import brain_status
+    from security_agent.control.agent_settings import agent_status
 
-    status = brain_status(migrate=False)
+    status = agent_status()
     if status.get("configured"):
-        entry = status.get("label") or status.get("strategy") or "brain"
+        entry = status.get("label") or status.get("strategy") or "agent"
         model = status.get("model") or ""
         if status.get("needs_key") and not status.get("has_key"):
             return Check(
-                "brain",
+                "agent",
                 False,
                 f"{entry} selected but no API key stored",
                 False,
-                "paste the provider key in Settings → Brain",
+                "paste the provider key in Settings → Agent",
             )
-        return Check("brain", True, f"{entry} / {model}".rstrip(" /"), False, "")
+        return Check("agent", True, f"{entry} / {model}".rstrip(" /"), False, "")
     return Check(
-        "brain",
+        "agent",
         False,
         "unset: AI steps fail loud and runs park until configured",
         False,
-        "pick a provider + model in Settings → Brain",
+        "pick a provider + model in Settings → Agent",
     )
 
 

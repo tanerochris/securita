@@ -47,12 +47,12 @@ def test_scope_and_task_filters():
         repo_id=repo_id,
     )
     _doc("Adapt-only note about openssl.", title="scoped", tasks=["adapt"])
-    with mock.patch("security_agent.brain.embeddings.embed_texts", return_value=None):
+    with mock.patch("security_agent.agent.embeddings.embed_texts", return_value=None):
         chunks = retrieve_chunks(repo_id, "patch", "openssl")
     titles = {c["title"] for c in chunks}
     assert {"plat", "repo"} <= titles
     assert "scoped" not in titles  # task filter excludes it
-    with mock.patch("security_agent.brain.embeddings.embed_texts", return_value=None):
+    with mock.patch("security_agent.agent.embeddings.embed_texts", return_value=None):
         other = retrieve_chunks(_repo("retrieve-other"), "patch", "openssl")
     assert "repo" not in {c["title"] for c in other}
 
@@ -66,7 +66,7 @@ def test_repo_chunks_order_before_platform():
         scope="repo",
         repo_id=repo_id,
     )
-    with mock.patch("security_agent.brain.embeddings.embed_texts", return_value=None):
+    with mock.patch("security_agent.agent.embeddings.embed_texts", return_value=None):
         chunks = retrieve_chunks(repo_id, "patch", "openssl guidance")
     assert chunks and chunks[0]["scope"] == "repo"
 
@@ -83,7 +83,7 @@ def test_snapshot_pins_versions_within_run():
         db.add(run)
         db.flush()
         run_id = run.id
-    with mock.patch("security_agent.brain.embeddings.embed_texts", return_value=None):
+    with mock.patch("security_agent.agent.embeddings.embed_texts", return_value=None):
         before, _ = retrieve_policy_context(repo_id, "patch", "snapdragon", run_id=run_id)
         assert "version one" in before
         update_document(doc.doc_key, text="Completely rewritten kumquat policy now.")

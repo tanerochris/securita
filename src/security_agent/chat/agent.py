@@ -25,14 +25,14 @@ SYSTEM_PROMPT = """You operate the security dashboard through tools. Rules:
 - Keep answers short; cite repo/scan/run/gate ids."""
 
 
-def _brain_failed(conversation_id: int, exc: Exception):
-    """Loud brain failure as an assistant message (never a bare 500)."""
+def _agent_failed(conversation_id: int, exc: Exception):
+    """Loud agent failure as an assistant message (never a bare 500)."""
     from security_agent.chat import append_message
 
     return append_message(
         conversation_id,
         ChatRole.ASSISTANT,
-        f"Brain call failed: {exc} An Owner can check Settings → Brain.",
+        f"Agent call failed: {exc} An Owner can check Settings → Agent.",
     )
 
 
@@ -188,11 +188,11 @@ def answer_turn(
     if doc_blocks:
         turn_text = f"{text}\n\n" + "\n\n".join(doc_blocks) if text else "\n\n".join(doc_blocks)
     if model is None:
-        from security_agent.brain import BrainError, get_chat_model
+        from security_agent.agent import AgentError, get_chat_model
 
         try:
             model = get_chat_model()
-        except BrainError as exc:
+        except AgentError as exc:
             return append_message(conversation.id, ChatRole.ASSISTANT, str(exc))
     from security_agent.control.cost import ChatCapExceeded, check_chat_cap
 
@@ -231,13 +231,13 @@ def answer_turn(
             result = bound.invoke(messages)
         except Exception as exc:
             if not image_parts or vision_failed:
-                return _brain_failed(conversation.id, exc)
+                return _agent_failed(conversation.id, exc)
             vision_failed = True
             messages[-1] = HumanMessage(content=turn_text)
             try:
                 result = bound.invoke(messages)
             except Exception as exc2:
-                return _brain_failed(conversation.id, exc2)
+                return _agent_failed(conversation.id, exc2)
         content = str(getattr(result, "content", "") or "")
         _ledger(result, turn_text, content)
         calls = list(getattr(result, "tool_calls", None) or [])

@@ -23,9 +23,9 @@ def _login_as(role: Role) -> None:
 
 
 def _csrf() -> str:
-    resp = client.get("/settings")
+    resp = client.get("/settings/notifications")
     match = re.search(r'name="csrf" value="([^"]+)"', resp.text)
-    assert match, "no csrf token on /settings"
+    assert match, "no csrf token on /settings/notifications"
     return match.group(1)
 
 
@@ -39,7 +39,39 @@ def test_settings_owner_only():
     _login_as(Role.REPORTER)
     assert client.get("/settings").status_code == 403
     _login_as(Role.OWNER)
-    assert client.get("/settings").status_code == 200
+    resp = client.get("/settings", follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"].endswith("/settings/agent")
+
+
+def test_settings_subpages_render_with_nav():
+    _login_as(Role.OWNER)
+    pages = {
+        "/settings/agent": "Agent provider",
+        "/settings/notifications": "Per-severity routing",
+        "/settings/reports": "Download JSON",
+        "/settings/cost": "Parked runs",
+        "/settings/dependencies": "Dependency updates",
+    }
+    for path, marker in pages.items():
+        resp = client.get(path)
+        assert resp.status_code == 200, path
+        assert marker in resp.text, path
+        assert f'href="{path}" aria-current="page"' in resp.text, path
+    shared = (
+        "/settings/agent",
+        "/settings/notifications",
+        "/settings/cost",
+        "/settings/dependencies",
+    )
+    _login_as(Role.MAINTAINER)
+    for path in shared:
+        assert client.get(path).status_code == 200, path
+    assert client.get("/settings/reports").status_code == 403
+    assert 'href="/settings/reports"' not in client.get("/settings/agent").text
+    _login_as(Role.REPORTER)
+    for path in shared:
+        assert client.get(path).status_code == 403, path
 
 
 def test_add_route_test_and_delete_webhook_channel():
@@ -60,7 +92,7 @@ def test_add_route_test_and_delete_webhook_channel():
         )
         assert resp.status_code == 200 and "created" in resp.text
         # Secrets never render back; only the host shows.
-        page = client.get("/settings").text
+        page = client.get("/settings/notifications").text
         assert "secret-path" not in page and "hooks.example.com" in page
         added = [c for c in list_channels() if c["id"] not in before][0]
         resp = client.post(
@@ -136,7 +168,7 @@ def test_save_monthly_spend_cap_roundtrip():
         )
         assert resp.status_code == 200 and "Monthly spend cap set to $250.00" in resp.text
         assert effective_spend_cap() == 250.0
-        assert "Spend this month" in client.get("/settings").text
+        assert "Spend this month" in client.get("/settings/cost").text
         resp = client.post("/settings/cost/spend-cap", data={"csrf": _csrf(), "cap": "-5"})
         assert resp.status_code == 400
         resp = client.post("/settings/cost/spend-cap", data={"csrf": _csrf(), "cap": "abc"})

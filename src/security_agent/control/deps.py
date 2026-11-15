@@ -131,7 +131,7 @@ def get_deps_spend_cap() -> float:
     Zero disables the budget. A legacy pre-USD token budget converts
     at the resolved model price until a USD budget replaces it.
     """
-    from security_agent.control.brain_settings import price_per_token_usd
+    from security_agent.control.agent_settings import price_per_token_usd
 
     with session_scope() as db:
         row = db.get(NotifyState, _DEPS_SPEND_CAP_KEY)
@@ -204,7 +204,7 @@ def record_deps_usage(
     count toward the overall monthly spend cap, which sums every
     ledgered call by design.
     """
-    from security_agent.control.brain_settings import price_per_token_usd
+    from security_agent.control.agent_settings import price_per_token_usd
     from security_agent.control.cost import check_monthly_cap_alerts, format_usd
     from security_agent.db.models import ModelUsage
 

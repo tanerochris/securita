@@ -70,7 +70,7 @@ def draft_candidates(doc_key: str, *, model=None) -> dict:
     Safe to re-run: identical (effect, match, reason) candidates already
     pending or confirmed for this document are not duplicated.
     """
-    from security_agent.brain import get_chat_model, tracked_invoke
+    from security_agent.agent import get_chat_model, tracked_invoke
     from security_agent.db.models import PolicyRule
     from security_agent.db.session import session_scope
     from security_agent.policy.rules import create_rule

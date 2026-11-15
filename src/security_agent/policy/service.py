@@ -80,7 +80,7 @@ def _secret_check(text: str) -> None:
 
 def _chunk_and_store(db, doc_id: int, pieces: list[tuple[str, str | None]], *, embed: bool) -> int:
     """Store chunk rows for one document version; returns the chunk count."""
-    from security_agent.brain.embeddings import embed_texts
+    from security_agent.agent.embeddings import embed_texts
 
     cap = max(1, get_settings().policy_max_chunks_per_doc)
     if len(pieces) > cap:
@@ -436,7 +436,7 @@ def backfill_embeddings(batch: int = 64) -> int:
     chunks serve by keyword meanwhile). Stops at the first provider
     failure instead of spinning through the whole backlog.
     """
-    from security_agent.brain.embeddings import embed_texts
+    from security_agent.agent.embeddings import embed_texts
 
     filled = 0
     while True:

@@ -122,13 +122,13 @@ def test_classify_item_stores_verdict_and_category():
         assert row.classified_at is not None
 
 
-def test_classify_item_raises_brain_error_but_garbage_stays_closed():
-    from security_agent.brain import BrainError
+def test_classify_item_raises_agent_error_but_garbage_stays_closed():
+    from security_agent.agent import AgentError
 
     bad_model = mock.Mock()
     bad_model.invoke.side_effect = RuntimeError("model down")
     item = _seed_item(title="x", body_excerpt="y")
-    with pytest.raises(BrainError, match="Brain call failed"):
+    with pytest.raises(AgentError, match="Agent call failed"):
         classify_item(item, model=bad_model)
     garbage = _seed_item(title="x", body_excerpt="y")
     assert classify_item(garbage, model=_FakeModel("not json")) is None
@@ -150,7 +150,7 @@ def test_classify_item_skips_already_classified():
 def test_classify_pending_bounds_and_counts():
     items = [_seed_item(title=f"pending-{i}", body_excerpt="e") for i in range(3)]
     model = _FakeModel(json.dumps({"verdict": "major", "category": "leak"}))
-    with mock.patch("security_agent.brain.get_chat_model", return_value=model):
+    with mock.patch("security_agent.agent.get_chat_model", return_value=model):
         assert classify_pending(limit=1) == {"classified": 1, "major": 1}
         counts = classify_pending(limit=1000)
     assert counts["classified"] >= 3 and counts["major"] == counts["classified"]
@@ -347,7 +347,7 @@ def test_process_news_classifies_then_mints():
     with (
         mock.patch.object(intel_mod, "get_settings", return_value=settings),
         mock.patch(
-            "security_agent.brain.get_chat_model",
+            "security_agent.agent.get_chat_model",
             return_value=_FakeModel(json.dumps({"verdict": "major", "category": "worm"})),
         ),
         # OSV unknown in this pass: backlog majors mark attempted, mint nothing.
@@ -360,7 +360,7 @@ def test_process_news_classifies_then_mints():
     with (
         mock.patch.object(intel_mod, "get_settings", return_value=settings),
         mock.patch(
-            "security_agent.brain.get_chat_model",
+            "security_agent.agent.get_chat_model",
             return_value=_FakeModel(json.dumps({"verdict": "major", "category": "exploit"})),
         ),
         mock.patch.object(intel_mod, "verify_advisory", return_value=verified),

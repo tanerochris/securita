@@ -1,36 +1,37 @@
-"""Settings-backed brain provider selection + org keys (brain strategy plan).
+"""Settings-backed agent provider selection + org keys (agent strategy plan).
 
 Selection (strategy/model/base_url/price override) lives in NotifyState
 (plaintext-safe fields only); keys live in EncryptedToken under
-`brain:<strategy>`, pasted once and never re-viewed — the same pattern
+`agent:<strategy>`, pasted once and never re-viewed — the same pattern
 as git PATs and notify secrets. One key per configured provider,
 Owner-managed; scans, workers, and chat all use it.
 
 Saves store as-is (D5): no probe on save. A missing or broken provider
-surfaces as a loud BrainError when AI work runs, and runs park.
+surfaces as a loud AgentError when AI work runs, and runs park.
 """
 
 import json
 import logging
-import os
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
-from security_agent.audit import get_shared_log
-from security_agent.brain.providers import (
+from security_agent.agent.providers import (
     CURATED_ANTHROPIC_MODELS,
+    CURATED_DEEPSEEK_MODELS,
     CURATED_GOOGLE_MODELS,
     DEFAULT_PRICE_PER_MTOK_USD,
     NATIVE_PRICES,
     STRATEGIES,
-    BrainError,
+    AgentError,
+    fetch_anthropic_models,
     fetch_ollama_models,
     fetch_openai_list_models,
     fetch_openrouter_models,
     strategy_label,
 )
+from security_agent.audit import get_shared_log
 from security_agent.crypto import decrypt_field, encrypt_field
 from security_agent.db.keys import get_encryption_key
 from security_agent.db.models import EncryptedToken, NotifyState, Role, User
@@ -39,18 +40,28 @@ from security_agent.db.session import session_scope
 log = logging.getLogger(__name__)
 audit = get_shared_log()
 
-BRAIN_STRATEGY_KEY = "brain.strategy"
-BRAIN_MODEL_KEY = "brain.model"
-BRAIN_BASE_URL_KEY = "brain.base_url"
-BRAIN_PRICE_OVERRIDE_KEY = "brain.price_override_usd"
-BRAIN_MIGRATED_KEY = "brain.migrated"
-BRAIN_CACHE_PREFIX = "brain.cache."  # + strategy: live list + prices + fetched_at
+AGENT_STRATEGY_KEY = "agent.strategy"
+AGENT_MODEL_KEY = "agent.model"
+AGENT_BASE_URL_KEY = "agent.base_url"
+AGENT_PRICE_OVERRIDE_KEY = "agent.price_override_usd"
+AGENT_CACHE_PREFIX = "agent.cache."  # + strategy: live list + prices + fetched_at
 
-_KEY_OWNER = "brain:{}"  # noqa: S105 - owner label, not a credential
+#: Marker for the one-time brain.* → agent.* rename import.
+AGENT_RENAMED_KEY = "agent.renamed_from_brain"
 
-#: Pre-Settings default base URL, used only by the one-time env import
-#: when an old install set a key/model without an explicit base URL.
-_LEGACY_DEFAULT_BASE_URL = "https://api.meta.ai/v1"
+#: Per-strategy key fingerprint prefix (first chars + last 4, never the key).
+AGENT_KEY_HINT_PREFIX = "agent.key_hint."
+
+_KEY_OWNER = "agent:{}"  # noqa: S105 - owner label, not a credential
+
+#: brain.* state keys carried into agent.* — stored model/base_url are
+#: deliberately NOT carried (operator chose to clear them and re-enter).
+_CARRIED_STATE_KEYS = (
+    ("brain.strategy", AGENT_STRATEGY_KEY),
+    ("brain.price_override_usd", AGENT_PRICE_OVERRIDE_KEY),
+)
+_LEGACY_CACHE_PREFIX = "brain.cache."
+_LEGACY_OWNER_PREFIX = "brain:"
 
 
 def _read_state(db, key: str) -> str:
@@ -74,8 +85,19 @@ def _parse_override(raw: str) -> float | None:
     return value if value >= 0 else None
 
 
+def key_hint(plaintext: str) -> str:
+    """Display fingerprint for a key: first 12 chars + last 4 (OpenRouter style).
+
+    Short keys collapse to plain bullets so the hint never carries the key.
+    """
+    key = (plaintext or "").strip()
+    if len(key) <= 16:
+        return "••••••••"
+    return f"{key[:12]}••••••••{key[-4:]}"
+
+
 def _store_secret(owner: str, plaintext: str) -> bool:
-    """Store/rotate one brain key. True when a row already held a key."""
+    """Store/rotate one agent key. True when a row already held a key."""
     ciphertext = encrypt_field(plaintext, get_encryption_key())
     with session_scope() as db:
         try:
@@ -91,7 +113,7 @@ def _store_secret(owner: str, plaintext: str) -> bool:
     return False
 
 
-def get_brain_key(strategy: str) -> str | None:
+def get_agent_key(strategy: str) -> str | None:
     """Decrypted org key for a strategy (decrypts audit-logged, never re-viewed)."""
     with session_scope() as db:
         row = db.scalar(
@@ -99,10 +121,10 @@ def get_brain_key(strategy: str) -> str | None:
         )
         if row is None:
             return None
-        return decrypt_field(row.ciphertext, get_encryption_key(), purpose=f"brain:{strategy}")
+        return decrypt_field(row.ciphertext, get_encryption_key(), purpose=f"agent:{strategy}")
 
 
-def has_brain_key(strategy: str) -> bool:
+def has_agent_key(strategy: str) -> bool:
     """Whether a key is stored (existence only — no decrypt, no secret touch)."""
     with session_scope() as db:
         return (
@@ -115,32 +137,77 @@ def has_brain_key(strategy: str) -> bool:
 
 def _require_owner(user: User) -> None:
     if user.role != Role.OWNER:
-        raise PermissionError("Only an Owner may change the brain provider.")
+        raise PermissionError("Only an Owner may change the agent provider.")
 
 
-def get_brain_config(*, migrate: bool = True) -> dict:
-    """Current brain selection. Runs the one-time env import first, so the
-    migration always lands before any worker serves AI work. Pass
-    migrate=False for side-effect-free reads (doctor preflight)."""
-    if migrate:
-        maybe_migrate_env()
+def maybe_migrate_legacy_brain_keys() -> dict:
+    """One-time brain.* → agent.* rename import. Idempotent via the
+    renamed marker: after the first run legacy keys are never re-read.
+
+    Copies carried state keys, model-list caches, and provider key rows
+    to their agent.* names; stored model/base_url are intentionally left
+    behind so the form starts blank. Old brain.* rows are kept untouched
+    (rollback-safe: a downgrade keeps working); nothing is deleted.
+    Returns what it did, without key material.
+    """
     with session_scope() as db:
-        strategy = _read_state(db, BRAIN_STRATEGY_KEY).strip()
-        model = _read_state(db, BRAIN_MODEL_KEY).strip()
-        base_url = _read_state(db, BRAIN_BASE_URL_KEY).strip()
-        override_raw = _read_state(db, BRAIN_PRICE_OVERRIDE_KEY).strip()
+        if _read_state(db, AGENT_RENAMED_KEY):
+            return {"migrated": False}
+        carried: list[str] = []
+        for old_key, new_key in _CARRIED_STATE_KEYS:
+            if _read_state(db, old_key) and not _read_state(db, new_key):
+                _write_state(db, new_key, _read_state(db, old_key))
+                carried.append(new_key)
+        caches = db.scalars(
+            select(NotifyState).where(NotifyState.key.like(_LEGACY_CACHE_PREFIX + "%"))
+        ).all()
+        for row in caches:
+            new_key = AGENT_CACHE_PREFIX + row.key[len(_LEGACY_CACHE_PREFIX) :]
+            if not _read_state(db, new_key):
+                _write_state(db, new_key, row.value or "")
+                carried.append(new_key)
+        tokens = db.scalars(
+            select(EncryptedToken).where(EncryptedToken.owner.like(_LEGACY_OWNER_PREFIX + "%"))
+        ).all()
+        for row in tokens:
+            new_owner = _KEY_OWNER.format(row.owner.split(":", 1)[1])
+            exists = db.scalar(select(EncryptedToken).where(EncryptedToken.owner == new_owner))
+            if exists is None:
+                db.add(EncryptedToken(owner=new_owner, ciphertext=row.ciphertext))
+                carried.append(new_owner)
+        _write_state(db, AGENT_RENAMED_KEY, datetime.now(UTC).isoformat())
+    if carried:
+        audit.append(
+            action_class="agent",
+            decision="migrate",
+            line=f"carried {len(carried)} brain.* keys to agent.*",
+        )
+    return {"migrated": True, "carried": carried}
+
+
+def get_agent_config() -> dict:
+    """Current agent selection. Runs the one-time legacy rename import
+    first, so the migration always lands before any worker serves AI work."""
+    maybe_migrate_legacy_brain_keys()
+    with session_scope() as db:
+        strategy = _read_state(db, AGENT_STRATEGY_KEY).strip()
+        model = _read_state(db, AGENT_MODEL_KEY).strip()
+        base_url = _read_state(db, AGENT_BASE_URL_KEY).strip()
+        override_raw = _read_state(db, AGENT_PRICE_OVERRIDE_KEY).strip()
+        hint = _read_state(db, AGENT_KEY_HINT_PREFIX + strategy).strip() if strategy else ""
     return {
         "strategy": strategy,
         "model": model,
         "base_url": base_url,
         "price_override": _parse_override(override_raw),
         "price_override_raw": override_raw,
-        "has_key": bool(strategy) and has_brain_key(strategy),
+        "has_key": bool(strategy) and has_agent_key(strategy),
+        "key_hint": hint,
         "configured": bool(strategy and model),
     }
 
 
-def save_brain_config(
+def save_agent_config(
     *,
     strategy: str,
     model: str,
@@ -149,35 +216,43 @@ def save_brain_config(
     api_key: str = "",
     user: User,
 ) -> dict:
-    """Owner-only brain save. Stores as-is (D5): no probe, no validation
-    beyond Owner — a bad save surfaces as a loud runtime brain error."""
+    """Owner-only agent save. Stores as-is (D5): no probe, no validation
+    beyond Owner — a bad save surfaces as a loud runtime agent error."""
     _require_owner(user)
     strategy = (strategy or "").strip()
     model = (model or "").strip()
     base_url = (base_url or "").strip()
     price_override = (price_override or "").strip()
+    entry = STRATEGIES.get(strategy)
+    if entry is not None and entry.base_url_mode in ("fixed", "unused"):
+        # Fixed-endpoint strategies never store a URL: a stale custom URL
+        # from a previous strategy must not override the known endpoint.
+        base_url = ""
     with session_scope() as db:
-        _write_state(db, BRAIN_STRATEGY_KEY, strategy)
-        _write_state(db, BRAIN_MODEL_KEY, model)
-        _write_state(db, BRAIN_BASE_URL_KEY, base_url)
-        _write_state(db, BRAIN_PRICE_OVERRIDE_KEY, price_override)
+        _write_state(db, AGENT_STRATEGY_KEY, strategy)
+        _write_state(db, AGENT_MODEL_KEY, model)
+        _write_state(db, AGENT_BASE_URL_KEY, base_url)
+        _write_state(db, AGENT_PRICE_OVERRIDE_KEY, price_override)
     audit.append(
-        action_class="brain",
+        action_class="agent",
         decision="save",
         line=f"strategy={strategy or '—'} model={model or '—'} by={user.id}",
     )
     if (api_key or "").strip():
-        rotated = _store_secret(_KEY_OWNER.format(strategy or "custom"), api_key.strip())
+        key_strategy = strategy or "custom"
+        rotated = _store_secret(_KEY_OWNER.format(key_strategy), api_key.strip())
+        with session_scope() as db:
+            _write_state(db, AGENT_KEY_HINT_PREFIX + key_strategy, key_hint(api_key.strip()))
         audit.append(
             action_class="credential",
             decision="allow",
-            line=f"brain:{strategy or 'custom'} key {'rotated' if rotated else 'stored'} "
+            line=f"agent:{strategy or 'custom'} key {'rotated' if rotated else 'stored'} "
             f"by={user.id}",
         )
-    return get_brain_config()
+    return get_agent_config()
 
 
-def delete_brain_key(strategy: str, user: User) -> bool:
+def delete_agent_key(strategy: str, user: User) -> bool:
     """Owner-only key delete. Returns True when a key was removed."""
     _require_owner(user)
     from typing import Any, cast
@@ -190,18 +265,19 @@ def delete_brain_key(strategy: str, user: User) -> bool:
             delete(EncryptedToken).where(EncryptedToken.owner == _KEY_OWNER.format(strategy))
         )
         removed = (cast("CursorResult[Any]", res).rowcount or 0) > 0
+        db.execute(delete(NotifyState).where(NotifyState.key == AGENT_KEY_HINT_PREFIX + strategy))
     if removed:
         audit.append(
             action_class="credential",
             decision="allow",
-            line=f"brain:{strategy} key deleted by={user.id}",
+            line=f"agent:{strategy} key deleted by={user.id}",
         )
     return removed
 
 
 def _read_cache(strategy: str) -> dict:
     with session_scope() as db:
-        raw = _read_state(db, BRAIN_CACHE_PREFIX + strategy)
+        raw = _read_state(db, AGENT_CACHE_PREFIX + strategy)
     try:
         data = json.loads(raw or "{}")
     except ValueError:
@@ -215,7 +291,7 @@ def _write_cache(strategy: str, models: list[dict]) -> dict:
         "models": [{"id": m["id"], "price": m.get("price")} for m in models],
     }
     with session_scope() as db:
-        _write_state(db, BRAIN_CACHE_PREFIX + strategy, json.dumps(blob))
+        _write_state(db, AGENT_CACHE_PREFIX + strategy, json.dumps(blob))
     return blob
 
 
@@ -232,6 +308,8 @@ def _curated_models(strategy: str) -> list[dict] | None:
         ids: tuple[str, ...] = CURATED_GOOGLE_MODELS
     elif strategy == "anthropic":
         ids = CURATED_ANTHROPIC_MODELS
+    elif strategy == "deepseek":
+        ids = CURATED_DEEPSEEK_MODELS
     else:
         return None
     return [{"id": mid, "price": NATIVE_PRICES.get(mid)} for mid in ids]
@@ -251,16 +329,17 @@ def list_models(strategy: str, *, base_url: str = "", refresh: bool = True) -> d
 
     Returns {"models": [{id, price}], "source": live|cache|curated|none,
     "fetched_at": iso|""}. Live-fetch failures never raise here — the UI
-    falls back to the last cached list plus free text, and saving an id
-    the cache hasn't seen is always allowed. Pass refresh=False for a
-    render-blocking read (the Settings page shells live refresh out to
-    the /brain/models endpoint so a slow provider never stalls the page).
+    falls back to the last cached list, then curated, then free text, and
+    saving an id the cache hasn't seen is always allowed. Pass
+    refresh=False for a render-blocking read (the Settings page shells
+    live refresh out to the /agent/models endpoint so a slow provider
+    never stalls the page).
     """
     strategy = (strategy or "").strip()
     entry = STRATEGIES.get(strategy)
     cached = _read_cache(strategy)
     curated = _curated_models(strategy) if entry is not None else None
-    if curated is not None:
+    if curated is not None and not (strategy == "anthropic" and refresh):
         return {"models": curated, "source": "curated", "fetched_at": ""}
     if entry is None or not refresh or strategy == "custom":
         return _cache_answer(cached)
@@ -272,10 +351,17 @@ def list_models(strategy: str, *, base_url: str = "", refresh: bool = True) -> d
             models = fetch_openai_list_models(base)
         elif strategy == "ollama":
             models = fetch_ollama_models(base)
+        elif strategy == "anthropic":
+            models = fetch_anthropic_models(get_agent_key("anthropic") or "")
         else:  # custom: free text, plus whatever a previous fetch cached
             return _cache_answer(cached)
-    except BrainError as exc:
-        log.warning("brain model list for %s fell back to cache: %s", strategy, exc)
+    except AgentError as exc:
+        log.warning("agent model list for %s fell back to cache: %s", strategy, exc)
+        if curated is not None:
+            cached_answer = _cache_answer(cached)
+            if cached_answer["source"] == "cache":
+                return cached_answer
+            return {"models": curated, "source": "curated", "fetched_at": ""}
         return _cache_answer(cached)
     blob = _write_cache(strategy, models)
     return {"models": blob["models"], "source": "live", "fetched_at": blob["fetched_at"]}
@@ -288,7 +374,7 @@ def current_model_price() -> float | None:
     $0 for custom/Ollama → None (unconfigured/unknown). None means the
     ledger falls back to the default price, never $0 by accident.
     """
-    cfg = get_brain_config()
+    cfg = get_agent_config()
     strategy, model = cfg["strategy"], cfg["model"]
     if not strategy or not model:
         return None
@@ -318,12 +404,12 @@ def price_per_token_usd() -> float:
     return max(0.0, resolved) / 1_000_000
 
 
-def brain_status(*, migrate: bool = True) -> dict:
-    """Dashboard/Settings brain indicator. Never raises, never leaks keys."""
+def agent_status() -> dict:
+    """Dashboard/Settings agent indicator. Never raises, never leaks keys."""
     try:
-        cfg = get_brain_config(migrate=migrate)
+        cfg = get_agent_config()
     except Exception as exc:  # noqa: BLE001 - status must never break a page
-        log.warning("brain status unavailable: %s", exc)
+        log.warning("agent status unavailable: %s", exc)
         return {"configured": False, "strategy": "", "model": "", "error": str(exc)}
     strategy = cfg["strategy"]
     entry = STRATEGIES.get(strategy)
@@ -339,62 +425,7 @@ def brain_status(*, migrate: bool = True) -> dict:
         "base_url": cfg["base_url"],
         "needs_key": bool(entry and entry.needs_key),
         "has_key": bool(cfg["has_key"]),
+        "key_hint": cfg["key_hint"],
         "price_per_mtok_usd": price,
         "price_override": cfg["price_override"],
     }
-
-
-def _guess_strategy(base_url: str) -> str:
-    host = (base_url or "").lower()
-    if "openrouter.ai" in host:
-        return "openrouter"
-    if "vercel.sh" in host or "ai-gateway" in host:
-        return "vercel"
-    if "localhost:11434" in host or "127.0.0.1:11434" in host:
-        return "ollama"
-    if "googleapis.com" in host:
-        return "google"
-    if "api.anthropic.com" in host:
-        return "anthropic"
-    return "custom"
-
-
-def maybe_migrate_env() -> dict:
-    """One-time upgrade import of legacy MODEL_* env into Settings.
-
-    Idempotent via the brain.migrated marker: after the first run the
-    env is ignored. Only explicitly-set env vars import (never config
-    defaults). Returns what it did, without key material.
-    """
-    with session_scope() as db:
-        if _read_state(db, BRAIN_MIGRATED_KEY):
-            return {"migrated": False}
-    env_base = os.environ.get("MODEL_BASE_URL", "").strip()
-    env_key = os.environ.get("MODEL_API_KEY", "").strip()
-    env_model = os.environ.get("MODEL_NAME", "").strip()
-    env_chat = os.environ.get("MODEL_CHAT_NAME", "").strip()
-    env_price = os.environ.get("MODEL_PRICE_PER_MTOK_USD", "").strip()
-    notes = []
-    if env_chat:
-        notes.append("MODEL_CHAT_NAME has no Settings equivalent and was not imported.")
-    with session_scope() as db:
-        _write_state(db, BRAIN_MIGRATED_KEY, datetime.now(UTC).isoformat())
-        if not (env_base or env_key or env_model or env_price):
-            return {"migrated": False, "notes": notes}
-        strategy = _guess_strategy(env_base)
-        base = env_base or _LEGACY_DEFAULT_BASE_URL
-        _write_state(db, BRAIN_STRATEGY_KEY, strategy)
-        if env_model:
-            _write_state(db, BRAIN_MODEL_KEY, env_model)
-        if strategy in ("custom", "ollama"):
-            _write_state(db, BRAIN_BASE_URL_KEY, base)
-        if "MODEL_PRICE_PER_MTOK_USD" in os.environ and _parse_override(env_price) is not None:
-            _write_state(db, BRAIN_PRICE_OVERRIDE_KEY, env_price)
-    if env_key:
-        _store_secret(_KEY_OWNER.format(strategy), env_key)
-    audit.append(
-        action_class="brain",
-        decision="migrate",
-        line=f"strategy={strategy} model={env_model or '—'} from legacy MODEL_* env",
-    )
-    return {"migrated": True, "strategy": strategy, "model": env_model, "notes": notes}

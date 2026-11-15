@@ -189,7 +189,7 @@ def retrieve_chunks(
     the prompt formatter. Vector search is used when the query embeds
     and vectors exist; otherwise keyword overlap ranks.
     """
-    from security_agent.brain.embeddings import embed_texts
+    from security_agent.agent.embeddings import embed_texts
 
     if not tables_ok():
         return []

@@ -21,6 +21,7 @@ ARG OSV_SCANNER_SHA256_ARM64=4061ef4c021ed3c47f203b818f337e351336cc5cd67c0274fc3
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates git ripgrep nodejs npm python3-pip \
     && rm -rf /var/lib/apt/lists/* \
+    && npm install -g corepack \
     && corepack enable \
     && (yarn --version && pnpm --version && python3 -m pip --version) \
     && UV_TOOL_BIN_DIR=/usr/local/bin uv tool install "poetry==2.2.1" \

@@ -38,7 +38,7 @@ def _read(name: str) -> str:
 
 def test_adapt_refuses_workdir_escape_and_skipped_paths(tmp_path):
     """A model following injected orders still cannot write outside the repo."""
-    from security_agent.brain.adapt import make_model_adapt
+    from security_agent.agent.adapt import make_model_adapt
     from security_agent.worker.patch import PatchError
 
     outside = tmp_path / "pwned.txt"
@@ -75,7 +75,7 @@ def test_adapt_proposed_content_is_written_never_executed(tmp_path):
 
     import subprocess as real_subprocess
 
-    from security_agent.brain.adapt import make_model_adapt
+    from security_agent.agent.adapt import make_model_adapt
 
     class Echo:
         def bind_tools(self, tools):

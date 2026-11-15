@@ -49,7 +49,17 @@ def test_profile_page():
 
 def test_avatar_menu_on_every_page():
     email = _login_as_owner()
-    for path in ["/dashboard", "/repos", "/profile", "/settings", "/approvals"]:
+    for path in [
+        "/dashboard",
+        "/repos",
+        "/profile",
+        "/settings/agent",
+        "/settings/notifications",
+        "/settings/reports",
+        "/settings/cost",
+        "/settings/dependencies",
+        "/approvals",
+    ]:
         body = client.get(path).text
         assert 'id="avatarBtn"' in body, f"desktop avatar on {path}"
         assert 'id="avatarBtnM"' in body, f"mobile avatar on {path}"

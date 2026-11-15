@@ -1,0 +1,454 @@
+{% extends "settings_layout.html" %}
+{% block settings_content %}
+<section aria-labelledby="agent-heading">
+  <div class="flex flex-wrap items-baseline gap-3">
+    <h2 id="agent-heading" class="text-lg">Agent provider</h2>
+    {% if agent.configured %}
+    <span class="inline-flex rounded-full bg-brand-primary px-2 py-0.5 text-xs font-bold text-white">{{ agent.label }} · {{ agent.model }}</span>
+    {% elif agent.strategy %}
+    <span class="inline-flex rounded-full bg-brand-primary px-2 py-0.5 text-xs font-bold text-white">{{ agent.label }} · no model</span>
+    {% else %}
+    <span class="inline-flex rounded-full bg-white px-2 py-0.5 text-xs font-bold text-slate-500 shadow-[inset_0_0_0_1px_#E0F2FE]">not configured</span>
+    {% endif %}
+  </div>
+  <div class="mt-3 rounded-xl bg-white px-4 py-3.5 shadow-card"><p class="text-xs font-semibold text-slate-600">Ledger price</p><p class="mt-1 text-xl font-extrabold tracking-tight text-brand-navy">{% if agent.price_per_mtok_usd is not none %}${{ "%.2f"|format(agent.price_per_mtok_usd) }}<span class="text-sm font-semibold text-slate-500"> / MTok</span>{% else %}default<span class="text-sm font-semibold text-slate-500"> $2.00 / MTok</span>{% endif %}</p></div>
+  {% if not agent.configured %}
+  <div class="mt-3 rounded-xl bg-white px-5 py-4 text-[13px] text-slate-600 shadow-card">{% if agent.strategy %}No model yet.{% else %}No agent provider yet.{% endif %}</div>
+  {% endif %}
+  {% if is_owner %}
+  <form class="mt-3 rounded-xl bg-white p-5 shadow-card" method="post" action="/settings/agent">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="agent-tabs" role="tablist" aria-label="Agent setup">
+      <button type="button" role="tab" id="agentTabProvider" aria-controls="agentPanelProvider" aria-selected="true">1 · Provider</button>
+      <button type="button" role="tab" id="agentTabModel" aria-controls="agentPanelModel" aria-selected="false" tabindex="-1">2 · Model</button>
+    </div>
+    <div role="tabpanel" id="agentPanelProvider" aria-labelledby="agentTabProvider" tabindex="0">
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div>
+          <span class="agent-label-row">
+            <label class="text-sm font-bold text-brand-deep" for="agentStrategy">Strategy</label>
+            <span class="agent-tip">
+              <button type="button" class="agent-tip-btn" aria-label="About this provider" aria-describedby="agentBlurb"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg></button>
+              <span class="agent-tip-bubble" role="tooltip" id="agentBlurb"></span>
+            </span>
+          </span>
+          <div class="agent-combo" id="agentStrategyCombo">
+            <input class="mt-1.5 w-full agent-combo-input" id="agentStrategy" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Search providers" role="combobox" aria-expanded="false" aria-controls="agentStrategyBox" aria-autocomplete="list">
+            <input type="hidden" id="agentStrategyKey" name="strategy" value="{{ agent.strategy }}">
+            <button type="button" class="agent-combo-btn" id="agentStrategyToggle" aria-label="Show providers" tabindex="-1"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+            <div class="agent-combo-box" id="agentStrategyBox" role="listbox" aria-label="Providers" hidden></div>
+          </div>
+          <script type="application/json" id="agentStrategiesData">{{ agent_strategies|tojson }}</script>
+        </div>
+        <div>
+          <label class="text-sm font-bold text-brand-deep" for="agentKey">API key</label>
+          {% if agent.has_key %}
+          <div class="agent-key-row" id="agentKeyRow" data-strategy="{{ agent.strategy }}">
+            <code>{{ agent.key_hint or "••••••••" }}</code>
+            <button type="button" class="agent-icon-btn" id="agentKeyCopy" aria-label="Copy API key"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button>
+            <button type="button" class="agent-icon-btn" id="agentKeyEdit" aria-label="Replace API key"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></button>
+          </div>
+          <div class="agent-key-edit" id="agentKeyEditWrap" style="display: none;">
+            <input class="agent-key-input" id="agentKey" name="api_key" type="password" autocomplete="new-password" placeholder="Paste new key">
+            <button type="button" class="agent-icon-btn" id="agentKeyView" aria-label="Back to fingerprint"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></button>
+          </div>
+          <noscript><style>#agentKeyEditWrap{display:flex !important}#agentKeyRow{display:none !important}</style></noscript>
+          {% else %}
+          <input class="mt-1.5 w-full" id="agentKey" name="api_key" type="password" autocomplete="new-password" placeholder="Paste API key">
+          {% endif %}
+        </div>
+        <div id="agentBaseWrap">
+          <label class="text-sm font-bold text-brand-deep" for="agentBaseUrl">Base URL <span class="font-semibold text-slate-500" id="agentBaseHint"></span></label>
+          <input class="mt-1.5 w-full" id="agentBaseUrl" name="base_url" value="{{ agent.base_url }}" autocomplete="off">
+        </div>
+      </div>
+    </div>
+    <div role="tabpanel" id="agentPanelModel" aria-labelledby="agentTabModel" tabindex="0">
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div>
+          <label class="text-sm font-bold text-brand-deep" for="agentModel">Model</label>
+          <div class="agent-combo" id="agentModelCombo">
+            <input class="mt-1.5 w-full agent-combo-input" id="agentModel" name="model" value="{{ agent.model }}" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="e.g. anthropic/claude-sonnet-4-5" role="combobox" aria-expanded="false" aria-controls="agentModelBox" aria-autocomplete="list">
+            <button type="button" class="agent-combo-btn" id="agentModelToggle" aria-label="Show model list" tabindex="-1"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+            <div class="agent-combo-box" id="agentModelBox" role="listbox" aria-label="Models" hidden></div>
+          </div>
+          <script type="application/json" id="agentModelsData">{{ agent_models.models|tojson }}</script>
+          <p class="mt-1 text-[13px] text-slate-600" id="agentModelStatus">{% if agent_models.source == "live" %}{{ agent_models.models|length }} models · live list{% elif agent_models.source == "cache" %}Cached list · {{ agent_models.models|length }} models{% elif agent_models.source == "curated" %}Curated list · {{ agent_models.models|length }} models{% else %}Type any model id{% endif %}</p>
+        </div>
+        <div>
+          <label class="text-sm font-bold text-brand-deep" for="agentPrice">Price override, USD / MTok</label>
+          <input class="mt-1.5 w-full" id="agentPrice" name="price_override" value="{{ agent.price_override if agent.price_override is not none else '' }}" autocomplete="off" placeholder="e.g. 0">
+        </div>
+      </div>
+    </div>
+    <div class="mt-3 flex flex-wrap gap-2.5">
+      <button type="submit">Save agent</button>
+    </div>
+  </form>
+  <style>
+    .agent-tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--color-border); margin-bottom: 1rem; }
+    .agent-tabs [role="tab"] { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; box-shadow: none; color: var(--color-muted); font-weight: 700; font-size: 0.875rem; padding: 0.55rem 0.8rem; margin-bottom: -1px; }
+    .agent-tabs [role="tab"]:hover { background: none; border-bottom-color: var(--color-border); color: var(--color-navy); }
+    .agent-tabs [role="tab"][aria-selected="true"] { color: var(--color-navy); border-bottom-color: var(--color-primary); }
+    .agent-label-row { display: flex; align-items: center; gap: 0.4rem; }
+    .agent-tip { position: relative; display: inline-flex; }
+    .agent-tip-btn { display: inline-flex; background: none; border: none; box-shadow: none; padding: 0.1rem; color: var(--color-primary); cursor: help; }
+    .agent-tip-btn:hover, .agent-tip-btn:active { background: none; border: none; box-shadow: none; color: var(--color-deep); }
+    .agent-tip-bubble { display: none; position: absolute; left: 50%; transform: translateX(-50%); top: calc(100% + 8px); z-index: 30; width: max-content; max-width: 16rem; background: var(--color-navy); color: #fff; font-size: 12.5px; font-weight: 500; line-height: 1.45; padding: 0.55rem 0.75rem; border-radius: 8px; box-shadow: 0 12px 32px rgba(8,47,73,0.25); }
+    .agent-tip:hover .agent-tip-bubble, .agent-tip:focus-within .agent-tip-bubble { display: block; }
+    .agent-tip:hover .agent-tip-bubble:empty, .agent-tip:focus-within .agent-tip-bubble:empty { display: none; }
+    .agent-combo { position: relative; }
+    .agent-combo-input { padding-right: 2.5rem; }
+    .agent-combo-btn { position: absolute; right: 0.35rem; top: 0.65rem; display: inline-flex; background: none; border: none; box-shadow: none; padding: 0.45rem; color: var(--color-muted); }
+    .agent-combo-btn:hover, .agent-combo-btn:active { background: none; border: none; box-shadow: none; color: var(--color-navy); }
+    .agent-combo-box { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 30; max-height: 16rem; overflow-y: auto; background: #fff; border: 1px solid var(--color-border); border-radius: 8px; box-shadow: 0 12px 32px rgba(8,47,73,0.18); font-size: 0.8125rem; }
+    .agent-combo-opt { display: flex; justify-content: space-between; gap: 0.75rem; padding: 0.5rem 0.75rem; cursor: pointer; color: var(--color-navy); }
+    .agent-combo-opt:hover, .agent-combo-opt[data-active="true"] { background: var(--color-mist); }
+    .agent-combo-price { flex: none; color: var(--color-muted); font-size: 0.75rem; }
+    .agent-combo-meta { padding: 0.5rem 0.75rem; color: var(--color-muted); font-size: 0.75rem; }
+    .agent-key-row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.375rem; border: 1px solid var(--color-border); border-radius: 8px; padding: 0.5rem 0.5rem 0.5rem 0.75rem; background: #fff; }
+    .agent-key-row code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8125rem; color: var(--color-navy); }
+    .agent-icon-btn { display: inline-flex; flex: none; background: none; border: none; box-shadow: none; padding: 0.35rem; color: var(--color-muted); }
+    .agent-icon-btn:hover, .agent-icon-btn:active { background: var(--color-mist); border: none; box-shadow: none; color: var(--color-navy); }
+    .agent-key-edit { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.375rem; }
+    #agentKeyEditWrap .agent-key-input { flex: 1; min-width: 0; margin-top: 0; }
+  </style>
+  <div class="mt-3 flex flex-wrap gap-2.5">
+    <form method="post" action="/settings/agent/test"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn-secondary" type="submit">Test saved agent</button></form>
+    {% if agent.has_key %}
+    <form method="post" action="/settings/agent/key/delete" data-confirm data-confirm-title="Delete this agent key?" data-confirm-message="The stored provider key will be permanently deleted. AI steps will fail until a new key is pasted." data-confirm-action="Delete key"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="strategy" value="{{ agent.strategy }}"><button class="btn-danger" type="submit">Delete key</button></form>
+    {% endif %}
+  </div>
+  <script>
+  (function () {
+    var sel = document.getElementById("agentStrategy");
+    var selKey = document.getElementById("agentStrategyKey");
+    var selCombo = document.getElementById("agentStrategyCombo");
+    var selBox = document.getElementById("agentStrategyBox");
+    var selToggle = document.getElementById("agentStrategyToggle");
+    var blurb = document.getElementById("agentBlurb");
+    var base = document.getElementById("agentBaseUrl");
+    var baseWrap = document.getElementById("agentBaseWrap");
+    var baseHint = document.getElementById("agentBaseHint");
+    var combo = document.getElementById("agentModelCombo");
+    var box = document.getElementById("agentModelBox");
+    var toggle = document.getElementById("agentModelToggle");
+    var status = document.getElementById("agentModelStatus");
+    var model = document.getElementById("agentModel");
+    if (!sel) return;
+    var models = [];
+    try {
+      var raw = document.getElementById("agentModelsData");
+      models = JSON.parse((raw && raw.textContent) || "[]");
+      if (!Array.isArray(models)) models = [];
+    } catch (e) { models = []; }
+    var boxOpen = false;
+    var filtered = [];
+    var activeIdx = -1;
+    function setBox(open) {
+      boxOpen = open;
+      box.hidden = !open;
+      model.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) { activeIdx = -1; renderBox(); }
+      else model.removeAttribute("aria-activedescendant");
+    }
+    function renderBox() {
+      var q = model.value.trim().toLowerCase();
+      filtered = models.filter(function (m) {
+        return !q || (m.id || "").toLowerCase().indexOf(q) !== -1;
+      });
+      box.innerHTML = "";
+      var cap = 100;
+      filtered.slice(0, cap).forEach(function (m, i) {
+        var d = document.createElement("div");
+        d.className = "agent-combo-opt";
+        d.id = "agentModelOpt" + i;
+        d.setAttribute("role", "option");
+        d.setAttribute("aria-selected", i === activeIdx ? "true" : "false");
+        if (i === activeIdx) d.setAttribute("data-active", "true");
+        var s = document.createElement("span");
+        s.textContent = m.id;
+        d.appendChild(s);
+        if (m.price !== null && m.price !== undefined) {
+          var p = document.createElement("span");
+          p.className = "agent-combo-price";
+          p.textContent = "$" + Number(m.price).toFixed(2) + "/MTok";
+          d.appendChild(p);
+        }
+        d.addEventListener("mousedown", (function (idx) {
+          return function (e) { e.preventDefault(); choose(idx); };
+        })(i));
+        box.appendChild(d);
+      });
+      var meta = document.createElement("div");
+      meta.className = "agent-combo-meta";
+      meta.textContent = !filtered.length ? "No matches — any id still saves."
+        : filtered.length > cap ? ("+" + (filtered.length - cap) + " more — keep typing.") : "";
+      if (meta.textContent) box.appendChild(meta);
+    }
+    function choose(i) {
+      if (filtered[i]) model.value = filtered[i].id;
+      setBox(false);
+      model.focus();
+    }
+    function moveActive(delta) {
+      if (!filtered.length) return;
+      activeIdx = (activeIdx + delta + filtered.length) % filtered.length;
+      renderBox();
+      model.setAttribute("aria-activedescendant", "agentModelOpt" + activeIdx);
+      var el = document.getElementById("agentModelOpt" + activeIdx);
+      if (el && el.scrollIntoView) el.scrollIntoView({block: "nearest"});
+    }
+    var strategies = [];
+    try {
+      var sraw = document.getElementById("agentStrategiesData");
+      strategies = JSON.parse((sraw && sraw.textContent) || "[]");
+      if (!Array.isArray(strategies)) strategies = [];
+    } catch (e2) { strategies = []; }
+    function current() {
+      for (var i = 0; i < strategies.length; i++) {
+        if (strategies[i].key === selKey.value) return strategies[i];
+      }
+      return {};
+    }
+    function paint() {
+      var opt = current();
+      blurb.textContent = opt.blurb || "";
+      var mode = opt.base_url_mode || "fixed";
+      var show = mode === "required" || mode === "optional";
+      if (baseWrap) baseWrap.style.display = show ? "" : "none";
+      if (!show) base.value = "";
+      base.placeholder = mode === "required"
+        ? "https://your-server:port/v1"
+        : (opt.default_base_url || "");
+      baseHint.textContent = mode === "required" ? "(required)" : "";
+      base.required = mode === "required";
+      var key = document.getElementById("agentKey");
+      if (key) key.required = false;
+    }
+    var selOpen = false;
+    var selFiltered = [];
+    var selActive = -1;
+    function setSelBox(open) {
+      selOpen = open;
+      selBox.hidden = !open;
+      sel.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) { selActive = -1; renderSelBox(); }
+      else sel.removeAttribute("aria-activedescendant");
+    }
+    function renderSelBox() {
+      var q = sel.value.trim().toLowerCase();
+      selFiltered = strategies.filter(function (s) {
+        return !q || (s.label || "").toLowerCase().indexOf(q) !== -1
+          || (s.key || "").toLowerCase().indexOf(q) !== -1;
+      });
+      selBox.innerHTML = "";
+      selFiltered.forEach(function (s, i) {
+        var d = document.createElement("div");
+        d.className = "agent-combo-opt";
+        d.id = "agentStrategyOpt" + i;
+        d.setAttribute("role", "option");
+        d.setAttribute("aria-selected", i === selActive ? "true" : "false");
+        if (i === selActive) d.setAttribute("data-active", "true");
+        var t = document.createElement("span");
+        t.textContent = s.label;
+        d.appendChild(t);
+        d.addEventListener("mousedown", (function (idx) {
+          return function (e) { e.preventDefault(); chooseStrategy(idx); };
+        })(i));
+        selBox.appendChild(d);
+      });
+      if (!selFiltered.length) {
+        var meta = document.createElement("div");
+        meta.className = "agent-combo-meta";
+        meta.textContent = "No matching provider.";
+        selBox.appendChild(meta);
+      }
+    }
+    function chooseStrategy(i) {
+      if (selFiltered[i]) {
+        selKey.value = selFiltered[i].key;
+        sel.value = selFiltered[i].label;
+        refresh();
+      }
+      setSelBox(false);
+      sel.focus();
+    }
+    function moveSelActive(delta) {
+      if (!selFiltered.length) return;
+      selActive = (selActive + delta + selFiltered.length) % selFiltered.length;
+      renderSelBox();
+      sel.setAttribute("aria-activedescendant", "agentStrategyOpt" + selActive);
+      var el = document.getElementById("agentStrategyOpt" + selActive);
+      if (el && el.scrollIntoView) el.scrollIntoView({block: "nearest"});
+    }
+    function paintStatus(data) {
+      if (!status || !data) return;
+      var n = Array.isArray(data.models) ? data.models.length : 0;
+      status.textContent = data.source === "live" ? (n + " models · live list")
+        : data.source === "cache" ? ("Cached list · " + n + " models")
+        : data.source === "curated" ? ("Curated list · " + n + " models")
+        : "Type any model id";
+    }
+    var timer = null;
+    function refresh() {
+      paint();
+      var url = "/settings/agent/models?strategy=" + encodeURIComponent(selKey.value)
+        + "&base_url=" + encodeURIComponent(base.value || "");
+      fetch(url, {headers: {"Accept": "application/json"}}).then(function (r) {
+        return r.ok ? r.json() : null;
+      }).then(function (data) {
+        if (!data || !Array.isArray(data.models)) return;
+        models = data.models;
+        activeIdx = -1;
+        if (boxOpen) renderBox();
+        paintStatus(data);
+      }).catch(function () {});
+    }
+    model.addEventListener("input", function () {
+      activeIdx = -1;
+      if (!boxOpen) setBox(true);
+      else renderBox();
+    });
+    model.addEventListener("focus", function () { if (!boxOpen) setBox(true); });
+    toggle.addEventListener("click", function () {
+      setBox(!boxOpen);
+      if (boxOpen) model.focus();
+    });
+    document.addEventListener("mousedown", function (e) {
+      if (boxOpen && combo && !combo.contains(e.target)) setBox(false);
+    });
+    model.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (!boxOpen) setBox(true);
+        moveActive(e.key === "ArrowDown" ? 1 : -1);
+      } else if (e.key === "Enter" && boxOpen && activeIdx >= 0) {
+        e.preventDefault();
+        choose(activeIdx);
+      } else if (e.key === "Escape" && boxOpen) {
+        e.preventDefault();
+        setBox(false);
+      }
+    });
+    var tabP = document.getElementById("agentTabProvider");
+    var tabM = document.getElementById("agentTabModel");
+    var panelP = document.getElementById("agentPanelProvider");
+    var panelM = document.getElementById("agentPanelModel");
+    function showTab(which) {
+      var m = which === "model";
+      tabP.setAttribute("aria-selected", m ? "false" : "true");
+      tabM.setAttribute("aria-selected", m ? "true" : "false");
+      tabP.tabIndex = m ? -1 : 0;
+      tabM.tabIndex = m ? 0 : -1;
+      panelP.hidden = m;
+      panelM.hidden = !m;
+      if (m) refresh();
+    }
+    tabP.addEventListener("click", function () { showTab("provider"); });
+    tabM.addEventListener("click", function () { showTab("model"); });
+    [tabP, tabM].forEach(function (tab) {
+      tab.addEventListener("keydown", function (e) {
+        if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+        e.preventDefault();
+        var goModel = tab === tabP ? e.key === "ArrowRight" : e.key !== "ArrowLeft";
+        showTab(goModel ? "model" : "provider");
+        (goModel ? tabM : tabP).focus();
+      });
+    });
+    var keyRow = document.getElementById("agentKeyRow");
+    var keyEdit = document.getElementById("agentKeyEdit");
+    var keyWrap = document.getElementById("agentKeyEditWrap");
+    var keyView = document.getElementById("agentKeyView");
+    var keyInput = document.getElementById("agentKey");
+    if (keyEdit && keyRow && keyWrap && keyInput) keyEdit.addEventListener("click", function () {
+      keyRow.style.display = "none";
+      keyWrap.style.display = "flex";
+      keyInput.focus();
+    });
+    if (keyView && keyRow && keyWrap && keyInput) keyView.addEventListener("click", function () {
+      keyInput.value = "";
+      keyWrap.style.display = "none";
+      keyRow.style.display = "";
+    });
+    var keyCopy = document.getElementById("agentKeyCopy");
+    function writeClipboard(text, done) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, done);
+      } else {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); } catch (e) {}
+        document.body.removeChild(ta);
+        done();
+      }
+    }
+    if (keyCopy) keyCopy.addEventListener("click", function () {
+      var done = function () {
+        keyCopy.setAttribute("aria-label", "Copied");
+        setTimeout(function () { keyCopy.setAttribute("aria-label", "Copy API key"); }, 1500);
+      };
+      var csrf = document.querySelector('form[action="/settings/agent"] input[name="csrf"]');
+      var strategy = keyRow ? (keyRow.getAttribute("data-strategy") || "") : "";
+      fetch("/settings/agent/key/copy", {
+        method: "POST",
+        headers: {"Content-Type": "application/x-www-form-urlencoded"},
+        body: "csrf=" + encodeURIComponent(csrf ? csrf.value : "")
+          + "&strategy=" + encodeURIComponent(strategy),
+      }).then(function (r) {
+        return r.ok ? r.json() : null;
+      }).then(function (data) {
+        if (data && data.key) writeClipboard(data.key, done);
+      }).catch(function () {});
+    });
+    sel.addEventListener("input", function () {
+      selActive = -1;
+      if (!selOpen) setSelBox(true);
+      else renderSelBox();
+    });
+    sel.addEventListener("focus", function () { if (!selOpen) setSelBox(true); });
+    sel.addEventListener("blur", function () {
+      // Strategy is a fixed key, not free text: unmatched typing reverts.
+      setTimeout(function () {
+        sel.value = current().label || "";
+        if (selOpen) setSelBox(false);
+      }, 150);
+    });
+    selToggle.addEventListener("click", function () {
+      setSelBox(!selOpen);
+      if (selOpen) sel.focus();
+    });
+    document.addEventListener("mousedown", function (e) {
+      if (selOpen && selCombo && !selCombo.contains(e.target)) setSelBox(false);
+    });
+    sel.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (!selOpen) setSelBox(true);
+        moveSelActive(e.key === "ArrowDown" ? 1 : -1);
+      } else if (e.key === "Enter" && selOpen && selActive >= 0) {
+        e.preventDefault();
+        chooseStrategy(selActive);
+      } else if (e.key === "Escape" && selOpen) {
+        e.preventDefault();
+        setSelBox(false);
+      }
+    });
+    base.addEventListener("input", function () {
+      if (selKey.value !== "ollama" && selKey.value !== "custom") return;
+      clearTimeout(timer);
+      timer = setTimeout(refresh, 600);
+    });
+    sel.value = current().label || "";
+    paint();
+    showTab("provider");
+    if (selKey.value === "openrouter" || selKey.value === "vercel" || selKey.value === "ollama") {
+      refresh();  // page renders from cache; live list fills in async
+    }
+  })();
+  </script>
+  {% endif %}
+</section>
+{% endblock %}

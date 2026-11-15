@@ -4,14 +4,14 @@ Status: proposal. Derived from `docs/plans/2026-10-27-ai-security-agent.md` (par
 
 ## Overview
 
-Self-hosted Docker security agent. Own harness on LangGraph plus LangChain, Owner-configured model brain (Settings → Brain). Repo-agnostic (GitHub, GitLab, any git URL, local). Dashboard with Owner-managed accounts plus Google and Microsoft SSO.
+Self-hosted Docker security agent. Own harness on LangGraph plus LangChain, Owner-configured model agent (Settings → Agent). Repo-agnostic (GitHub, GitLab, any git URL, local). Dashboard with Owner-managed accounts plus Google and Microsoft SSO.
 
 Pipeline: signals → sandbox clone → reachability → patch → deliver → approve. Secrets loop parallel. Dashboard owns accounts, reports, approvals, notification settings.
 
 ```text
 Scheduler/Triggers -> Worker (LangGraph) -> Sandbox Runner -> App (FastAPI) -> Dashboard
                           |                      |               |
-                     Model Brain            Scanners/tools   Postgres + Loki + Backups
+                     Model Agent            Scanners/tools   Postgres + Loki + Backups
 ```
 
 ## Principles (from plans)
@@ -30,7 +30,7 @@ Six logical planes mapped onto those services:
 
 | Plane | Compose home | Plans |
 |---|---|---|
-| Orchestration (scheduler, pipeline, brain) | orchestrator + executor | FR-2, FR-3, FR-4, FR-8, FR-15 |
+| Orchestration (scheduler, pipeline, agent) | orchestrator + executor | FR-2, FR-3, FR-4, FR-8, FR-15 |
 | Execution (sandbox lifecycle, tools) | sandbox runner | FR-14, NFR-1, NFR-2 |
 | Control (findings, delivery, approvals) | app | FR-5, FR-9, FR-12 D1 |
 | Presentation + Identity | app | FR-10, FR-11, FR-12 |
@@ -55,13 +55,13 @@ Six logical planes mapped onto those services:
 - Patch (FR-4): bump-first + model adaptation (advisory fixed version, else next fixed; docs/changelog checked; adaptation in same patch). Verify via repo tests if present, else static analysis; propose only on pass. Related-test failures only (agent judges relatedness, discloses ignored); scoped test edits only; 3 repair rounds then report-only; unpatchable → guidance + filed issue.
 - Secrets branch (FR-8): Betterleaks in the same sandbox run (default rules + install allowlist; liveness validation on, analysis off). History baselined once at connect, new-only after. Response: notify + auto removal-PR (redact, env reference) + rotation guidance/alert. No auto-rotation in v1. Closure: HEAD-clean AND (human marks rotated OR re-validation shows dead).
 
-### 1c. Model Brain (FR-15, provider strategies)
+### 1c. Model Agent (FR-15, provider strategies)
 
-- Owner-configured provider in Settings → Brain: OpenRouter, Vercel AI Gateway, Ollama-local, custom OpenAI-compatible URL, native Google Gemini, native Anthropic. One org key per provider (AES-256-GCM, never re-viewed); no `MODEL_*` env (legacy env imports once on upgrade).
-- Strategy registry + factory (`brain/providers.py`, `brain/__init__.py`): every OpenAI-shaped vendor rides LangChain `ChatOpenAI` with `base_url` override; native Anthropic rides `ChatAnthropic` (max_tokens set, sampling params omitted). Chat Completions + native tool calls only.
+- Owner-configured provider in Settings → Agent: OpenRouter, Vercel AI Gateway, Ollama-local, custom OpenAI-compatible URL, native Google Gemini, native Anthropic, native DeepSeek. One org key per provider (AES-256-GCM, never re-viewed); no `MODEL_*` env (legacy env is ignored).
+- Strategy registry + factory (`agent/providers.py`, `agent/__init__.py`): every OpenAI-shaped vendor rides LangChain `ChatOpenAI` with `base_url` override; native Anthropic rides `ChatAnthropic` (max_tokens set, sampling params omitted). Chat Completions + native tool calls only.
 - Full probe (auth, chat, native `tool_calls` round-trip) qualifies every strategy — manual Test action plus the `security-agent-probe` CLI; no validation on save. Portability constraint: no Responses-API-specific code, no prompt-emulated or chat-only path in v1.
 - Per-model ledger pricing: cached gateway prices → native table → operator override → $0 (custom/Ollama). Caps and alerts unchanged.
-- Runtime: missing/broken provider fails loud (clear brain error; runs park, resumable after configuring); non-AI scanning unaffected. Bounded retry with backoff within per-run caps, then park under backpressure + alert.
+- Runtime: missing/broken provider fails loud (clear agent error; runs park, resumable after configuring); non-AI scanning unaffected. Bounded retry with backoff within per-run caps, then park under backpressure + alert.
 
 ## 2. Execution Plane (Sandbox Runner)
 
@@ -137,7 +137,7 @@ Six logical planes mapped onto those services:
 
 ## Build order
 
-1. Phase 0: scaffold (FastAPI app, LangGraph worker, compose), model-brain probe, execution policy, dashboard skeleton + SSO, Postgres with encrypted fields.
+1. Phase 0: scaffold (FastAPI app, LangGraph worker, compose), model-agent probe, execution policy, dashboard skeleton + SSO, Postgres with encrypted fields.
 2. Phase 1: Node.js vuln loop (scheduler, sandbox scan, reachability, patch, delivery, findings + approval queue).
 3. Phase 2: news signals.
 4. Phase 3: Python reachability (same graph, Python nodes).

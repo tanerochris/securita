@@ -1,0 +1,14 @@
+{% extends "settings_layout.html" %}
+{% block settings_content %}
+<section aria-labelledby="reports-heading">
+  <h2 id="reports-heading" class="text-xl">Reports</h2>
+  <p class="mt-1 text-sm text-slate-600">Risk snapshot behind the digest, as a file.</p>
+  <div class="mt-3 flex flex-wrap gap-2.5">
+    <a class="btn-primary" href="/settings/reports/export?format=json">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+      Download JSON
+    </a>
+    <a class="btn-secondary" href="/settings/reports/export?format=csv">Download CSV</a>
+  </div>
+</section>
+{% endblock %}

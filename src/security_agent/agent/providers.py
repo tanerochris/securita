@@ -1,36 +1,37 @@
-"""Brain provider strategies: six launch entries behind one factory seam.
+"""Agent provider strategies: seven launch entries behind one factory seam.
 
 Every chat-model vendor the install supports is one `Strategy` entry here:
 OpenRouter + Vercel AI Gateway (gateways), Ollama-local, custom
 OpenAI-compatible URL, native Google (OpenAI-compatible preset, no new
-dep), native Anthropic (`ChatAnthropic`). OpenAI-shaped vendors ride
+dep), native DeepSeek (OpenAI-compatible preset, no new dep), native
+Anthropic (`ChatAnthropic`). OpenAI-shaped vendors ride
 `ChatOpenAI`; only Anthropic needs its own client (the Messages API is
 not OpenAI-shaped).
 
 This module is pure: no database, no settings reads. Selection, keys,
-and price caches live in `control/brain_settings.py`; the factory in
-`security_agent.brain` resolves config and calls `build_chat_model`.
+and price caches live in `control/agent_settings.py`; the factory in
+`security_agent.agent` resolves config and calls `build_chat_model`.
 """
 
 from dataclasses import dataclass
 
 
-class BrainError(Exception):
-    """Loud brain failure: misconfigured or unreachable provider.
+class AgentError(Exception):
+    """Loud agent failure: misconfigured or unreachable provider.
 
     Plain Exception deliberately (like CostCapExceeded): the patch
     repair loop swallows (PatchError, ScanError, RuntimeError,
-    TimeoutError), and a brain failure must abort/park, never retry.
+    TimeoutError), and a agent failure must abort/park, never retry.
     """
 
 
-class BrainNotConfigured(BrainError):
-    """No usable brain: nothing selected, or key/base URL missing."""
+class AgentNotConfigured(AgentError):
+    """No usable agent: nothing selected, or key/base URL missing."""
 
 
 #: Ledger fallback ($/MTok) when no price resolves: legacy cap
-#: conversions and embeddings when no brain is configured. A
-#: *configured* custom/Ollama brain ledgers $0, never this.
+#: conversions and embeddings when no agent is configured. A
+#: *configured* custom/Ollama agent ledgers $0, never this.
 DEFAULT_PRICE_PER_MTOK_USD = 2.0
 
 #: Max output tokens for the native Anthropic client. The Messages API
@@ -38,9 +39,13 @@ DEFAULT_PRICE_PER_MTOK_USD = 2.0
 #: rejects non-default temperature, so they are omitted entirely).
 ANTHROPIC_MAX_TOKENS = 4096
 
+#: Anthropic Models API base + version header for the live model list.
+ANTHROPIC_API_BASE = "https://api.anthropic.com"
+ANTHROPIC_VERSION = "2023-06-01"
+
 #: Version of the static native price table below. Bump when prices
 #: are refreshed; the Settings UI shows the version next to natives.
-NATIVE_PRICE_TABLE_VERSION = 1
+NATIVE_PRICE_TABLE_VERSION = 2
 
 #: Blended $/MTok ≈ (input + output) / 2 per native model. Approximate
 #: list prices, versioned above; the operator override in Settings wins
@@ -55,9 +60,13 @@ NATIVE_PRICES: dict[str, float] = {
     "claude-opus-4-5": 15.0,
     "claude-sonnet-4-5": 9.0,
     "claude-haiku-4-5": 3.0,
+    # DeepSeek (native OpenAI-compatible API).
+    "deepseek-chat": 0.69,
+    "deepseek-reasoner": 1.37,
 }
 
 CURATED_GOOGLE_MODELS = ("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash")
+CURATED_DEEPSEEK_MODELS = ("deepseek-chat", "deepseek-reasoner")
 CURATED_ANTHROPIC_MODELS = ("claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5")
 
 _FETCH_TIMEOUT_SECONDS = 10.0
@@ -74,6 +83,10 @@ class Strategy:
     needs_key: bool = True
     gateway: bool = False  # live model list + per-model prices
     blurb: str = ""
+    #: How the Base URL field behaves: fixed (single known endpoint, hidden),
+    #: optional (default shown, overridable), required (custom URL), or
+    #: unused (no base URL at all, hidden).
+    base_url_mode: str = "fixed"
 
 
 STRATEGIES: dict[str, Strategy] = {
@@ -100,6 +113,7 @@ STRATEGIES: dict[str, Strategy] = {
         default_base_url="http://localhost:11434/v1",
         needs_key=False,
         blurb="Local Ollama server. Lists installed tags; free.",
+        base_url_mode="optional",
     ),
     "custom": Strategy(
         key="custom",
@@ -107,6 +121,7 @@ STRATEGIES: dict[str, Strategy] = {
         kind="openai",
         needs_key=False,
         blurb="Any OpenAI-shaped server: host, port, path. Free text model id.",
+        base_url_mode="required",
     ),
     "google": Strategy(
         key="google",
@@ -120,11 +135,19 @@ STRATEGIES: dict[str, Strategy] = {
         label="Anthropic (native)",
         kind="anthropic",
         blurb="Native Anthropic Messages API. Curated model list.",
+        base_url_mode="unused",
+    ),
+    "deepseek": Strategy(
+        key="deepseek",
+        label="DeepSeek (native)",
+        kind="openai",
+        default_base_url="https://api.deepseek.com/v1",
+        blurb="Native DeepSeek API. Curated model list.",
     ),
 }
 
 #: UI order: gateways, local, custom, natives.
-STRATEGY_ORDER = ("openrouter", "vercel", "ollama", "custom", "google", "anthropic")
+STRATEGY_ORDER = ("openrouter", "vercel", "ollama", "custom", "google", "anthropic", "deepseek")
 
 
 def strategy_label(key: str) -> str:
@@ -135,26 +158,26 @@ def strategy_label(key: str) -> str:
 def build_chat_model(strategy: str, *, model: str, api_key: str = "", base_url: str = ""):
     """Build a LangChain chat model for a strategy (no network, no DB).
 
-    Raises BrainNotConfigured when the strategy needs a key or base URL
-    it was not given; BrainError when the client cannot be constructed.
+    Raises AgentNotConfigured when the strategy needs a key or base URL
+    it was not given; AgentError when the client cannot be constructed.
     """
     from pydantic import SecretStr
 
     entry = STRATEGIES.get(strategy or "")
     if entry is None:
-        raise BrainError(f"Unknown brain strategy {strategy!r}. Pick one in Settings → Brain.")
+        raise AgentError(f"Unknown agent strategy {strategy!r}. Pick one in Settings → Agent.")
     if not (model or "").strip():
-        raise BrainNotConfigured("Brain model is empty. Pick a model in Settings → Brain.")
+        raise AgentNotConfigured("Agent model is empty. Pick a model in Settings → Agent.")
     key = (api_key or "").strip()
     if entry.needs_key and not key:
-        raise BrainNotConfigured(
-            f"Brain strategy {entry.label} needs an API key. Paste one in Settings → Brain."
+        raise AgentNotConfigured(
+            f"Agent strategy {entry.label} needs an API key. Paste one in Settings → Agent."
         )
     if entry.kind == "anthropic":
         try:
             from langchain_anthropic import ChatAnthropic
         except ImportError as exc:
-            raise BrainError(
+            raise AgentError(
                 "Native Anthropic needs the langchain-anthropic package "
                 "(run `uv sync` to install it)."
             ) from exc
@@ -169,12 +192,12 @@ def build_chat_model(strategy: str, *, model: str, api_key: str = "", base_url: 
                 "max_tokens": ANTHROPIC_MAX_TOKENS,
             }
             return ChatAnthropic(**kwargs)
-        except Exception as exc:  # noqa: BLE001 - build failures are BrainError
-            raise BrainError(f"Could not build the Anthropic brain: {exc}") from exc
+        except Exception as exc:  # noqa: BLE001 - build failures are AgentError
+            raise AgentError(f"Could not build the Anthropic agent: {exc}") from exc
     base = (base_url or "").strip() or entry.default_base_url
     if not base:
-        raise BrainNotConfigured(
-            f"Brain strategy {entry.label} needs a base URL. Set one in Settings → Brain."
+        raise AgentNotConfigured(
+            f"Agent strategy {entry.label} needs a base URL. Set one in Settings → Agent."
         )
     from langchain_openai import ChatOpenAI
 
@@ -185,8 +208,8 @@ def build_chat_model(strategy: str, *, model: str, api_key: str = "", base_url: 
             base_url=base,
             temperature=0,
         )
-    except Exception as exc:  # noqa: BLE001 - build failures are BrainError
-        raise BrainError(f"Could not build the {entry.label} brain: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 - build failures are AgentError
+        raise AgentError(f"Could not build the {entry.label} agent: {exc}") from exc
 
 
 def _openrouter_blended(pricing: dict) -> float | None:
@@ -210,7 +233,7 @@ def fetch_openrouter_models() -> list[dict]:
         resp.raise_for_status()
         rows = resp.json().get("data", [])
     except Exception as exc:
-        raise BrainError(f"OpenRouter model list unavailable: {exc}") from exc
+        raise AgentError(f"OpenRouter model list unavailable: {exc}") from exc
     out = []
     for row in rows or []:
         mid = (row or {}).get("id")
@@ -230,7 +253,7 @@ def fetch_openai_list_models(base_url: str, api_key: str = "") -> list[dict]:
 
     base = (base_url or "").rstrip("/")
     if not base:
-        raise BrainError("No base URL for the model list.")
+        raise AgentError("No base URL for the model list.")
     headers = {"Accept": "application/json"}
     if (api_key or "").strip():
         headers["Authorization"] = f"Bearer {api_key.strip()}"
@@ -239,8 +262,56 @@ def fetch_openai_list_models(base_url: str, api_key: str = "") -> list[dict]:
         resp.raise_for_status()
         rows = resp.json().get("data", [])
     except Exception as exc:
-        raise BrainError(f"Model list unavailable at {base}/models: {exc}") from exc
+        raise AgentError(f"Model list unavailable at {base}/models: {exc}") from exc
     return [{"id": str(row["id"]), "price": None} for row in rows or [] if (row or {}).get("id")]
+
+
+def fetch_anthropic_models(api_key: str) -> list[dict]:
+    """Live Anthropic model list (`GET /v1/models`, active only).
+
+    Follows `has_more`/`last_id` pages (capped) and maps known ids to the
+    static price table; unknown ids carry no price. Key-authenticated:
+    raises AgentError without a key or on any HTTP failure.
+    """
+    import httpx
+
+    key = (api_key or "").strip()
+    if not key:
+        raise AgentError("No API key for the Anthropic model list.")
+    out: list[dict] = []
+    after: str | None = None
+    for _ in range(5):
+        params: dict[str, str | int] = {"limit": 1000}
+        if after:
+            params["after_id"] = after
+        try:
+            resp = httpx.get(
+                f"{ANTHROPIC_API_BASE}/v1/models",
+                params=params,
+                headers={
+                    "Accept": "application/json",
+                    "anthropic-version": ANTHROPIC_VERSION,
+                    "Authorization": f"Bearer {key}",
+                },
+                timeout=_FETCH_TIMEOUT_SECONDS,
+            )
+            resp.raise_for_status()
+            payload = resp.json() or {}
+        except Exception as exc:
+            raise AgentError(f"Anthropic model list unavailable: {exc}") from exc
+        for row in payload.get("data", []) or []:
+            if (row or {}).get("lifecycle", "active") != "active":
+                continue
+            mid = (row or {}).get("id")
+            if not mid:
+                continue
+            out.append({"id": str(mid), "price": NATIVE_PRICES.get(str(mid))})
+        if not payload.get("has_more"):
+            break
+        after = payload.get("last_id") or None
+        if not after:
+            break
+    return out
 
 
 def fetch_ollama_models(base_url: str) -> list[dict]:
@@ -251,11 +322,11 @@ def fetch_ollama_models(base_url: str) -> list[dict]:
     if base.endswith("/v1"):
         base = base[: -len("/v1")]
     if not base:
-        raise BrainError("No base URL for the Ollama tag list.")
+        raise AgentError("No base URL for the Ollama tag list.")
     try:
         resp = httpx.get(f"{base}/api/tags", timeout=_FETCH_TIMEOUT_SECONDS)
         resp.raise_for_status()
         rows = resp.json().get("models", [])
     except Exception as exc:
-        raise BrainError(f"Ollama tag list unavailable at {base}/api/tags: {exc}") from exc
+        raise AgentError(f"Ollama tag list unavailable at {base}/api/tags: {exc}") from exc
     return [{"id": str(row["name"]), "price": 0.0} for row in rows or [] if (row or {}).get("name")]

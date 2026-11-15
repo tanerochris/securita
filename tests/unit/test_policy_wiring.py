@@ -6,7 +6,7 @@ from unittest import mock
 
 import pytest
 
-from security_agent.brain.adapt import make_model_adapt
+from security_agent.agent.adapt import make_model_adapt
 from security_agent.db.models import Finding, Repo, RepoKind, RunTrigger, ScanRun
 from security_agent.db.session import session_scope
 from security_agent.policy.service import create_document
@@ -15,7 +15,7 @@ from security_agent.worker.patch import _mark_unpatchable, run_patch
 
 @pytest.fixture(autouse=True)
 def _no_embeddings():
-    with mock.patch("security_agent.brain.embeddings.embed_texts", return_value=None):
+    with mock.patch("security_agent.agent.embeddings.embed_texts", return_value=None):
         yield
 
 

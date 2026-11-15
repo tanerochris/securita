@@ -382,7 +382,7 @@ def generate_summary(
 
     Disabled/empty output falls back to the evidence template
     (model_backed=False) and the report still ships. A missing or broken
-    brain, like a model outage (invoke raising), raises ReportError
+    agent, like a model outage (invoke raising), raises ReportError
     instead: the report step fails, the error is recorded, the table
     still updates, and the next check retries because the update set
     remains unreported (D23). Usage ledgers to the separate dependency
@@ -392,7 +392,7 @@ def generate_summary(
     An explicitly injected model skips the enabled gate so tests can
     drive this deterministically.
     """
-    from security_agent.brain import BrainError, get_chat_model
+    from security_agent.agent import AgentError, get_chat_model
     from security_agent.config import get_settings
 
     if model is None:
@@ -400,8 +400,8 @@ def generate_summary(
             return fallback_summary(sections), False
         try:
             bound = get_chat_model()
-        except BrainError as exc:
-            raise ReportError(f"brain unavailable: {exc}") from exc
+        except AgentError as exc:
+            raise ReportError(f"agent unavailable: {exc}") from exc
     else:
         bound = model
     # Pre-check: never pay for a call the budget will only park (D23).

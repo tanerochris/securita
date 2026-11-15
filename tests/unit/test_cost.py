@@ -71,7 +71,7 @@ def _run():
 
 def _usd(tokens: int) -> float:
     """Cap dollars for a token count at the resolved model price."""
-    from security_agent.control.brain_settings import price_per_token_usd
+    from security_agent.control.agent_settings import price_per_token_usd
 
     return tokens * price_per_token_usd()
 
@@ -202,7 +202,7 @@ def test_spend_alerts_once_per_level_per_day_with_escalation():
 
 
 def test_tracked_invoke_prefers_usage_metadata_then_estimates():
-    from security_agent.brain import tracked_invoke
+    from security_agent.agent import tracked_invoke
 
     _reset_cost_state()
 
@@ -245,7 +245,7 @@ def test_tracked_invoke_prefers_usage_metadata_then_estimates():
 
 
 def test_adapt_propagates_cap_abort_not_patch_error(tmp_path):
-    from security_agent.brain.adapt import make_model_adapt
+    from security_agent.agent.adapt import make_model_adapt
 
     run = _run()
     _reset_cost_state()
@@ -469,7 +469,7 @@ def test_deps_usage_counts_toward_monthly_cap():
     from security_agent.control.deps import record_deps_usage
 
     base = month_spend()
-    from security_agent.control.brain_settings import price_per_token_usd
+    from security_agent.control.agent_settings import price_per_token_usd
 
     price = price_per_token_usd()
     task = f"cap-{datetime.now(UTC).timestamp()}"

@@ -1,6 +1,6 @@
 """Chat validation end to end (offline): widget, scan + gate flows.
 
-No live brain: turns that need the model run through the service layer with
+No live agent: turns that need the model run through the service layer with
 a fake model in tests/unit/test_chat.py. Here HTTP covers page, widget,
 scope, gate requests, and confirm execution; the scan-confirm path proves
 the chat-started run matches a dashboard scan-now run.
@@ -275,9 +275,9 @@ def test_mentions_endpoint_scopes_users_to_owner():
 
 def test_message_with_upload_shows_chips_and_rejects_bad_file():
     _login(Role.OWNER)
-    with session_scope() as db:  # unconfigured brain posts a notice
-        db.execute(delete(NotifyState).where(NotifyState.key.like("brain.%")))
-        db.execute(delete(EncryptedToken).where(EncryptedToken.owner.like("brain:%")))
+    with session_scope() as db:  # unconfigured agent posts a notice
+        db.execute(delete(NotifyState).where(NotifyState.key.like("agent.%")))
+        db.execute(delete(EncryptedToken).where(EncryptedToken.owner.like("agent:%")))
     csrf = make_csrf()
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
     resp = client.post(
@@ -285,10 +285,10 @@ def test_message_with_upload_shows_chips_and_rejects_bad_file():
         data={"csrf": csrf, "text": "look", "thread": "thread"},
         files={"files": ("shot.png", png, "image/png")},
     )
-    # Unconfigured brain posts a notice, but validate/store/chips run first.
+    # Unconfigured agent posts a notice, but validate/store/chips run first.
     assert resp.status_code == 200, resp.text[:300]
     assert "shot.png" in resp.text
-    assert "Settings → Brain" in resp.text
+    assert "Settings → Agent" in resp.text
     resp = client.post(
         "/chat/message",
         data={"csrf": csrf, "text": "x", "thread": "thread"},

@@ -80,7 +80,7 @@ def _process(verdict: str, verified):
     model = _FakeModel(json.dumps({"verdict": verdict, "category": "vulnerability"}))
     with (
         mock.patch.object(intel_mod, "get_settings", return_value=settings),
-        mock.patch("security_agent.brain.get_chat_model", return_value=model),
+        mock.patch("security_agent.agent.get_chat_model", return_value=model),
         mock.patch.object(news_mod, "enrich_item", return_value=False),
         mock.patch.object(intel_mod, "verify_advisory", return_value=verified),
         mock.patch.object(intel_mod, "kev_exploited_ids", return_value=set()),

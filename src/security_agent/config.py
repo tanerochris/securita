@@ -30,9 +30,8 @@ class Settings(BaseSettings):
         return value
 
     master_key: str = Field(default="", alias="MASTER_KEY")
-    # Brain provider: configured in Settings → Brain (Owner-managed org
-    # keys), never env. Legacy MODEL_* env imports once on upgrade, then
-    # is ignored (see control/brain_settings.maybe_migrate_env).
+    # Agent provider: configured in Settings → Agent (Owner-managed org
+    # keys), never env. Legacy MODEL_* env is ignored.
     # Chat agent daily spend cap in USD (install-wide, Owner/Maintainer
     # adjustable from Settings; 0 disables the cap).
     chat_spend_cap_daily_usd: float = Field(default=5.0, alias="CHAT_SPEND_CAP_DAILY_USD")
@@ -88,7 +87,7 @@ class Settings(BaseSettings):
     # — no extra service. "ollama" talks to an Ollama server's
     # OpenAI-compatible /v1/embeddings (compose profile "ollama").
     # "hosted" is any OpenAI-compatible API (set EMBEDDING_BASE_URL +
-    # EMBEDDING_API_KEY; the brain provider is separate). "off" is
+    # EMBEDDING_API_KEY; the agent provider is separate). "off" is
     # keyword retrieval only. Vectors are optional: chunks without
     # embeddings still serve, never a hard failure.
     embedding_provider: str = Field(default="local", alias="EMBEDDING_PROVIDER")
@@ -117,7 +116,7 @@ class Settings(BaseSettings):
     )
     spend_warn_daily_usd: float = Field(default=25.0, alias="SPEND_WARN_DAILY_USD")
     spend_critical_daily_usd: float = Field(default=100.0, alias="SPEND_CRITICAL_DAILY_USD")
-    # Per-model ledger pricing lives in Settings → Brain (cached gateway
+    # Per-model ledger pricing lives in Settings → Agent (cached gateway
     # prices, native table, operator override). No env price remains.
     # Overall AI budget: monthly spend cap in USD across every ledgered
     # model call (security pipeline, dependencies, embeddings, probe).
@@ -143,7 +142,7 @@ class Settings(BaseSettings):
         pre-USD installs keep their tuned limit. The config layer
         stays DB-free, so this uses the same $2/MTok fallback the
         ledger uses when no model price resolves (see
-        brain.providers.DEFAULT_PRICE_PER_MTOK_USD).
+        agent.providers.DEFAULT_PRICE_PER_MTOK_USD).
         """
         if self.run_spend_cap_usd is not None:
             return max(0.0, self.run_spend_cap_usd)

@@ -282,9 +282,9 @@ JS/Python regexes (no catastrophic backtracking found).
   [lifecycle.py](/Users/f3lx/Documents/projects/meta/src/security_agent/control/lifecycle.py:221),
   [news.py](/Users/f3lx/Documents/projects/meta/src/security_agent/worker/news.py:57),
   [gates.py](/Users/f3lx/Documents/projects/meta/src/security_agent/control/gates.py:78),
-  [brain/__init__.py](/Users/f3lx/Documents/projects/meta/src/security_agent/brain/__init__.py:15).
+  [agent/__init__.py](/Users/f3lx/Documents/projects/meta/src/security_agent/agent/__init__.py:15).
   Without git history this review cannot prove they pre-date H4; their
-  locations (news/lifecycle/gates/brain) are outside every H4-touched
+  locations (news/lifecycle/gates/agent) are outside every H4-touched
   module, and H4 modules type-check clean. Fix or explicitly waive before
   release — a red type gate trains operators to ignore it.
 - **B2 — Duplicated repair loops:** `patch_python_group`

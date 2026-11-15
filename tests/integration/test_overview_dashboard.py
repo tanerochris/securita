@@ -192,7 +192,7 @@ def test_header_identity_and_bell_on_every_page():
         "/policies",
         "/approvals",
         "/accounts",
-        "/settings",
+        "/settings/agent",
     ]
     for path in pages:
         body = client.get(path).text
@@ -242,7 +242,11 @@ def test_sidebar_marks_active_section():
         "/policies": "/policies",
         "/approvals": "/approvals",
         "/accounts": "/accounts",
-        "/settings": "/settings",
+        "/settings/agent": "/settings",
+        "/settings/notifications": "/settings",
+        "/settings/reports": "/settings",
+        "/settings/cost": "/settings",
+        "/settings/dependencies": "/settings",
     }
     for page, href in cases.items():
         body = client.get(page).text

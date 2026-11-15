@@ -18,11 +18,11 @@
   </div>
 </div>
 
-{% if brain is defined and not brain.configured %}
+{% if agent is defined and not agent.configured %}
 <div class="mt-5 flex flex-wrap items-center gap-3 rounded-xl bg-brand-mist px-4 py-3" role="status">
   <svg class="text-brand-primary" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-  <p class="text-sm text-brand-deep"><strong class="font-bold text-brand-navy">Brain not configured.</strong> AI steps fail loud and runs park until an Owner picks a provider in Settings. Non-AI scanning is unaffected.</p>
-  <a class="ml-auto text-sm font-bold text-brand-primary hover:text-brand-deep" href="/settings">Configure brain &rarr;</a>
+  <p class="text-sm text-brand-deep"><strong class="font-bold text-brand-navy">Agent not configured.</strong> AI steps fail loud and runs park until an Owner picks a provider in Settings. Non-AI scanning is unaffected.</p>
+  <a class="ml-auto text-sm font-bold text-brand-primary hover:text-brand-deep" href="/settings/agent">Configure agent &rarr;</a>
 </div>
 {% endif %}
 
@@ -70,7 +70,7 @@
     {% for r in parked_runs %}
     <a class="rounded-full bg-white/10 px-2.5 py-1 font-semibold text-white hover:bg-white/20" href="/repos/{{ r.repo_id }}/runs/{{ r.id }}">#{{ r.id }} {{ r.repo_name }}</a>
     {% endfor %}
-    <a class="ml-auto text-[13px] font-bold text-brand-sky hover:text-white" href="/settings">Resume in settings &rarr;</a>
+    <a class="ml-auto text-[13px] font-bold text-brand-sky hover:text-white" href="/settings/cost">Resume in settings &rarr;</a>
   </div>
   {% endif %}
 </section>
@@ -116,7 +116,7 @@
 <section class="mt-6 rounded-xl bg-white p-5 shadow-card" aria-labelledby="ai-usage-heading">
   <div class="flex flex-wrap items-baseline gap-3">
     <h2 id="ai-usage-heading" class="text-lg">AI usage</h2>
-    <a class="ml-auto text-sm font-bold text-brand-primary hover:text-brand-deep" href="/settings">Manage cap &rarr;</a>
+    <a class="ml-auto text-sm font-bold text-brand-primary hover:text-brand-deep" href="/settings/cost">Manage cap &rarr;</a>
   </div>
   <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
     {% for key, label in [("day", "Today"), ("week", "Last 7 days"), ("month", "This month")] %}
@@ -142,9 +142,9 @@
       <div class="h-full rounded-full {% if spend_cap.level == 'exceeded' %}bg-brand-deep{% elif spend_cap.level == 'warn' %}bg-brand-primary{% else %}bg-brand-sky{% endif %}" style="width: {{ [spend_cap.pct, 100]|min }}%"></div>
     </div>
     {% if spend_cap.level == "exceeded" %}
-    <p class="mt-2 text-[13px] font-semibold text-brand-deep">Monthly cap exceeded — an alert was sent; pipelines keep running. <a class="font-bold text-brand-primary hover:text-brand-deep" href="/settings">Raise the cap</a></p>
+    <p class="mt-2 text-[13px] font-semibold text-brand-deep">Monthly cap exceeded — an alert was sent; pipelines keep running. <a class="font-bold text-brand-primary hover:text-brand-deep" href="/settings/cost">Raise the cap</a></p>
     {% elif spend_cap.level == "warn" %}
-    <p class="mt-2 text-[13px] text-slate-600">Past 80% of the monthly cap — an alert was sent. <a class="font-bold text-brand-primary hover:text-brand-deep" href="/settings">Review in settings</a></p>
+    <p class="mt-2 text-[13px] text-slate-600">Past 80% of the monthly cap — an alert was sent. <a class="font-bold text-brand-primary hover:text-brand-deep" href="/settings/cost">Review in settings</a></p>
     {% endif %}
     {% endif %}
   </div>

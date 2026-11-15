@@ -222,8 +222,8 @@ def test_repo_cadence_override():
 
 def test_settings_dep_controls():
     _login_as(Role.OWNER)
-    csrf = _csrf("/settings")
-    resp = client.get("/settings")
+    csrf = _csrf("/settings/dependencies")
+    resp = client.get("/settings/dependencies")
     assert "Dependency updates" in resp.text and "every 24h" in resp.text
     assert "USD/24h" in resp.text
     resp = client.post(
@@ -231,7 +231,7 @@ def test_settings_dep_controls():
     )
     assert resp.status_code == 303
     try:
-        resp = client.get("/settings")
+        resp = client.get("/settings/dependencies")
         assert "every 48h" in resp.text
         resp = client.post(
             "/settings/deps/budget",

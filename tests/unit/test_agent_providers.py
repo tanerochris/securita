@@ -1,14 +1,13 @@
-"""Brain provider strategies: registry, factory, pricing, settings, migration."""
+"""Agent provider strategies: registry, factory, pricing, settings, migration."""
 
 from datetime import UTC, datetime
 from unittest import mock
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
-from security_agent.app import accounts as accounts_svc
-from security_agent.brain import BrainError, BrainNotConfigured, get_chat_model, tracked_invoke
-from security_agent.brain.providers import (
+from security_agent.agent import AgentError, AgentNotConfigured, get_chat_model, tracked_invoke
+from security_agent.agent.providers import (
     DEFAULT_PRICE_PER_MTOK_USD,
     NATIVE_PRICES,
     STRATEGIES,
@@ -16,25 +15,27 @@ from security_agent.brain.providers import (
     build_chat_model,
     strategy_label,
 )
-from security_agent.control.brain_settings import (
-    brain_status,
+from security_agent.app import accounts as accounts_svc
+from security_agent.control.agent_settings import (
+    agent_status,
     current_model_price,
-    delete_brain_key,
-    get_brain_config,
-    get_brain_key,
-    has_brain_key,
+    delete_agent_key,
+    get_agent_config,
+    get_agent_key,
+    has_agent_key,
+    key_hint,
     list_models,
-    maybe_migrate_env,
+    maybe_migrate_legacy_brain_keys,
     price_per_token_usd,
-    save_brain_config,
+    save_agent_config,
 )
 from security_agent.db.models import EncryptedToken, NotifyState, Role
 from security_agent.db.session import session_scope
 
 
 @pytest.fixture(autouse=True)
-def _clean_brain_state():
-    """Brain selection/keys never leak across tests (shared test DB)."""
+def _clean_agent_state():
+    """Agent selection/keys never leak across tests (shared test DB)."""
     _wipe()
     yield
     _wipe()
@@ -42,25 +43,35 @@ def _clean_brain_state():
 
 def _wipe():
     with session_scope() as db:
+        db.execute(delete(NotifyState).where(NotifyState.key.like("agent.%")))
+        db.execute(delete(EncryptedToken).where(EncryptedToken.owner.like("agent:%")))
         db.execute(delete(NotifyState).where(NotifyState.key.like("brain.%")))
         db.execute(delete(EncryptedToken).where(EncryptedToken.owner.like("brain:%")))
 
 
 def _owner():
-    email = f"brain-owner-{datetime.now(UTC).timestamp()}@example.com"
+    email = f"agent-owner-{datetime.now(UTC).timestamp()}@example.com"
     return accounts_svc.create_user(email, None, Role.OWNER)
 
 
 def _dev():
-    email = f"brain-dev-{datetime.now(UTC).timestamp()}@example.com"
+    email = f"agent-dev-{datetime.now(UTC).timestamp()}@example.com"
     return accounts_svc.create_user(email, None, Role.DEVELOPER)
 
 
 # --- Registry ---
 
 
-def test_registry_has_six_launch_entries_in_ui_order():
-    assert set(STRATEGIES) == {"openrouter", "vercel", "ollama", "custom", "google", "anthropic"}
+def test_registry_has_seven_launch_entries_in_ui_order():
+    assert set(STRATEGIES) == {
+        "openrouter",
+        "vercel",
+        "ollama",
+        "custom",
+        "google",
+        "anthropic",
+        "deepseek",
+    }
     assert tuple(STRATEGY_ORDER) == (
         "openrouter",
         "vercel",
@@ -68,6 +79,7 @@ def test_registry_has_six_launch_entries_in_ui_order():
         "custom",
         "google",
         "anthropic",
+        "deepseek",
     )
     for key in STRATEGY_ORDER:
         assert STRATEGIES[key].key == key
@@ -87,6 +99,51 @@ def test_key_needs_match_plan():
     assert STRATEGIES["vercel"].needs_key is True
     assert STRATEGIES["ollama"].needs_key is False
     assert STRATEGIES["custom"].needs_key is False
+
+
+def test_base_url_modes_match_plan():
+    modes = {k: v.base_url_mode for k, v in STRATEGIES.items()}
+    assert modes == {
+        "openrouter": "fixed",
+        "vercel": "fixed",
+        "ollama": "optional",
+        "custom": "required",
+        "google": "fixed",
+        "anthropic": "unused",
+        "deepseek": "fixed",
+    }
+
+
+def test_save_clears_base_url_for_fixed_strategies():
+    owner = _owner()
+    save_agent_config(strategy="custom", model="m", base_url="http://x/v1", user=owner)
+    assert get_agent_config()["base_url"] == "http://x/v1"
+    save_agent_config(strategy="openrouter", model="x/y", base_url="http://x/v1", user=owner)
+    assert get_agent_config()["base_url"] == ""
+    save_agent_config(strategy="anthropic", model="c", base_url="http://x/v1", user=owner)
+    assert get_agent_config()["base_url"] == ""
+
+
+def test_save_keeps_base_url_for_custom_and_ollama():
+    owner = _owner()
+    save_agent_config(strategy="ollama", model="llama3", base_url="http://o:11434/v1", user=owner)
+    assert get_agent_config()["base_url"] == "http://o:11434/v1"
+
+
+def test_key_hint_shows_first12_and_last4():
+    assert key_hint("sk-or-v1-83eabcdefghijklmnd776") == "sk-or-v1-83e••••••••d776"
+    assert key_hint("short") == "••••••••"
+    assert key_hint("") == "••••••••"
+
+
+def test_save_stores_hint_and_delete_clears_it():
+    owner = _owner()
+    save_agent_config(
+        strategy="openrouter", model="x/y", api_key="sk-or-v1-83eabcdefghijklmnd776", user=owner
+    )
+    assert get_agent_config()["key_hint"] == "sk-or-v1-83e••••••••d776"
+    assert delete_agent_key("openrouter", owner) is True
+    assert get_agent_config()["key_hint"] == ""
     assert STRATEGIES["google"].needs_key is True
     assert STRATEGIES["anthropic"].needs_key is True
 
@@ -108,6 +165,7 @@ def test_build_openai_shaped_strategies():
         "vercel": "https://ai-gateway.vercel.sh/v1",
         "ollama": "http://localhost:11434/v1",
         "google": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "deepseek": "https://api.deepseek.com/v1",
     }
     for strategy, base in cases.items():
         model = build_chat_model(strategy, model="m1", api_key="k")
@@ -135,7 +193,7 @@ def test_build_ollama_needs_no_key():
 def test_build_anthropic_sets_max_tokens_and_omits_sampling():
     from langchain_anthropic import ChatAnthropic
 
-    from security_agent.brain.providers import ANTHROPIC_MAX_TOKENS
+    from security_agent.agent.providers import ANTHROPIC_MAX_TOKENS
 
     model = build_chat_model("anthropic", model="claude-sonnet-4-5", api_key="k")
     assert isinstance(model, ChatAnthropic)
@@ -143,16 +201,16 @@ def test_build_anthropic_sets_max_tokens_and_omits_sampling():
     assert model.temperature is None
 
 
-def test_build_errors_are_brain_errors():
-    with pytest.raises(BrainError, match="Unknown brain strategy"):
+def test_build_errors_are_agent_errors():
+    with pytest.raises(AgentError, match="Unknown agent strategy"):
         build_chat_model("watson", model="m")
-    with pytest.raises(BrainNotConfigured, match="model is empty"):
+    with pytest.raises(AgentNotConfigured, match="model is empty"):
         build_chat_model("openrouter", model="  ", api_key="k")
-    with pytest.raises(BrainNotConfigured, match="needs an API key"):
+    with pytest.raises(AgentNotConfigured, match="needs an API key"):
         build_chat_model("openrouter", model="m")
-    with pytest.raises(BrainNotConfigured, match="needs an API key"):
+    with pytest.raises(AgentNotConfigured, match="needs an API key"):
         build_chat_model("anthropic", model="m")
-    with pytest.raises(BrainNotConfigured, match="needs a base URL"):
+    with pytest.raises(AgentNotConfigured, match="needs a base URL"):
         build_chat_model("custom", model="m")
 
 
@@ -160,14 +218,14 @@ def test_build_errors_are_brain_errors():
 
 
 def test_factory_unconfigured_raises_loud():
-    with pytest.raises(BrainNotConfigured, match="Settings → Brain"):
+    with pytest.raises(AgentNotConfigured, match="Settings → Agent"):
         get_chat_model()
 
 
 def test_factory_builds_saved_strategy():
     from langchain_openai import ChatOpenAI
 
-    save_brain_config(strategy="openrouter", model="x/y", api_key="k", user=_owner())
+    save_agent_config(strategy="openrouter", model="x/y", api_key="k", user=_owner())
     model = get_chat_model()
     assert isinstance(model, ChatOpenAI)
     assert model.model_name == "x/y"
@@ -176,22 +234,22 @@ def test_factory_builds_saved_strategy():
 def test_factory_builds_anthropic_from_settings():
     from langchain_anthropic import ChatAnthropic
 
-    save_brain_config(strategy="anthropic", model="claude-haiku-4-5", api_key="k", user=_owner())
+    save_agent_config(strategy="anthropic", model="claude-haiku-4-5", api_key="k", user=_owner())
     model = get_chat_model()
     assert isinstance(model, ChatAnthropic)
 
 
 def test_factory_missing_key_raises_loud():
-    save_brain_config(strategy="google", model="gemini-2.5-flash", user=_owner())
-    assert not has_brain_key("google")
-    with pytest.raises(BrainNotConfigured, match="needs an API key"):
+    save_agent_config(strategy="google", model="gemini-2.5-flash", user=_owner())
+    assert not has_agent_key("google")
+    with pytest.raises(AgentNotConfigured, match="needs an API key"):
         get_chat_model()
 
 
 def test_factory_unknown_strategy_saved_as_is_fails_loud():
-    save_brain_config(strategy="watson", model="m", user=_owner())
-    assert get_brain_config()["strategy"] == "watson"
-    with pytest.raises(BrainError, match="Unknown brain strategy"):
+    save_agent_config(strategy="watson", model="m", user=_owner())
+    assert get_agent_config()["strategy"] == "watson"
+    with pytest.raises(AgentError, match="Unknown agent strategy"):
         get_chat_model()
 
 
@@ -204,8 +262,8 @@ class _Boom:
 
 
 def test_tracked_invoke_wraps_provider_failures():
-    save_brain_config(strategy="openrouter", model="x/y", api_key="k", user=_owner())
-    with pytest.raises(BrainError, match="openrouter/x/y"):
+    save_agent_config(strategy="openrouter", model="x/y", api_key="k", user=_owner())
+    with pytest.raises(AgentError, match="openrouter/x/y"):
         tracked_invoke(_Boom(), "hi", task="probe")
 
 
@@ -214,7 +272,7 @@ def test_tracked_invoke_wraps_provider_failures():
 
 def test_save_round_trip_and_owner_only():
     owner = _owner()
-    cfg = save_brain_config(
+    cfg = save_agent_config(
         strategy="vercel",
         model="vercel/v1",
         base_url="",
@@ -226,56 +284,56 @@ def test_save_round_trip_and_owner_only():
     assert cfg["price_override"] == 1.5
     assert cfg["has_key"] is True
     assert "sk-1" not in str(cfg)
-    assert get_brain_key("vercel") == "sk-1"
+    assert get_agent_key("vercel") == "sk-1"
     with pytest.raises(PermissionError):
-        save_brain_config(strategy="vercel", model="m", user=_dev())
+        save_agent_config(strategy="vercel", model="m", user=_dev())
     with pytest.raises(PermissionError):
-        delete_brain_key("vercel", _dev())
+        delete_agent_key("vercel", _dev())
 
 
 def test_key_never_re_viewed_and_rotates():
     owner = _owner()
-    save_brain_config(strategy="google", model="gemini-2.5-flash", api_key="k1", user=owner)
-    assert get_brain_key("google") == "k1"
-    save_brain_config(strategy="google", model="gemini-2.5-flash", api_key="k2", user=owner)
-    assert get_brain_key("google") == "k2"
-    save_brain_config(strategy="google", model="gemini-2.5-flash", user=owner)
-    assert get_brain_key("google") == "k2"  # blank keeps the stored key
-    assert delete_brain_key("google", owner) is True
-    assert get_brain_key("google") is None
-    assert delete_brain_key("google", owner) is False
+    save_agent_config(strategy="google", model="gemini-2.5-flash", api_key="k1", user=owner)
+    assert get_agent_key("google") == "k1"
+    save_agent_config(strategy="google", model="gemini-2.5-flash", api_key="k2", user=owner)
+    assert get_agent_key("google") == "k2"
+    save_agent_config(strategy="google", model="gemini-2.5-flash", user=owner)
+    assert get_agent_key("google") == "k2"  # blank keeps the stored key
+    assert delete_agent_key("google", owner) is True
+    assert get_agent_key("google") is None
+    assert delete_agent_key("google", owner) is False
 
 
 def test_status_never_leaks_keys():
-    save_brain_config(strategy="openrouter", model="x/y", api_key="super-secret", user=_owner())
-    blob = str(brain_status())
+    save_agent_config(strategy="openrouter", model="x/y", api_key="super-secret", user=_owner())
+    blob = str(agent_status())
     assert "super-secret" not in blob
-    assert brain_status()["has_key"] is True
+    assert agent_status()["has_key"] is True
 
 
 # --- Pricing ---
 
 
 def test_native_table_price_and_version():
-    from security_agent.brain.providers import NATIVE_PRICE_TABLE_VERSION
+    from security_agent.agent.providers import NATIVE_PRICE_TABLE_VERSION
 
     assert NATIVE_PRICE_TABLE_VERSION >= 1
-    save_brain_config(strategy="anthropic", model="claude-sonnet-4-5", api_key="k", user=_owner())
+    save_agent_config(strategy="anthropic", model="claude-sonnet-4-5", api_key="k", user=_owner())
     assert current_model_price() == NATIVE_PRICES["claude-sonnet-4-5"]
 
 
 def test_cached_gateway_price_wins_then_override_then_zero():
     owner = _owner()
     with mock.patch(
-        "security_agent.control.brain_settings.fetch_openrouter_models",
+        "security_agent.control.agent_settings.fetch_openrouter_models",
         return_value=[{"id": "x/y", "price": 3.0}],
     ):
         assert list_models("openrouter")["source"] == "live"
-    save_brain_config(strategy="openrouter", model="x/y", price_override="1.0", user=owner)
+    save_agent_config(strategy="openrouter", model="x/y", price_override="1.0", user=owner)
     assert current_model_price() == 3.0  # cache beats override
-    save_brain_config(strategy="custom", model="anything", base_url="http://x/v1", user=owner)
+    save_agent_config(strategy="custom", model="anything", base_url="http://x/v1", user=owner)
     assert current_model_price() == 0.0  # custom/ollama default $0
-    save_brain_config(
+    save_agent_config(
         strategy="custom",
         model="anything",
         base_url="http://x/v1",
@@ -283,12 +341,12 @@ def test_cached_gateway_price_wins_then_override_then_zero():
         user=owner,
     )
     assert current_model_price() == 1.25  # override applies when nothing else prices
-    save_brain_config(strategy="ollama", model="llama3", user=owner)
+    save_agent_config(strategy="ollama", model="llama3", user=owner)
     assert current_model_price() == 0.0
 
 
 def test_native_price_beats_override_per_plan_order():
-    save_brain_config(
+    save_agent_config(
         strategy="anthropic",
         model="claude-haiku-4-5",
         api_key="k",
@@ -307,10 +365,10 @@ def test_ledger_uses_resolved_model_price():
     from security_agent.control.cost import record_usage
 
     owner = _owner()
-    save_brain_config(strategy="custom", model="m", base_url="http://x/v1", user=owner)
-    assert record_usage(None, "brain-price-zero", 100, 50)["cost_usd"] == 0.0
-    save_brain_config(strategy="anthropic", model="claude-haiku-4-5", api_key="k", user=owner)
-    out = record_usage(None, "brain-price-native", 1_000_000, 0)
+    save_agent_config(strategy="custom", model="m", base_url="http://x/v1", user=owner)
+    assert record_usage(None, "agent-price-zero", 100, 50)["cost_usd"] == 0.0
+    save_agent_config(strategy="anthropic", model="claude-haiku-4-5", api_key="k", user=owner)
+    out = record_usage(None, "agent-price-native", 1_000_000, 0)
     assert out["cost_usd"] == pytest.approx(NATIVE_PRICES["claude-haiku-4-5"])
 
 
@@ -325,22 +383,26 @@ def test_curated_natives_need_no_network():
     anthropic = list_models("anthropic")
     assert anthropic["source"] == "curated"
     assert [m["id"] for m in anthropic["models"]]
+    deepseek = list_models("deepseek")
+    assert deepseek["source"] == "curated"
+    assert [m["id"] for m in deepseek["models"]] == ["deepseek-chat", "deepseek-reasoner"]
+    assert all(m["price"] for m in deepseek["models"])
 
 
 def test_gateway_failure_falls_back_to_cache_then_free_text():
     with mock.patch(
-        "security_agent.control.brain_settings.fetch_openrouter_models",
-        side_effect=BrainError("down"),
+        "security_agent.control.agent_settings.fetch_openrouter_models",
+        side_effect=AgentError("down"),
     ):
         assert list_models("openrouter")["source"] == "none"
     with mock.patch(
-        "security_agent.control.brain_settings.fetch_openrouter_models",
+        "security_agent.control.agent_settings.fetch_openrouter_models",
         return_value=[{"id": "x/y", "price": 3.0}],
     ):
         assert list_models("openrouter")["source"] == "live"
     with mock.patch(
-        "security_agent.control.brain_settings.fetch_openrouter_models",
-        side_effect=BrainError("down"),
+        "security_agent.control.agent_settings.fetch_openrouter_models",
+        side_effect=AgentError("down"),
     ):
         cached = list_models("openrouter")
         assert cached["source"] == "cache"
@@ -353,7 +415,7 @@ def test_gateway_failure_falls_back_to_cache_then_free_text():
 
 def test_list_models_no_refresh_never_touches_network():
     with mock.patch(
-        "security_agent.control.brain_settings.fetch_openrouter_models",
+        "security_agent.control.agent_settings.fetch_openrouter_models",
         return_value=[{"id": "x/y", "price": 3.0}],
     ) as fetch:
         assert list_models("openrouter")["source"] == "live"
@@ -380,74 +442,122 @@ def test_ollama_tags_list_and_failure_shape():
         assert list_models("ollama", base_url="http://o:11434/v1")["source"] == "cache"
 
 
-# --- One-time env migration ---
+def _anthropic_page(rows, *, has_more=False, last_id=""):
+    resp = mock.Mock()
+    resp.json.return_value = {"data": rows, "has_more": has_more, "last_id": last_id}
+    resp.raise_for_status.return_value = None
+    return resp
 
 
-def _clear_marker():
-    with session_scope() as db:
-        db.execute(delete(NotifyState).where(NotifyState.key == "brain.migrated"))
+def test_anthropic_live_lists_active_only_with_table_prices():
+    from security_agent.agent.providers import fetch_anthropic_models
+
+    page1 = _anthropic_page(
+        [
+            {"id": "claude-sonnet-4-5", "lifecycle": "active"},
+            {"id": "claude-old", "lifecycle": "deprecated"},
+            {"id": "broken"},
+        ],
+        has_more=True,
+        last_id="broken",
+    )
+    page2 = _anthropic_page([{"id": "claude-new-9", "lifecycle": "active"}])
+    with mock.patch("httpx.get", side_effect=[page1, page2]) as get:
+        models = fetch_anthropic_models("k")
+    assert [m["id"] for m in models] == ["claude-sonnet-4-5", "broken", "claude-new-9"]
+    assert models[0]["price"] == NATIVE_PRICES["claude-sonnet-4-5"]
+    assert models[2]["price"] is None
+    assert get.call_count == 2
+    _, kwargs = get.call_args_list[0]
+    assert kwargs["headers"]["anthropic-version"]
+    assert kwargs["headers"]["Authorization"] == "Bearer k"
+    assert get.call_args_list[1][1]["params"]["after_id"] == "broken"
 
 
-def _clear_env(monkeypatch):
-    for var in (
-        "MODEL_BASE_URL",
-        "MODEL_API_KEY",
-        "MODEL_NAME",
-        "MODEL_CHAT_NAME",
-        "MODEL_PRICE_PER_MTOK_USD",
+def test_anthropic_live_needs_key_and_falls_back_to_curated():
+    from security_agent.agent.providers import fetch_anthropic_models
+
+    with pytest.raises(AgentError, match="No API key"):
+        fetch_anthropic_models("")
+    assert list_models("anthropic")["source"] == "curated"  # no key: no network
+
+
+def test_anthropic_refresh_prefers_live_then_cache_then_curated():
+    save_agent_config(strategy="anthropic", model="m", api_key="k", user=_owner())
+    live = [{"id": "claude-live-1", "price": None}]
+    with mock.patch(
+        "security_agent.control.agent_settings.fetch_anthropic_models",
+        return_value=live,
+    ) as fetch:
+        assert list_models("anthropic")["source"] == "live"
+        assert fetch.call_count == 1
+        args, _ = fetch.call_args
+        assert args == ("k",)  # stored key, server-side only
+    with mock.patch(
+        "security_agent.control.agent_settings.fetch_anthropic_models",
+        side_effect=AgentError("down"),
     ):
-        monkeypatch.delenv(var, raising=False)
+        cached = list_models("anthropic")
+        assert cached["source"] == "cache"
+        assert [m["id"] for m in cached["models"]] == ["claude-live-1"]
 
 
-@pytest.mark.parametrize(
-    ("base", "strategy"),
-    [
-        ("https://openrouter.ai/api/v1", "openrouter"),
-        ("https://ai-gateway.vercel.sh/v1", "vercel"),
-        ("http://localhost:11434/v1", "ollama"),
-        ("https://generativelanguage.googleapis.com/v1beta/openai/", "google"),
-        ("https://api.anthropic.com", "anthropic"),
-        ("https://api.meta.ai/v1", "custom"),
-        ("", "custom"),
-    ],
-)
-def test_migrate_env_strategy_guess(monkeypatch, base, strategy):
-    _clear_env(monkeypatch)
-    _clear_marker()
-    monkeypatch.setenv("MODEL_API_KEY", "legacy-key")
-    monkeypatch.setenv("MODEL_NAME", "legacy-model")
-    if base:
-        monkeypatch.setenv("MODEL_BASE_URL", base)
-    out = maybe_migrate_env()
-    assert out == {"migrated": True, "strategy": strategy, "model": "legacy-model", "notes": []}
-    cfg = get_brain_config()
-    assert (cfg["strategy"], cfg["model"]) == (strategy, "legacy-model")
-    assert get_brain_key(strategy) == "legacy-key"
-    if strategy in ("custom", "ollama"):
-        assert cfg["base_url"]
+def test_anthropic_failure_without_cache_falls_back_to_curated():
+    save_agent_config(strategy="anthropic", model="m", api_key="k", user=_owner())
+    with mock.patch(
+        "security_agent.control.agent_settings.fetch_anthropic_models",
+        side_effect=AgentError("down"),
+    ):
+        out = list_models("anthropic")
+        assert out["source"] == "curated"
+        assert [m["id"] for m in out["models"]]
 
 
-def test_migrate_env_imports_price_override_and_notes_chat_slot(monkeypatch):
-    _clear_env(monkeypatch)
-    _clear_marker()
-    monkeypatch.setenv("MODEL_API_KEY", "k")
-    monkeypatch.setenv("MODEL_NAME", "m")
-    monkeypatch.setenv("MODEL_PRICE_PER_MTOK_USD", "4.5")
-    monkeypatch.setenv("MODEL_CHAT_NAME", "chat-m")
-    out = maybe_migrate_env()
+# --- One-time legacy rename migration ---
+
+
+def test_legacy_rename_carries_config_but_clears_model_and_base_url():
+    from security_agent.crypto import encrypt_field
+    from security_agent.db.keys import get_encryption_key
+
+    with session_scope() as db:
+        db.add(NotifyState(key="brain.strategy", value="custom"))
+        db.add(NotifyState(key="brain.model", value="old-model"))
+        db.add(NotifyState(key="brain.base_url", value="https://old.example/v1"))
+        db.add(NotifyState(key="brain.price_override_usd", value="3.5"))
+        db.add(NotifyState(key="brain.cache.custom", value='{"models": []}'))
+        db.add(
+            EncryptedToken(
+                owner="brain:custom",
+                ciphertext=encrypt_field("k", get_encryption_key()),
+            )
+        )
+    out = maybe_migrate_legacy_brain_keys()
     assert out["migrated"] is True
-    assert get_brain_config()["price_override"] == 4.5
-    assert any("MODEL_CHAT_NAME" in note for note in out["notes"])
+    assert "agent.strategy" in out["carried"]
+    assert "agent:custom" in out["carried"]
+    cfg = get_agent_config()
+    assert cfg["strategy"] == "custom"
+    assert cfg["model"] == "" and cfg["base_url"] == ""  # cleared, form starts blank
+    assert cfg["price_override"] == 3.5
+    assert get_agent_key("custom") == "k"
+    with session_scope() as db:  # legacy rows kept for rollback
+        assert db.get(NotifyState, "brain.model").value == "old-model"
+        assert (
+            db.scalar(select(EncryptedToken).where(EncryptedToken.owner == "brain:custom"))
+            is not None
+        )
+    assert maybe_migrate_legacy_brain_keys() == {"migrated": False}
 
 
-def test_migrate_env_runs_once_then_env_ignored(monkeypatch):
-    _clear_env(monkeypatch)
-    _clear_marker()
-    assert maybe_migrate_env() == {"migrated": False, "notes": []}
-    monkeypatch.setenv("MODEL_API_KEY", "late-key")
-    monkeypatch.setenv("MODEL_NAME", "late-model")
-    assert maybe_migrate_env() == {"migrated": False}
-    assert get_brain_config()["configured"] is False
+def test_legacy_rename_never_overwrites_agent_keys():
+    with session_scope() as db:
+        db.add(NotifyState(key="brain.strategy", value="custom"))
+        db.add(NotifyState(key="agent.strategy", value="anthropic"))
+    out = maybe_migrate_legacy_brain_keys()
+    assert out["migrated"] is True
+    assert "agent.strategy" not in out["carried"]
+    assert get_agent_config()["strategy"] == "anthropic"
 
 
 # --- Probe ---
@@ -468,27 +578,27 @@ class _ProbeStub:
 
 
 def test_probe_pass_and_fail_through_factory():
-    from security_agent.brain.probe import run_probe
+    from security_agent.agent.probe import run_probe
 
-    save_brain_config(strategy="ollama", model="llama3", user=_owner())
+    save_agent_config(strategy="ollama", model="llama3", user=_owner())
     with mock.patch(
-        "security_agent.brain.get_chat_model",
+        "security_agent.agent.get_chat_model",
         return_value=_ProbeStub([{"name": "probe_echo", "args": {}, "id": "1"}]),
     ):
         assert run_probe() is True
-    with mock.patch("security_agent.brain.get_chat_model", return_value=_ProbeStub([])):
+    with mock.patch("security_agent.agent.get_chat_model", return_value=_ProbeStub([])):
         assert run_probe() is False
 
 
 def test_probe_unconfigured_raises_loud():
-    from security_agent.brain.probe import run_probe
+    from security_agent.agent.probe import run_probe
 
-    with pytest.raises(BrainNotConfigured):
+    with pytest.raises(AgentNotConfigured):
         run_probe()
 
 
-def test_probe_cli_reports_brain_failure(capsys):
-    from security_agent.brain.probe import main
+def test_probe_cli_reports_agent_failure(capsys):
+    from security_agent.agent.probe import main
 
     with pytest.raises(SystemExit) as code:
         main()
@@ -496,7 +606,7 @@ def test_probe_cli_reports_brain_failure(capsys):
     assert capsys.readouterr().out.startswith("PROBE_FAIL")
 
 
-# --- Brain park + resume ---
+# --- Agent park + resume ---
 
 
 def _repo_and_run():
@@ -506,7 +616,7 @@ def _repo_and_run():
     from security_agent.db.models import RepoKind, ScanRun
 
     repo = repo_svc.connect_repo(
-        f"brain-r-{datetime.now(UTC).timestamp()}", RepoKind.GIT, url="https://example.com/b.git"
+        f"agent-r-{datetime.now(UTC).timestamp()}", RepoKind.GIT, url="https://example.com/b.git"
     )
     with session_scope() as db:  # connect enqueues the run; reuse it (single-flight)
         run = db.scalar(select(ScanRun).where(ScanRun.repo_id == repo.id))
@@ -515,17 +625,17 @@ def _repo_and_run():
     return repo.id, run_id
 
 
-def test_brain_park_and_resume_without_raise():
-    from security_agent.control.cost import list_parked_runs, park_run_for_brain, resume_run
+def test_agent_park_and_resume_without_raise():
+    from security_agent.control.cost import list_parked_runs, park_run_for_agent, resume_run
     from security_agent.db.models import RunStatus, ScanRun
 
     _repo_id, run_id = _repo_and_run()
     try:
-        assert park_run_for_brain(run_id, "Brain is not configured.") is True
-        assert park_run_for_brain(run_id, "again") is False
+        assert park_run_for_agent(run_id, "Agent is not configured.") is True
+        assert park_run_for_agent(run_id, "again") is False
         parked = [r for r in list_parked_runs() if r["id"] == run_id]
         assert len(parked) == 1
-        assert "brain" in parked[0]["reason"].lower()
+        assert "agent" in parked[0]["reason"].lower()
         out = resume_run(run_id, _owner())
         assert out["run_id"] == run_id
     finally:
@@ -553,7 +663,7 @@ def _settle_inflight():
             row.status = RunStatus.DONE
 
 
-def test_execute_once_parks_on_brain_error():
+def test_execute_once_parks_on_agent_error():
     import security_agent.worker.main as worker_main
     from security_agent.db.models import RunStatus, ScanRun
 
@@ -562,7 +672,7 @@ def test_execute_once_parks_on_brain_error():
 
     def _invoke(state):
         if state.get("run_id") == run_id:
-            raise BrainError("Brain is not configured.")
+            raise AgentError("Agent is not configured.")
         return {}
 
     graph = mock.Mock()
@@ -583,7 +693,7 @@ def test_execute_once_parks_on_brain_error():
     with session_scope() as db:
         run = db.get(ScanRun, run_id)
         assert run.parked is True
-        assert "brain" in (run.park_reason or "").lower()
+        assert "agent" in (run.park_reason or "").lower()
         run.parked = False  # settle: leave no parked rows behind
         run.status = RunStatus.DONE
 
@@ -591,31 +701,31 @@ def test_execute_once_parks_on_brain_error():
 # --- Fail-loud callers ---
 
 
-def test_pr_text_propagates_brain_error_past_template():
-    from security_agent.brain.pr_text import generate_pr_text
+def test_pr_text_propagates_agent_error_past_template():
+    from security_agent.agent.pr_text import generate_pr_text
 
     with (
         mock.patch(
             "security_agent.config.get_settings",
             return_value=mock.Mock(pr_text_model_enabled=True),
         ),
-        mock.patch("security_agent.brain.tracked_invoke", side_effect=BrainError("no brain")),
+        mock.patch("security_agent.agent.tracked_invoke", side_effect=AgentError("no agent")),
     ):
-        with pytest.raises(BrainError):
+        with pytest.raises(AgentError):
             generate_pr_text("p", "1", "2", ["CVE-1"], [], ["v"], "g", [], "d")
 
 
-def test_deliver_reraises_brain_error_past_template():
+def test_deliver_reraises_agent_error_past_template():
     from security_agent.worker.deliver import _render_pr_text
 
     with mock.patch(
-        "security_agent.brain.pr_text.generate_pr_text", side_effect=BrainError("no brain")
+        "security_agent.agent.pr_text.generate_pr_text", side_effect=AgentError("no agent")
     ):
-        with pytest.raises(BrainError):
+        with pytest.raises(AgentError):
             _render_pr_text("p", "1", "2", ["A"], [], ["v"], "g", [], "d")
 
 
-def test_deps_summary_converts_brain_error_to_report_error():
+def test_deps_summary_converts_agent_error_to_report_error():
     from security_agent.worker.deps_report import ReportError, generate_summary
 
     with (
@@ -623,17 +733,17 @@ def test_deps_summary_converts_brain_error_to_report_error():
             "security_agent.config.get_settings",
             return_value=mock.Mock(deps_report_model_enabled=True),
         ),
-        mock.patch("security_agent.brain.get_chat_model", side_effect=BrainError("no brain")),
+        mock.patch("security_agent.agent.get_chat_model", side_effect=AgentError("no agent")),
     ):
-        with pytest.raises(ReportError, match="brain unavailable"):
+        with pytest.raises(ReportError, match="agent unavailable"):
             generate_summary([{"key": "k"}])
 
 
-def test_news_classification_surfaces_brain_error_and_stops():
+def test_news_classification_surfaces_agent_error_and_stops():
     from security_agent.db.models import NewsItem
     from security_agent.worker import news_intel
 
-    tag = f"brain-{datetime.now(UTC).timestamp()}"
+    tag = f"agent-{datetime.now(UTC).timestamp()}"
     with session_scope() as db:
         db.add(
             NewsItem(
@@ -642,8 +752,8 @@ def test_news_classification_surfaces_brain_error_and_stops():
         )
         db.flush()
     try:
-        with mock.patch("security_agent.brain.get_chat_model", side_effect=BrainError("no brain")):
-            with pytest.raises(BrainError):
+        with mock.patch("security_agent.agent.get_chat_model", side_effect=AgentError("no agent")):
+            with pytest.raises(AgentError):
                 news_intel.classify_item(_latest_news_id())
             counts = news_intel.classify_pending(limit=5)
             assert counts == {"classified": 0, "major": 0}
@@ -661,11 +771,11 @@ def _latest_news_id():
         return db.scalar(select(NewsItem.id).order_by(NewsItem.id.desc()).limit(1))
 
 
-def test_chat_turn_surfaces_configure_brain_notice():
+def test_chat_turn_surfaces_configure_agent_notice():
     from security_agent.chat import get_conversation
     from security_agent.chat.agent import answer_turn
 
     owner = _owner()
     conv = get_conversation(owner.id)
     reply = answer_turn(owner, conv, "hi")
-    assert "Settings → Brain" in reply.content
+    assert "Settings → Agent" in reply.content

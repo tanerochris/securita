@@ -19,7 +19,7 @@ client = TestClient(app, raise_server_exceptions=False)
 
 @pytest.fixture(autouse=True)
 def _no_embeddings():
-    with mock.patch("security_agent.brain.embeddings.embed_texts", return_value=None):
+    with mock.patch("security_agent.agent.embeddings.embed_texts", return_value=None):
         yield
 
 

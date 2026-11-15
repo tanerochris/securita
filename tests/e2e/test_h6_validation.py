@@ -128,7 +128,7 @@ def test_h6_park_resume_and_reclaim_cycle():
     with session_scope() as db:
         run = db.scalar(select(ScanRun).where(ScanRun.repo_id == repo.id))
         run_id = run.id
-    from security_agent.control.brain_settings import price_per_token_usd
+    from security_agent.control.agent_settings import price_per_token_usd
 
     price = price_per_token_usd()
     set_run_cap(100 * price, owner)

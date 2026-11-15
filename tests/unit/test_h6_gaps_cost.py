@@ -48,7 +48,7 @@ def _reset_cost_state():
 
 def _usd(tokens: int) -> float:
     """Cap dollars for a token count at the resolved model price."""
-    from security_agent.control.brain_settings import price_per_token_usd
+    from security_agent.control.agent_settings import price_per_token_usd
 
     return tokens * price_per_token_usd()
 
@@ -239,7 +239,7 @@ def test_purge_old_usage_keeps_recent_deletes_old():
 
 
 def test_probe_tokens_are_ledgered_run_less():
-    from security_agent.brain.probe import run_probe
+    from security_agent.agent.probe import run_probe
 
     class FakeModel:
         def invoke(self, prompt):
@@ -251,7 +251,7 @@ def test_probe_tokens_are_ledgered_run_less():
 
     with (
         mock.patch(
-            "security_agent.brain.get_chat_model",
+            "security_agent.agent.get_chat_model",
             return_value=SimpleNamespace(bind_tools=lambda tools: FakeModel()),
         ),
         mock.patch("security_agent.notify.notify_event"),
@@ -273,7 +273,7 @@ def test_probe_tokens_are_ledgered_run_less():
 
 
 def test_tracked_invoke_estimates_each_side_independently():
-    from security_agent.brain import tracked_invoke
+    from security_agent.agent import tracked_invoke
 
     class FakeModel:
         def __init__(self, result):

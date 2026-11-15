@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from security_agent.brain.adapt import make_model_adapt, select_adapt
+from security_agent.agent.adapt import make_model_adapt, select_adapt
 from security_agent.worker.patch import PatchError
 
 

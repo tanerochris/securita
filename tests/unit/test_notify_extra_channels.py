@@ -214,9 +214,9 @@ def _login_owner() -> None:
 
 
 def _csrf() -> str:
-    resp = client.get("/settings")
+    resp = client.get("/settings/notifications")
     match = re.search(r'name="csrf" value="([^"]+)"', resp.text)
-    assert match, "no csrf token on /settings"
+    assert match, "no csrf token on /settings/notifications"
     return match.group(1)
 
 
@@ -235,7 +235,7 @@ def test_settings_add_new_kinds_and_hide_secrets():
                 follow_redirects=True,
             )
             assert resp.status_code == 200 and "created" in resp.text, resp.text[:500]
-        page = client.get("/settings").text
+        page = client.get("/settings/notifications").text
         assert 'value="discord"' in page
         assert 'value="telegram"' in page
         assert 'value="pagerduty"' in page

@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 from unittest import mock
 
-from security_agent.brain import embeddings as emb_mod
+from security_agent.agent import embeddings as emb_mod
 from security_agent.db.models import POLICY_EMBEDDING_DIM
 
 

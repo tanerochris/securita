@@ -1,6 +1,6 @@
 """Native tool_calls probe gate (FR-15 D1/D2). No probe pass, no Phase 1.
 
-Probes the Settings-configured brain, whatever strategy it uses: the
+Probes the Settings-configured agent, whatever strategy it uses: the
 Anthropic-native client qualifies through the same round-trip as every
 OpenAI-shaped strategy.
 """
@@ -15,12 +15,12 @@ def probe_echo(text: str) -> str:
 
 
 def run_probe() -> bool:
-    """Round-trip a native tool_calls call via the configured brain.
+    """Round-trip a native tool_calls call via the configured agent.
 
-    True only on native success. Raises BrainError when no provider is
+    True only on native success. Raises AgentError when no provider is
     configured or the provider call fails (loud, actionable).
     """
-    from security_agent.brain import get_chat_model, tracked_invoke
+    from security_agent.agent import get_chat_model, tracked_invoke
 
     model = get_chat_model().bind_tools([probe_echo])
     result = tracked_invoke(
@@ -31,11 +31,11 @@ def run_probe() -> bool:
 
 
 def main() -> None:
-    from security_agent.brain import BrainError
+    from security_agent.agent import AgentError
 
     try:
         ok = run_probe()
-    except BrainError as exc:
+    except AgentError as exc:
         print(f"PROBE_FAIL: {exc}")
         raise SystemExit(1) from exc
     print("PROBE_PASS" if ok else "PROBE_FAIL")

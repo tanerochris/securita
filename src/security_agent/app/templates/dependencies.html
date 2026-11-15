@@ -42,7 +42,7 @@
 {% endif %}
 {% if budget.exhausted %}
 <div class="mt-4 rounded-xl bg-brand-navy px-5 py-3 text-sm text-white" role="alert">
-  <strong class="font-bold">Dependency budget hit</strong> ({{ budget.spent|usd }}/{{ budget.cap|usd }} per 24h). Impact reports are parked at <span class="font-mono">report_pending_cap</span> — <a class="font-bold text-brand-sky hover:text-white" href="/settings">raise the budget in Settings</a>, then re-run the check to resume.
+  <strong class="font-bold">Dependency budget hit</strong> ({{ budget.spent|usd }}/{{ budget.cap|usd }} per 24h). Impact reports are parked at <span class="font-mono">report_pending_cap</span> — <a class="font-bold text-brand-sky hover:text-white" href="/settings/dependencies">raise the budget in Settings</a>, then re-run the check to resume.
 </div>
 {% endif %}
 {% if truncated_note %}

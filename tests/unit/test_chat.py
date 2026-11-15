@@ -217,7 +217,7 @@ def test_new_list_and_switch_conversations():
         switch_conversation(other.id, first.id)
 
 
-# --- agent loop with a fake brain ---
+# --- agent loop with a fake agent ---
 
 
 class _FakeChat:
@@ -295,7 +295,7 @@ def test_answer_turn_cap_reached_posts_notice():
         _cleanup_chat_cap()
 
 
-def test_answer_turn_unconfigured_brain_posts_notice():
+def test_answer_turn_unconfigured_agent_posts_notice():
     from sqlalchemy import delete
 
     from security_agent.chat import get_conversation
@@ -305,16 +305,16 @@ def test_answer_turn_unconfigured_brain_posts_notice():
 
     owner = _user("turn-k", Role.OWNER)
     conv = get_conversation(owner.id)
-    with session_scope() as db:  # no brain selection, no legacy env import
-        db.execute(delete(NotifyState).where(NotifyState.key.like("brain.%")))
-        db.execute(delete(EncryptedToken).where(EncryptedToken.owner.like("brain:%")))
+    with session_scope() as db:  # no agent selection, no legacy env import
+        db.execute(delete(NotifyState).where(NotifyState.key.like("agent.%")))
+        db.execute(delete(EncryptedToken).where(EncryptedToken.owner.like("agent:%")))
     try:
         reply = answer_turn(owner, conv, "hi")
-        assert "Settings → Brain" in reply.content
+        assert "Settings → Agent" in reply.content
     finally:
         with session_scope() as db:
-            db.execute(delete(NotifyState).where(NotifyState.key.like("brain.%")))
-            db.execute(delete(EncryptedToken).where(EncryptedToken.owner.like("brain:%")))
+            db.execute(delete(NotifyState).where(NotifyState.key.like("agent.%")))
+            db.execute(delete(EncryptedToken).where(EncryptedToken.owner.like("agent:%")))
 
 
 def test_gate_decision_intent_carries_context():

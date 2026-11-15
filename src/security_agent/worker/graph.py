@@ -102,7 +102,7 @@ def _patch(state: AgentState) -> dict:
     repo_id, run_id = state.get("repo_id"), state.get("run_id")
     if repo_id is None or run_id is None:
         return {"done": ["patch"]}
-    from security_agent.brain.adapt import select_adapt
+    from security_agent.agent.adapt import select_adapt
     from security_agent.control.cost import run_context
     from security_agent.worker.patch import run_patch
 

@@ -42,7 +42,7 @@ Base.metadata.create_all(sess_mod.get_engine())
 @pytest.fixture(autouse=True)
 def _reset_adapt_probe_cache():
     """G7: the adapt probe verdict is cached process-wide; reset per test."""
-    import security_agent.brain.adapt as adapt_mod
+    import security_agent.agent.adapt as adapt_mod
 
     adapt_mod._probe_cache = None
     yield

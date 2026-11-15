@@ -181,38 +181,38 @@ def set_spend_cap(value: float, user: User) -> float:
 def _price_per_token() -> float:
     """Ledger price per token: the configured model's price, else default.
 
-    Per-model pricing (brain strategy plan): cached gateway pricing →
+    Per-model pricing (agent strategy plan): cached gateway pricing →
     native table → operator override → $0 (custom/Ollama) → default.
     """
-    from security_agent.control.brain_settings import price_per_token_usd
+    from security_agent.control.agent_settings import price_per_token_usd
 
     return price_per_token_usd()
 
 
-def park_run_for_brain(run_id: int, reason: str) -> bool:
-    """Park a run on a brain failure; True only when this call parked it.
+def park_run_for_agent(run_id: int, reason: str) -> bool:
+    """Park a run on a agent failure; True only when this call parked it.
 
     Mirrors the spend-cap park: the run holds its single-flight slot,
     stays resumable from Settings/Dashboard, and resumes under the
-    current cap once the brain is configured (spend is below cap, so no
+    current cap once the agent is configured (spend is below cap, so no
     raise is needed). Fires a high-severity alert — a parked run is
     loud, never silent.
     """
-    short = (reason or "brain unavailable").strip()[:200] or "brain unavailable"
+    short = (reason or "agent unavailable").strip()[:200] or "agent unavailable"
     with session_scope() as db:
         run = db.get(ScanRun, run_id)
         if run is None or run.parked:
             return False
         run.parked = True
-        run.park_reason = f"brain unavailable: {short}"
+        run.park_reason = f"agent unavailable: {short}"
         prior = f"{run.notes}\n" if run.notes else ""
-        run.notes = prior + f"parked: brain unavailable ({short})"
+        run.notes = prior + f"parked: agent unavailable ({short})"
     _alert_cost(
         "high",
-        f"run {run_id} parked: brain unavailable",
-        "brain-parked",
+        f"run {run_id} parked: agent unavailable",
+        "agent-parked",
         f"Run {run_id} parked: {short}. "
-        "Configure the brain in Settings → Brain, then resume the run.",
+        "Configure the agent in Settings → Agent, then resume the run.",
     )
     return True
 
